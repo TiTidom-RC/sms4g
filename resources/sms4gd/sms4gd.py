@@ -148,6 +148,16 @@ def _createAndConnectModem():
         raise
 
 
+def _catchUpStoredSms(modem):
+    # Appel unique post-connexion (pas a chaque cycle) : la reception temps reel passe par +CMTI,
+    # repeter ce polling en continu ferait courir une race avec lui (meme SMS livre deux fois si
+    # +CMTI le traite pendant que ce polling le voit encore comme non lu)
+    try:
+        modem.processStoredSms(True)
+    except Exception as e:
+        logging.error("Failed to process stored SMS after connect : %s", e)
+
+
 def _reconnectLoop():
     global gsm
     try:
@@ -169,6 +179,7 @@ def _reconnectLoop():
             gsm = _createAndConnectModem()
             logging.info("Modem reconnection successful after %d attempt(s)", attempt)
             _setModemStatus('connected')
+            _catchUpStoredSms(gsm)
             return True
         except Exception as e:
             logging.error("Reconnection attempt %d/%d failed : %s", attempt, _reconnect_max_attempts, e)
@@ -187,6 +198,7 @@ def listen():
     try:
         gsm = _createAndConnectModem()
         _setModemStatus('connected')
+        _catchUpStoredSms(gsm)
     except Exception as e:
         logging.error("Unexpected error while starting to listen (%s): %s", type(e).__name__, e)
         if j_com_instance:
@@ -211,7 +223,6 @@ def listen():
                     gsm.waitForNetworkCoverage(timeout=_cycle)
                     consecutive_network_failures = 0
                     _setModemStatus('connected')
-                    gsm.processStoredSms(True)
                     gsm.purgeStaleSmsParts(_concat_parts_ttl)
             except Exception as e:
                 if _isTransientNetworkError(e):

@@ -144,7 +144,7 @@ class GsmModem(SerialComms):
     CUSD_REGEX = re.compile(r'\+CUSD:\s*(\d),\s*"(.*?)",\s*(\d+)', re.DOTALL)
     # Used for parsing SMS status reports
     CDSI_REGEX = re.compile(r'\+CDSI:\s*"([^"]+)",(\d+)$')
-    CDS_REGEX = re.compile(r'\+CDS:\s*([0-9]+)"$')
+    CDS_REGEX = re.compile(r'\+CDS:\s*([0-9]+)$')
 
     def __init__(self, port: str, baudrate: int = 115200, incomingCallCallbackFunc: Optional[Callable] = None, smsReceivedCallbackFunc: Optional[Callable] = None, smsStatusReportCallback: Optional[Callable] = None, requestDelivery: bool = True, AT_CNMI: str = "", *a, **kw):
         super(GsmModem, self).__init__(port, baudrate, notifyCallbackFunc=self._handleModemNotification, *a, **kw)

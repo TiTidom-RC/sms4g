@@ -23,6 +23,9 @@ function addCmdToTable(_cmd) {
   if (!isset(_cmd)) {
     _cmd = { configuration: {} }
   }
+  if (!isset(_cmd.configuration)) {
+    _cmd.configuration = {}
+  }
   if (!isset(_cmd.type) || !isset(_cmd.subType)) {
     // user is adding a new action message command
     _cmd.type = 'action'

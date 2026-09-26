@@ -23,6 +23,12 @@ class SerialComms:
     # Prefixes of unsolicited notifications that can pre-empt a pending command response (e.g. a delivery
     # report or incoming SMS arriving while another AT command is awaiting its own response)
     URC_PREFIXES = ('+CDSI', '+CMTI')
+    # A PDU is a hex string (even length) - used to recognize the real continuation line of a "+CDS:"
+    # header amongst lines interleaved by a concurrent command response (see _isUrcLine)
+    HEX_PDU_RE = re.compile(r'^[0-9A-Fa-f]+$')
+    # Safety cap: give up waiting for the "+CDS:" continuation after this many interleaved lines,
+    # rather than risk blocking the detection of genuine URCs/responses indefinitely
+    MAX_URC_CONTINUATION_SKIP = 5
     # Default timeout for serial port reads (in seconds)
     timeout = 1
 
@@ -42,6 +48,7 @@ class SerialComms:
         self._notification = []  # Buffer containing lines from an unsolicited notification from the modem
         # Set when a bare "+CDS:" header line was just seen; the PDU data line following it belongs to that same URC
         self._expectUrcContinuation = False
+        self._urcContinuationLinesSkipped = 0
         # Reentrant lock for managing concurrent write access to the underlying serial port
         self._txLock = threading.RLock()
 
@@ -74,9 +81,18 @@ class SerialComms:
         notifyCallback() even if a command response is currently pending (e.g. a delivery report or an
         incoming SMS indication arriving while another AT command, such as a SMS send, is in progress) """
         if self._expectUrcContinuation:
-            # This is the PDU data line following a bare "+CDS:" header line
-            self._expectUrcContinuation = False
-            return True
+            if self.HEX_PDU_RE.match(line):
+                # This is the PDU data line following a bare "+CDS:" header line
+                self._expectUrcContinuation = False
+                self._urcContinuationLinesSkipped = 0
+                return True
+            # Not the PDU yet - a command response or another notification got interleaved in between;
+            # let this line go through the normal classification below, keep waiting for the real PDU
+            self._urcContinuationLinesSkipped += 1
+            if self._urcContinuationLinesSkipped >= self.MAX_URC_CONTINUATION_SKIP:
+                self.log.warning('Gave up waiting for the PDU continuation of a "+CDS:" header after %d interleaved lines', self._urcContinuationLinesSkipped)
+                self._expectUrcContinuation = False
+                self._urcContinuationLinesSkipped = 0
         if line.startswith(self.URC_PREFIXES):
             return True
         if line.startswith('+CDS:'):

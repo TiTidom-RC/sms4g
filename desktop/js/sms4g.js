@@ -15,9 +15,13 @@
  * along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
  */
 
+// Protection contre les chargements multiples du script (navigation SPA Jeedom, cache...)
+(function () {
+  'use strict'
+
 function addCmdToTable(_cmd) {
   if (!isset(_cmd)) {
-    var _cmd = { configuration: {} };
+    _cmd = { configuration: {} };
   }
   if (!isset(_cmd.type) || !isset(_cmd.subType)) {
     // user is adding a new action message command
@@ -25,68 +29,98 @@ function addCmdToTable(_cmd) {
     _cmd.subType = 'message';
   }
 
-  var tr = '<tr class="cmd" data-cmd_id="' + init(_cmd.id) + '">';
-  tr += '<td>';
-  tr += '<input class="cmdAttr form-control input-sm" data-l1key="id" style="display : none;">';
-  tr += '<div class="input-group">';
-  tr += '<input class="cmdAttr form-control input-sm roundedLeft" data-l1key="name" placeholder="{{Nom de la commande}}">';
-  tr += '<span class="input-group-btn"><a class="cmdAction btn btn-sm btn-default" data-l1key="chooseIcon" title="{{Choisir une icône}}"><i class="fas fa-icons"></i></a></span>';
-  tr += '<span class="cmdAttr input-group-addon roundedRight" data-l1key="display" data-l2key="icon" style="font-size:19px;padding:0 5px 0 0!important;"></span>';
-  tr += '</div>';
-  if (_cmd.type == 'action' && _cmd.logicalId != 'send_to_custom_number') {
-    tr += '<td>';
-    tr += '<select class="form-control cmdAttr input-sm" data-l1key="configuration" data-l2key="user"></select>';
-    tr += '</td>';
-    tr += '<td><input class="cmdAttr form-control input-sm" data-l1key="configuration" data-l2key="phonenumber"></td>';
-  } else {
-    tr += '<td>';
-    tr += '</td>';
-    tr += '<td></td>';
-  }
-  tr += '<td>';
-  tr += '<label class="checkbox-inline"><input type="checkbox" class="cmdAttr" data-l1key="isVisible" checked/>{{Afficher}}</label> '
-  tr += '<label class="checkbox-inline"><input type="checkbox" class="cmdAttr" data-l1key="isHistorized" checked/>{{Historiser}}</label> '
-  tr += '</td>';
-  tr += '<td>';
-  tr += '<span class="cmdAttr" data-l1key="htmlstate"></span>';
-  tr += '</td>';
-  tr += '<td>';
-  tr += '<input class="cmdAttr form-control input-sm" data-l1key="type" value="' + init(_cmd.type) + '" style="display : none;" />';
-  tr += '<input class="cmdAttr form-control input-sm" data-l1key="subType" value="' + init(_cmd.subType) + '" style="display : none;" />';
-  if (is_numeric(_cmd.id)) {
-    tr += '<a class="btn btn-default btn-xs cmdAction" data-action="configure"><i class="fas fa-cogs"></i></a> ';
-    tr += '<a class="btn btn-default btn-xs cmdAction" data-action="test"><i class="fas fa-rss"></i> {{Tester}}</a>';
-  }
-  tr += '<i class="fas fa-minus-circle pull-right cmdAction cursor" data-action="remove" title="{{Supprimer la commande}}"></i></td>'
-  tr += '</tr>';
+  var showUserPhone = _cmd.type == 'action' && _cmd.logicalId != 'send_to_custom_number';
 
-  $('#table_cmd tbody').append(tr);
-  var tr = $('#table_cmd tbody tr:last');
-  tr.setValues(_cmd, '.cmdAttr');
-  jeedom.cmd.changeType(tr, init(_cmd.subType));
+  var rowHtml = '<td>';
+  rowHtml += '<input class="cmdAttr form-control input-sm" data-l1key="id" style="display : none;">';
+  rowHtml += '<div class="input-group">';
+  rowHtml += '<input class="cmdAttr form-control input-sm roundedLeft" data-l1key="name" placeholder="{{Nom de la commande}}">';
+  rowHtml += '<span class="input-group-btn"><a class="cmdAction btn btn-sm btn-default" data-l1key="chooseIcon" title="{{Choisir une icône}}"><i class="fas fa-icons"></i></a></span>';
+  rowHtml += '<span class="cmdAttr input-group-addon roundedRight" data-l1key="display" data-l2key="icon" style="font-size:19px;padding:0 5px 0 0!important;"></span>';
+  rowHtml += '</div>';
+  rowHtml += '</td>';
+  if (showUserPhone) {
+    rowHtml += '<td>';
+    rowHtml += '<select class="form-control cmdAttr input-sm" data-l1key="configuration" data-l2key="user"></select>';
+    rowHtml += '</td>';
+    rowHtml += '<td><input class="cmdAttr form-control input-sm" data-l1key="configuration" data-l2key="phonenumber"></td>';
+  } else {
+    rowHtml += '<td>';
+    rowHtml += '</td>';
+    rowHtml += '<td></td>';
+  }
+  rowHtml += '<td>';
+  rowHtml += '<label class="checkbox-inline"><input type="checkbox" class="cmdAttr" data-l1key="isVisible" checked/>{{Afficher}}</label> ';
+  rowHtml += '<label class="checkbox-inline"><input type="checkbox" class="cmdAttr" data-l1key="isHistorized" checked/>{{Historiser}}</label> ';
+  rowHtml += '</td>';
+  rowHtml += '<td>';
+  rowHtml += '<span class="cmdAttr" data-l1key="htmlstate"></span>';
+  rowHtml += '</td>';
+  rowHtml += '<td>';
+  rowHtml += '<input class="cmdAttr form-control input-sm" data-l1key="type" value="' + init(_cmd.type) + '" style="display : none;" />';
+  rowHtml += '<input class="cmdAttr form-control input-sm" data-l1key="subType" value="' + init(_cmd.subType) + '" style="display : none;" />';
+  if (is_numeric(_cmd.id)) {
+    rowHtml += '<a class="btn btn-default btn-xs cmdAction" data-action="configure"><i class="fas fa-cogs"></i></a> ';
+    rowHtml += '<a class="btn btn-default btn-xs cmdAction" data-action="test"><i class="fas fa-rss"></i> {{Tester}}</a>';
+  }
+  rowHtml += '<i class="fas fa-minus-circle pull-right cmdAction cursor" data-action="remove" title="{{Supprimer la commande}}"></i></td>';
+
+  var newRow = document.createElement('tr');
+  newRow.className = 'cmd';
+  newRow.setAttribute('data-cmd_id', init(_cmd.id));
+  newRow.innerHTML = rowHtml;
+
+  var tableBody = document.querySelector('#table_cmd tbody');
+  if (!tableBody) {
+    return;
+  }
+  tableBody.appendChild(newRow);
+
+  newRow.setJeeValues(_cmd, '.cmdAttr');
+  jeedom.cmd.changeType(newRow, init(_cmd.subType));
   jeedom.user.all({
     error: function (error) {
-      $('#div_alert').showAlert({ message: error.message, level: 'danger' });
+      jeedomUtils.showAlert({ message: error.message, level: 'danger' });
     },
     success: function (data) {
       var option = '<option value="">Aucun</option>';
       for (var i in data) {
         option += '<option value="' + data[i].id + '">' + data[i].login + '</option>';
       }
-      tr.find('.cmdAttr[data-l1key=configuration][data-l2key=user]').empty().append(option);
-      tr.find('.cmdAttr[data-l1key=configuration][data-l2key=user]').val(init(_cmd.configuration.user));
+      var userSelect = newRow.querySelector('.cmdAttr[data-l1key=configuration][data-l2key=user]');
+      if (userSelect) {
+        userSelect.innerHTML = option;
+        userSelect.jeeValue(init(_cmd.configuration.user));
+      }
       modifyWithoutSave = false;
     }
   });
 }
+window.addCmdToTable = addCmdToTable;
 
-$('.eqLogicAttr[data-l2key="allowUnknownOrigin"]').on('change', function () {
-  $('#autoAddNewNumber').toggle(this.checked);
-}).change();
+var allowUnknownOriginInput = document.querySelector('.eqLogicAttr[data-l2key="allowUnknownOrigin"]');
+if (allowUnknownOriginInput) {
+  var toggleAutoAddNewNumber = function () {
+    var el = document.getElementById('autoAddNewNumber');
+    if (el) {
+      el.style.display = allowUnknownOriginInput.checked ? 'block' : 'none';
+    }
+  };
+  allowUnknownOriginInput.addEventListener('change', toggleAutoAddNewNumber);
+  toggleAutoAddNewNumber();
+}
 
-$('.eqLogicAttr[data-l2key="autoAddNewNumber"]').on('change', function () {
-  $('#autoAddNewNumberWarning').toggle(this.checked);
-}).change();
+var autoAddNewNumberInput = document.querySelector('.eqLogicAttr[data-l2key="autoAddNewNumber"]');
+if (autoAddNewNumberInput) {
+  var toggleAutoAddNewNumberWarning = function () {
+    var el = document.getElementById('autoAddNewNumberWarning');
+    if (el) {
+      el.style.display = autoAddNewNumberInput.checked ? 'block' : 'none';
+    }
+  };
+  autoAddNewNumberInput.addEventListener('change', toggleAutoAddNewNumberWarning);
+  toggleAutoAddNewNumberWarning();
+}
 
 // Ouverture des liens Documentation/Communauté (boutons du bloc "Gestion")
 document.body.addEventListener('click', function (event) {
@@ -98,3 +132,4 @@ document.body.addEventListener('click', function (event) {
     }
   }
 });
+})()

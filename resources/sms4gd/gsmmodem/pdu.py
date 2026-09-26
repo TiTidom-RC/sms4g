@@ -901,15 +901,28 @@ def unpackSeptets(septets, numberOfSeptets=None, prevOctet=None, shift=7):
 
 def decodeUcs2(byteIter, numBytes):
     """ Decodes UCS2-encoded text from the specified byte iterator, up to a maximum of numBytes """
-    userData = []
+    codeUnits = []
     i = 0
     try:
         while i < numBytes:
-            userData.append(chr((next(byteIter) << 8) | next(byteIter)))
+            codeUnits.append((next(byteIter) << 8) | next(byteIter))
             i += 2
     except StopIteration:
         # Not enough bytes in iterator to reach numBytes; return what we have
         pass
+    userData = []
+    j = 0
+    while j < len(codeUnits):
+        unit = codeUnits[j]
+        # Recombine a valid high+low surrogate pair (chars outside the Basic Multilingual
+        # Plane, e.g. most emoji, are encoded in UCS2 as two 16-bit code units)
+        if 0xD800 <= unit <= 0xDBFF and j + 1 < len(codeUnits) and 0xDC00 <= codeUnits[j + 1] <= 0xDFFF:
+            codepoint = 0x10000 + ((unit - 0xD800) << 10) + (codeUnits[j + 1] - 0xDC00)
+            userData.append(chr(codepoint))
+            j += 2
+        else:
+            userData.append(chr(unit))
+            j += 1
     return ''.join(userData)
 
 

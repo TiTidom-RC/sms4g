@@ -109,7 +109,7 @@ if (!isConnect('admin')) {
             <legend><i class="fas fa-server"></i> {{Système}}</legend>
             <div class="form-group">
                 <label class="col-lg-3 control-label">ModemManager
-                    <sup><i class="fas fa-question-circle tooltips" title="{{Service système sans rapport avec ce plugin (gestion de modems pour l'accès Internet) qui peut entrer en conflit avec l'accès au port série du modem lors d'un branchement/débranchement}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Service système de gestion des modems pour l'accès Internet (sans rapport avec l'envoi/réception de SMS) : peut entrer en conflit avec l'accès au port série du modem lors d'un branchement/débranchement}}"></i></sup>
                 </label>
                 <div class="col-lg-9" style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding-top:4px;">
                     <button type="button" id="btn_checkModemManager" class="btn btn-sm btn-info">
@@ -316,7 +316,7 @@ if (!isConnect('admin')) {
         const btn = event.currentTarget
         jeeDialog.confirm({
             title: '{{Désactivation de}} ModemManager',
-            message: '<div class="alert alert-warning"><i class="fas fa-exclamation-triangle"></i> {{ModemManager va être désactivé et arrêté}} (<code>systemctl disable --now</code>).<br>{{Ce changement est global au système, pas seulement à ce plugin.}}</div>{{Continuer ?}}'
+            message: '<div class="alert alert-warning"><i class="fas fa-exclamation-triangle"></i> {{ModemManager va être désactivé et arrêté}} (<code>systemctl disable --now</code>).<br>{{Ce changement est global au système.}}</div>{{Confirmer la désactivation ?}}'
         }, (result) => {
             if (!result) {
                 return

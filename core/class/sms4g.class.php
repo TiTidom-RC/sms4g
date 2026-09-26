@@ -85,7 +85,8 @@ class sms4g extends eqLogic {
 	}
 
 	/**
-	 * Vérifie l'état de ModemManager (service système sans rapport avec ce plugin, mais qui peut
+	 * Vérifie l'état de ModemManager (service système de gestion des modems pour l'accès Internet,
+	 * sans rapport avec l'envoi/réception de SMS, mais qui peut
 	 * entrer en conflit avec l'accès au port série du modem lors d'un (re)branchement USB).
 	 *
 	 * @return array{installed: bool, active: bool, enabled: bool}
@@ -446,16 +447,19 @@ class sms4gCmd extends cmd {
 	/*     * ***********************Méthode static*************************** */
 
 	public static function cleanSMS(string $_message) {
-		$caracteres = array(
+		$characterMap = array(
 			'À' => 'a', 'Á' => 'a', 'Â' => 'a', 'Ä' => 'a', 'à' => 'a', 'á' => 'a', 'â' => 'a', 'ä' => 'a', '@' => 'a',
+			'Ç' => 'c', 'ç' => 'c',
 			'È' => 'e', 'É' => 'e', 'Ê' => 'e', 'Ë' => 'e', 'è' => 'e', 'é' => 'e', 'ê' => 'e', 'ë' => 'e', '€' => 'e',
 			'Ì' => 'i', 'Í' => 'i', 'Î' => 'i', 'Ï' => 'i', 'ì' => 'i', 'í' => 'i', 'î' => 'i', 'ï' => 'i',
+			'Ñ' => 'n', 'ñ' => 'n',
 			'Ò' => 'o', 'Ó' => 'o', 'Ô' => 'o', 'Ö' => 'o', 'ò' => 'o', 'ó' => 'o', 'ô' => 'o', 'ö' => 'o',
 			'Ù' => 'u', 'Ú' => 'u', 'Û' => 'u', 'Ü' => 'u', 'ù' => 'u', 'ú' => 'u', 'û' => 'u', 'ü' => 'u', 'µ' => 'u',
+			'Ý' => 'y', 'ý' => 'y', 'Ÿ' => 'y', 'ÿ' => 'y',
 			'Œ' => 'oe', 'œ' => 'oe',
 			'$' => 's'
 		);
-		return preg_replace('#[^A-Za-z0-9 \n\.\'=\*:]+#', '', strtr($_message, $caracteres));
+		return preg_replace('#[^A-Za-z0-9 \n\.\'=\*:]+#', '', strtr($_message, $characterMap));
 	}
 
 	/*     * *********************Méthode d'instance************************* */

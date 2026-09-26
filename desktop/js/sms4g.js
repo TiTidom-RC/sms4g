@@ -21,115 +21,113 @@
 
 function addCmdToTable(_cmd) {
   if (!isset(_cmd)) {
-    _cmd = { configuration: {} };
+    _cmd = { configuration: {} }
   }
   if (!isset(_cmd.type) || !isset(_cmd.subType)) {
     // user is adding a new action message command
-    _cmd.type = 'action';
-    _cmd.subType = 'message';
+    _cmd.type = 'action'
+    _cmd.subType = 'message'
   }
 
-  var showUserPhone = _cmd.type == 'action' && _cmd.logicalId != 'send_to_custom_number';
+  const showUserPhone = _cmd.type == 'action' && _cmd.logicalId != 'send_to_custom_number'
+  const testButtons = is_numeric(_cmd.id)
+    ? '<a class="btn btn-default btn-xs cmdAction" data-action="configure"><i class="fas fa-cogs"></i></a> <a class="btn btn-default btn-xs cmdAction" data-action="test"><i class="fas fa-rss"></i> {{Tester}}</a>'
+    : ''
 
-  var rowHtml = '<td>';
-  rowHtml += '<input class="cmdAttr form-control input-sm" data-l1key="id" style="display : none;">';
-  rowHtml += '<div class="input-group">';
-  rowHtml += '<input class="cmdAttr form-control input-sm roundedLeft" data-l1key="name" placeholder="{{Nom de la commande}}">';
-  rowHtml += '<span class="input-group-btn"><a class="cmdAction btn btn-sm btn-default" data-l1key="chooseIcon" title="{{Choisir une icône}}"><i class="fas fa-icons"></i></a></span>';
-  rowHtml += '<span class="cmdAttr input-group-addon roundedRight" data-l1key="display" data-l2key="icon" style="font-size:19px;padding:0 5px 0 0!important;"></span>';
-  rowHtml += '</div>';
-  rowHtml += '</td>';
-  if (showUserPhone) {
-    rowHtml += '<td>';
-    rowHtml += '<select class="form-control cmdAttr input-sm" data-l1key="configuration" data-l2key="user"></select>';
-    rowHtml += '</td>';
-    rowHtml += '<td><input class="cmdAttr form-control input-sm" data-l1key="configuration" data-l2key="phonenumber"></td>';
-  } else {
-    rowHtml += '<td>';
-    rowHtml += '</td>';
-    rowHtml += '<td></td>';
-  }
-  rowHtml += '<td>';
-  rowHtml += '<label class="checkbox-inline"><input type="checkbox" class="cmdAttr" data-l1key="isVisible" checked/>{{Afficher}}</label> ';
-  rowHtml += '<label class="checkbox-inline"><input type="checkbox" class="cmdAttr" data-l1key="isHistorized" checked/>{{Historiser}}</label> ';
-  rowHtml += '</td>';
-  rowHtml += '<td>';
-  rowHtml += '<span class="cmdAttr" data-l1key="htmlstate"></span>';
-  rowHtml += '</td>';
-  rowHtml += '<td>';
-  rowHtml += '<input class="cmdAttr form-control input-sm" data-l1key="type" value="' + init(_cmd.type) + '" style="display : none;" />';
-  rowHtml += '<input class="cmdAttr form-control input-sm" data-l1key="subType" value="' + init(_cmd.subType) + '" style="display : none;" />';
-  if (is_numeric(_cmd.id)) {
-    rowHtml += '<a class="btn btn-default btn-xs cmdAction" data-action="configure"><i class="fas fa-cogs"></i></a> ';
-    rowHtml += '<a class="btn btn-default btn-xs cmdAction" data-action="test"><i class="fas fa-rss"></i> {{Tester}}</a>';
-  }
-  rowHtml += '<i class="fas fa-minus-circle pull-right cmdAction cursor" data-action="remove" title="{{Supprimer la commande}}"></i></td>';
+  const rowHtml = `<td>
+      <input class="cmdAttr form-control input-sm" data-l1key="id" style="display : none;">
+      <div class="input-group">
+        <input class="cmdAttr form-control input-sm roundedLeft" data-l1key="name" placeholder="{{Nom de la commande}}">
+        <span class="input-group-btn"><a class="cmdAction btn btn-sm btn-default" data-l1key="chooseIcon" title="{{Choisir une icône}}"><i class="fas fa-icons"></i></a></span>
+        <span class="cmdAttr input-group-addon roundedRight" data-l1key="display" data-l2key="icon" style="font-size:19px;padding:0 5px 0 0!important;"></span>
+      </div>
+    </td>
+    ${showUserPhone
+      ? '<td><select class="form-control cmdAttr input-sm" data-l1key="configuration" data-l2key="user"></select></td><td><input class="cmdAttr form-control input-sm" data-l1key="configuration" data-l2key="phonenumber"></td>'
+      : '<td></td><td></td>'}
+    <td>
+      <label class="checkbox-inline"><input type="checkbox" class="cmdAttr" data-l1key="isVisible" checked/>{{Afficher}}</label>
+      <label class="checkbox-inline"><input type="checkbox" class="cmdAttr" data-l1key="isHistorized" checked/>{{Historiser}}</label>
+    </td>
+    <td><span class="cmdAttr" data-l1key="htmlstate"></span></td>
+    <td>
+      <input class="cmdAttr form-control input-sm" data-l1key="type" value="${init(_cmd.type)}" style="display : none;" />
+      <input class="cmdAttr form-control input-sm" data-l1key="subType" value="${init(_cmd.subType)}" style="display : none;" />
+      ${testButtons}
+      <i class="fas fa-minus-circle pull-right cmdAction cursor" data-action="remove" title="{{Supprimer la commande}}"></i>
+    </td>`
 
-  var newRow = document.createElement('tr');
-  newRow.className = 'cmd';
-  newRow.setAttribute('data-cmd_id', init(_cmd.id));
-  newRow.innerHTML = rowHtml;
+  const newRow = Object.assign(document.createElement('tr'), {
+    className: 'cmd',
+    innerHTML: rowHtml
+  })
+  newRow.setAttribute('data-cmd_id', init(_cmd.id))
 
-  var tableBody = document.querySelector('#table_cmd tbody');
+  const tableBody = document.querySelector('#table_cmd tbody')
   if (!tableBody) {
-    return;
+    return console.error('Table body not found')
   }
-  tableBody.appendChild(newRow);
+  tableBody.appendChild(newRow)
 
-  newRow.setJeeValues(_cmd, '.cmdAttr');
-  jeedom.cmd.changeType(newRow, init(_cmd.subType));
+  newRow.setJeeValues(_cmd, '.cmdAttr')
+  jeedom.cmd.changeType(newRow, init(_cmd.subType))
   jeedom.user.all({
-    error: function (error) {
-      jeedomUtils.showAlert({ message: error.message, level: 'danger' });
+    error: (error) => {
+      jeedomUtils.showAlert({ message: error.message, level: 'danger' })
     },
-    success: function (data) {
-      var option = '<option value="">Aucun</option>';
-      for (var i in data) {
-        option += '<option value="' + data[i].id + '">' + data[i].login + '</option>';
+    success: (data) => {
+      let option = '<option value="">Aucun</option>'
+      for (const i in data) {
+        option += '<option value="' + data[i].id + '">' + data[i].login + '</option>'
       }
-      var userSelect = newRow.querySelector('.cmdAttr[data-l1key=configuration][data-l2key=user]');
+      const userSelect = newRow.querySelector('.cmdAttr[data-l1key=configuration][data-l2key=user]')
       if (userSelect) {
-        userSelect.innerHTML = option;
-        userSelect.jeeValue(init(_cmd.configuration.user));
+        userSelect.innerHTML = option
+        userSelect.jeeValue(init(_cmd.configuration.user))
       }
-      modifyWithoutSave = false;
+      modifyWithoutSave = false
     }
-  });
+  })
 }
-window.addCmdToTable = addCmdToTable;
+window.addCmdToTable = addCmdToTable
 
-var allowUnknownOriginInput = document.querySelector('.eqLogicAttr[data-l2key="allowUnknownOrigin"]');
+const allowUnknownOriginInput = document.querySelector('.eqLogicAttr[data-l2key="allowUnknownOrigin"]')
 if (allowUnknownOriginInput) {
-  var toggleAutoAddNewNumber = function () {
-    var el = document.getElementById('autoAddNewNumber');
+  const toggleAutoAddNewNumber = () => {
+    const el = document.getElementById('autoAddNewNumber')
     if (el) {
-      el.style.display = allowUnknownOriginInput.checked ? 'block' : 'none';
+      el.style.display = allowUnknownOriginInput.checked ? 'block' : 'none'
     }
-  };
-  allowUnknownOriginInput.addEventListener('change', toggleAutoAddNewNumber);
-  toggleAutoAddNewNumber();
+  }
+  allowUnknownOriginInput.addEventListener('change', toggleAutoAddNewNumber)
+  toggleAutoAddNewNumber()
 }
 
-var autoAddNewNumberInput = document.querySelector('.eqLogicAttr[data-l2key="autoAddNewNumber"]');
+const autoAddNewNumberInput = document.querySelector('.eqLogicAttr[data-l2key="autoAddNewNumber"]')
 if (autoAddNewNumberInput) {
-  var toggleAutoAddNewNumberWarning = function () {
-    var el = document.getElementById('autoAddNewNumberWarning');
+  const toggleAutoAddNewNumberWarning = () => {
+    const el = document.getElementById('autoAddNewNumberWarning')
     if (el) {
-      el.style.display = autoAddNewNumberInput.checked ? 'block' : 'none';
+      el.style.display = autoAddNewNumberInput.checked ? 'block' : 'none'
     }
-  };
-  autoAddNewNumberInput.addEventListener('change', toggleAutoAddNewNumberWarning);
-  toggleAutoAddNewNumberWarning();
+  }
+  autoAddNewNumberInput.addEventListener('change', toggleAutoAddNewNumberWarning)
+  toggleAutoAddNewNumberWarning()
 }
 
 // Ouverture des liens Documentation/Communauté (boutons du bloc "Gestion")
-document.body.addEventListener('click', function (event) {
-  var locationTarget = event.target.closest('.pluginAction[data-action=openLocation]');
+// registerEvent()/unRegisterEvent() (Core Jeedom, dom.utils.js) : nettoyes automatiquement par
+// domUtils.unRegisterEvents() a chaque jeedomUtils.loadPage() (navigation SPA), y compris sur
+// document.body - pas besoin de garde manuel, l'id nomme evite de toucher aux autres ecouteurs 'click'
+// Note : function nommee obligatoire ici (pas de fleche) - unRegisterEvent('click', 'sms4gOpenLocation')
+// s'appuie sur listener.name, qu'une arrow function passee inline n'a jamais (contrairement a une const assignee)
+document.body.unRegisterEvent('click', 'sms4gOpenLocation').registerEvent('click', function sms4gOpenLocation(event) {
+  const locationTarget = event.target.closest('.pluginAction[data-action=openLocation]')
   if (locationTarget) {
-    var location = locationTarget.getAttribute('data-location');
+    const location = locationTarget.getAttribute('data-location')
     if (location) {
-      window.open(location, '_blank', null);
+      window.open(location, '_blank', null)
     }
   }
-});
+})
 })()

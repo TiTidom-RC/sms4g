@@ -88,7 +88,9 @@ function addCmdToTable(_cmd) {
         userSelect.innerHTML = option
         userSelect.jeeValue(init(_cmd.configuration.user))
       }
-      modifyWithoutSave = false
+      // jeeFrontEnd.modifyWithoutSave (pas le flag global bare "modifyWithoutSave", fragile en mode strict) : evite
+      // le message "modifications non enregistrees" apres ce simple peuplement de select, cf utils.js ligne ~766
+      jeeFrontEnd.modifyWithoutSave = false
     }
   })
 }

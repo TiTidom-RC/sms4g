@@ -149,8 +149,8 @@ def _createAndConnectModem():
 
 
 def _catchUpStoredSms(modem):
-    # Appel unique post-connexion (pas a chaque cycle) : la reception temps reel passe par +CMTI,
-    # repeter ce polling en continu ferait courir une race avec lui (meme SMS livre deux fois si
+    # Appel unique post-connexion (pas à chaque cycle) : la réception temps réel passe par +CMTI,
+    # répéter ce polling en continu ferait courir une race avec lui (même SMS livré deux fois si
     # +CMTI le traite pendant que ce polling le voit encore comme non lu)
     try:
         modem.processStoredSms(True)

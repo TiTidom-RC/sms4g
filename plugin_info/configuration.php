@@ -106,6 +106,24 @@ if (!isConnect('admin')) {
             </div>
         </div>
         <div>
+            <legend><i class="fas fa-server"></i> {{Système}}</legend>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{ModemManager}}
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Service système sans rapport avec ce plugin (gestion de modems pour l'accès Internet) qui peut entrer en conflit avec l'accès au port série du modem lors d'un branchement/débranchement}}"></i></sup>
+                </label>
+                <div class="col-lg-9" style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding-top:4px;">
+                    <button type="button" id="btn_checkModemManager" class="btn btn-sm btn-info">
+                        <i class="fas fa-stethoscope"></i> {{Vérifier}}
+                    </button>
+                    <button type="button" id="btn_disableModemManager" class="btn btn-sm btn-warning">
+                        <i class="fas fa-ban"></i> {{Désactiver}}
+                    </button>
+                    <span id="modemManagerCheck_active"><i class="fas fa-question-circle" style="color:var(--al-default-color,#95a5a6)"></i> {{Actif}}</span>
+                    <span id="modemManagerCheck_enabled"><i class="fas fa-question-circle" style="color:var(--al-default-color,#95a5a6)"></i> {{Activé au démarrage}}</span>
+                </div>
+            </div>
+        </div>
+        <div>
             <legend><i class="fas fa-sim-card"></i> {{Modem}}</legend>
             <div class="form-group">
                 <label class="col-lg-3 control-label">{{Port SMS}}
@@ -249,3 +267,70 @@ if (!isConnect('admin')) {
         </div>
     </fieldset>
 </form>
+<script>
+(function () {
+    var _unknownHtml = '<i class="fas fa-question-circle" style="color:var(--al-default-color,#95a5a6)"></i> ';
+
+    function _indicator(ok, label, warn) {
+        var icon  = ok ? 'fa-check-circle' : (warn ? 'fa-exclamation-triangle' : 'fa-times-circle');
+        var color = ok ? 'var(--al-success-color,#2ecc71)' : (warn ? 'var(--al-warning-color,#f39c12)' : 'var(--al-danger-color,#e74c3c)');
+        return '<i class="fas ' + icon + '" style="color:' + color + '"></i> ' + label;
+    }
+
+    function _postAjax(action, onSuccess, onError) {
+        fetch('plugins/sms4g/core/ajax/sms4g.ajax.php', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: 'action=' + action
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.state === 'ok') {
+                onSuccess(data.result);
+            } else {
+                onError(data.result || '{{Erreur inconnue}}');
+            }
+        })
+        .catch(function (e) { onError(e.message || '{{Erreur réseau}}'); });
+    }
+
+    function _refreshModemManagerStatus(onDone) {
+        _postAjax('checkModemManagerStatus', function (result) {
+            if (!result.installed) {
+                document.getElementById('modemManagerCheck_active').innerHTML = _indicator(true, '{{Non installé}}');
+                document.getElementById('modemManagerCheck_enabled').innerHTML = '';
+            } else {
+                document.getElementById('modemManagerCheck_active').innerHTML = _indicator(!result.active, result.active ? '{{Actif}}' : '{{Inactif}}', result.active);
+                document.getElementById('modemManagerCheck_enabled').innerHTML = _indicator(!result.enabled, result.enabled ? '{{Activé au démarrage}}' : '{{Désactivé au démarrage}}', result.enabled);
+            }
+            if (onDone) { onDone(); }
+        }, function (err) {
+            document.getElementById('modemManagerCheck_active').innerHTML = _unknownHtml + '{{Actif}}';
+            document.getElementById('modemManagerCheck_enabled').innerHTML = _unknownHtml + '{{Activé au démarrage}}';
+            jeedomUtils.showAlert({message: '{{ModemManager :: Erreur de vérification}} — ' + err, level: 'danger'});
+            if (onDone) { onDone(); }
+        });
+    }
+
+    document.getElementById('btn_checkModemManager').addEventListener('click', function () {
+        var btn = this;
+        btn.disabled = true;
+        _refreshModemManagerStatus(function () { btn.disabled = false; });
+    });
+
+    document.getElementById('btn_disableModemManager').addEventListener('click', function () {
+        if (!window.confirm('{{ModemManager va être désactivé et arrêté (systemctl disable --now). Ce changement est global au système, pas seulement à ce plugin. Continuer ?}}')) {
+            return;
+        }
+        var btn = this;
+        btn.disabled = true;
+        _postAjax('disableModemManager', function () {
+            jeedomUtils.showAlert({message: '{{ModemManager désactivé avec succès}}', level: 'success'});
+            _refreshModemManagerStatus(function () { btn.disabled = false; });
+        }, function (err) {
+            btn.disabled = false;
+            jeedomUtils.showAlert({message: '{{ModemManager :: Échec de la désactivation}} — ' + err, level: 'danger'});
+        });
+    });
+})()
+</script>

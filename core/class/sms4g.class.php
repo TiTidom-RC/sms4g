@@ -84,6 +84,37 @@ class sms4g extends eqLogic {
 		return $pyenvVersion;
 	}
 
+	/**
+	 * Vérifie l'état de ModemManager (service système sans rapport avec ce plugin, mais qui peut
+	 * entrer en conflit avec l'accès au port série du modem lors d'un (re)branchement USB).
+	 *
+	 * @return array{installed: bool, active: bool, enabled: bool}
+	 */
+	public static function checkModemManagerStatus() {
+		$result = array('installed' => false, 'active' => false, 'enabled' => false);
+		$unitFiles = exec(system::getCmdSudo() . 'systemctl list-unit-files ModemManager.service 2>/dev/null | grep -c ModemManager');
+		$result['installed'] = (trim((string) $unitFiles) !== '0' && $unitFiles !== false);
+		if (!$result['installed']) {
+			return $result;
+		}
+		$activeState = trim((string) exec(system::getCmdSudo() . 'systemctl is-active ModemManager 2>/dev/null'));
+		$result['active'] = ($activeState === 'active');
+		$enabledState = trim((string) exec(system::getCmdSudo() . 'systemctl is-enabled ModemManager 2>/dev/null'));
+		$result['enabled'] = ($enabledState === 'enabled');
+		return $result;
+	}
+
+	/**
+	 * Désactive et arrête ModemManager (systemctl disable --now).
+	 *
+	 * @return bool true si la commande s'est terminée avec succès
+	 */
+	public static function disableModemManager() {
+		exec(system::getCmdSudo() . 'systemctl disable --now ModemManager 2>&1', $output, $returnVar);
+		log::add('sms4g', 'info', '[ModemManager][Désactivation] ' . implode(' | ', $output));
+		return $returnVar === 0;
+	}
+
 	public static function getPythonDepFromRequirements() {
 		$pythonDepString = '';
 		$pythonDepNum = 0;

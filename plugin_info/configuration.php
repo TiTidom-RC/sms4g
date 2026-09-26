@@ -23,78 +23,322 @@ if (!isConnect('admin')) {
 ?>
 <form class="form-horizontal">
     <fieldset>
-        <div class="form-group">
-            <label class="col-sm-5 control-label">{{Port SMS}}</label>
-            <div class="col-sm-5">
-                <select class="configKey form-control" data-l1key="port">
-                    <option value="auto">{{Auto}}</option>
-                    <?php
-                    foreach (jeedom::getUsbMapping() as $name => $value) {
-                        echo '<option value="' . $name . '">' . $name . ' (' . $value . ')</option>';
-                    }
-                    foreach (ls('/dev/', 'tty*') as $value) {
-                        echo '<option value="/dev/' . $value . '">/dev/' . $value . '</option>';
-                    }
-                    ?>
-                </select>
+        <div>
+            <legend><i class="fas fa-info"></i> {{Plugin}}</legend>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Version Plugin}}
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Version du Plugin (A indiquer sur Community)}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="pluginVersion" readonly />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Version Python}}
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Version de Python utilisée par le Plugin (A indiquer sur Community)}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="pythonVersion" readonly />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Version PyEnv}}
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Version de PyEnv utilisée par le Plugin (A indiquer sur Community)}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="pyenvVersion" readonly />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Désactiver les messages de MàJ}}
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Cocher cette case désactivera les messages de mise à jour du plugin dans le centre de message}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input type="checkbox" class="configKey" data-l1key="disableUpdateMsg" />
+                </div>
+            </div>
+            <legend><i class="fas fa-code"></i> {{Dépendances}}</legend>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Force les mises à jour Systèmes}}
+                    <sup><i class="fas fa-ban tooltips" style="color:var(--al-danger-color)!important;" title="{{Les dépendances devront être relancées après la sauvegarde de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Permet de forcer l'installation des mises à jour systèmes}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input type="checkbox" class="configKey" data-l1key="debugInstallUpdates" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Force la réinitialisation de PyEnv}}
+                    <sup><i class="fas fa-ban tooltips" style="color:var(--al-danger-color)!important;" title="{{Les dépendances devront être relancées après la sauvegarde de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Permet de forcer la réinitialisation de l'environnement Python utilisé par le plugin}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input type="checkbox" class="configKey" data-l1key="debugRestorePyEnv" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Force la réinitialisation de Venv}}
+                    <sup><i class="fas fa-ban tooltips" style="color:var(--al-danger-color)!important;" title="{{Les dépendances devront être relancées après la sauvegarde de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Permet de forcer la réinitialisation de l'environnement Venv utilisé par le plugin}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input type="checkbox" class="configKey" data-l1key="debugRestoreVenv" />
+                </div>
+            </div>
+            <legend><i class="fas fa-university"></i> {{Démon}}</legend>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Port socket interne}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{[ATTENTION] Ne changez ce paramètre qu'en cas de nécessité. (Défaut = 55115)}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="socketport" placeholder="55115" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Cycle (s)}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Cycle de scrutation du démon pour l'envoi et la réception des SMS. Un chiffre trop bas peut amener à une certaine instabilité.}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="cycle" />
+                </div>
             </div>
         </div>
-        <div class="form-group">
-            <label class="col-sm-5 control-label">{{Vitesse de communication (bauds)}}</label>
-            <div class="col-sm-5">
-                <select class="configKey form-control" data-l1key="serial_rate">
-                    <option value="115200">115200</option>
-                    <option value="9600">9600</option>
-                </select>
+        <div>
+            <legend><i class="fas fa-server"></i> {{Système}}</legend>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">ModemManager
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Service système de gestion des modems pour l'accès Internet (sans rapport avec l'envoi/réception de SMS) : peut entrer en conflit avec l'accès au port série du modem lors d'un branchement/débranchement}}"></i></sup>
+                </label>
+                <div class="col-lg-9" style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding-top:4px;">
+                    <button type="button" id="btn_checkModemManager" class="btn btn-sm btn-info">
+                        <i class="fas fa-stethoscope"></i> {{Vérifier}}
+                    </button>
+                    <button type="button" id="btn_disableModemManager" class="btn btn-sm btn-warning">
+                        <i class="fas fa-ban"></i> {{Désactiver}}
+                    </button>
+                    <span id="modemManagerCheck_active"><i class="fas fa-question-circle" style="color:var(--al-default-color,#95a5a6)"></i> {{Actif}}</span>
+                    <span id="modemManagerCheck_enabled"><i class="fas fa-question-circle" style="color:var(--al-default-color,#95a5a6)"></i> {{Activé au démarrage}}</span>
+                </div>
             </div>
         </div>
-        <div class="form-group">
-            <label class="col-sm-5 control-label">{{Code pin (laisser vide s'il n'y en a pas)}}</label>
-            <div class="col-sm-5">
-                <input type="password" class="configKey form-control" data-l1key="pin" />
+        <div>
+            <legend><i class="fas fa-sim-card"></i> {{Modem}}</legend>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Port SMS}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Privilégiez un port /dev/serial/by-id/... (stable) plutôt qu'un /dev/ttyUSB* (numérotation pouvant changer après un redémarrage ou un rebranchement)}}"></i></sup>
+                </label>
+                <div class="col-lg-3">
+                    <select class="configKey form-control" data-l1key="port">
+                        <option value="none">{{Aucun}}</option>
+                        <?php
+                        foreach (jeedom::getUsbMapping() as $name => $value) {
+                            echo '<option value="' . $name . '">' . $name . ' (' . $value . ')</option>';
+                        }
+                        foreach (ls('/dev/', 'tty*') as $value) {
+                            echo '<option value="/dev/' . $value . '">/dev/' . $value . '</option>';
+                        }
+                        ?>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Vitesse (bauds)}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{115200 convient à la plupart des modems ; 9600 peut être utile avec un modem plus ancien en cas de problème de communication}}"></i></sup>
+                </label>
+                <div class="col-lg-2">
+                    <select class="configKey form-control" data-l1key="serialRate">
+                        <option value="115200">115200</option>
+                        <option value="9600">9600</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Code PIN}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Laisser vide si votre carte SIM n'a pas de code PIN}}"></i></sup>
+                </label>
+                <div class="col-lg-2">
+                    <input type="password" class="configKey form-control" data-l1key="pin" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Texte mode}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{A utiliser si vous ne recevez pas de message (compatibilité avec un maximum de modem) mais enleve le support des SMS multiple et des caractères spéciaux}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input type="checkbox" class="configKey" data-l1key="textMode" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Forcer le mode 4G uniquement}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Recommandé si votre opérateur a coupé la 2G/3G : évite au modem de perdre du temps à les rechercher. Attention, si la couverture 4G est absente à un endroit, le modem ne se repliera pas sur 2G/3G. Uniquement pris en compte sur les modems SimCom (ex : SIM7600G-H)}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input type="checkbox" class="configKey" data-l1key="force4gOnly" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Force du signal}}
+                    <sup><i class="fas fa-question-circle tooltips" title="{{-1 = signal inconnu (pas de lecture disponible actuellement)}}"></i></sup>
+                </label>
+                <div class="col-lg-2">
+                    <span class="configKey" data-l1key="signalStrength"></span> / 30
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Réseau}}</label>
+                <div class="col-lg-3">
+                    <span class="configKey" data-l1key="networkName"></span>
+                </div>
             </div>
         </div>
-        <div class="form-group">
-            <label class="col-sm-5 control-label">{{Texte mode}}</label>
-            <div class="col-sm-5">
-                <input type="checkbox" class="configKey" data-l1key="text_mode" title='{{A utiliser si vous ne recevez pas de message (compatibilité avec un maximum de modem) mais enleve le support des SMS multiple et des caractères spéciaux}}' />
+        <div>
+            <legend><i class="fas fa-sms"></i> {{Messages}}</legend>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Découper au-delà de (caractères)}}
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Au-delà de cette longueur, le message est envoyé en plusieurs SMS distincts plutôt qu'un seul. Par défaut 612 (4 parties) : certains opérateurs/modems anciens rejettent silencieusement un groupe de plus de 4 parties}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="maxChartByMessage" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Passerelle SMS (SMSC)}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{A renseigner en cas d'erreur CMS 330 (SMSC number not set). Utiliser le code #*#*4636#*#* sur un mobile pour trouver le SMSC de votre opérateur}}"></i></sup>
+                </label>
+                <div class="col-lg-2">
+                    <input class="configKey form-control" data-l1key="smsc" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Demander un accusé de réception}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Le démon tentera de récupérer le statut de livraison (livré / échec) de chaque message envoyé}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input type="checkbox" class="configKey" data-l1key="deliveryReport" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Expiration des fragments incomplets (s)}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Si un SMS multi-parties (message long) n'est jamais reçu en entier, les fragments déjà reçus sont délivrés tels quels après ce délai, avec un marqueur aux emplacements manquants}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="concatPartsTtl" />
+                </div>
             </div>
         </div>
-        <div class="form-group">
-            <label class="col-sm-5 control-label">{{Découper les messages par paquet de caractères}}</label>
-            <div class="col-sm-5">
-                <input class="configKey form-control" data-l1key="maxChartByMessage" title='{{Par defaut 140}}' />
+        <div>
+            <legend><i class="fas fa-sync-alt"></i> {{Reconnexion automatique}}</legend>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Délai avant la première tentative (s)}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Ce délai double à chaque nouvel échec, jusqu'au délai maximum ci-dessous}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="reconnectBaseDelay" />
+                </div>
             </div>
-        </div>
-        <div class="form-group">
-            <label class="col-sm-5 control-label">{{Passerelle SMS / SMS Gateway (en cas d'erreur : CMS 330 SMSC number not set)}}</label>
-            <div class="col-sm-5">
-                <input class="configKey form-control" data-l1key="smsc" title='{{Utiliser le code #*#*4636#*#* sur un mobile pour trouver le SMSC de votre opérateur}}' />
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Délai maximum entre deux tentatives (s)}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="reconnectMaxDelay" />
+                </div>
             </div>
-        </div>
-        <div class="form-group">
-            <label class="col-sm-5 control-label">{{Force du signal}}</label>
-            <div class="col-sm-5">
-                <span class="configKey" data-l1key="signal_strengh"></span> / 30
-            </div>
-        </div>
-        <div class="form-group">
-            <label class="col-sm-5 control-label">{{Réseau}}</label>
-            <div class="col-sm-5">
-                <span class="configKey" data-l1key="network_name"></span>
-            </div>
-        </div>
-        <div class="form-group">
-            <label class="col-sm-5 control-label">{{Port socket interne}}</label>
-            <div class="col-sm-5">
-                <input class="configKey form-control" data-l1key="socketport" />
-            </div>
-        </div>
-        <div class="form-group">
-            <label class="col-sm-5 control-label">{{Cycle (s)}}</label>
-            <div class="col-sm-5">
-                <input class="configKey form-control" data-l1key="cycle" />
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Nombre maximum de tentatives}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Au-delà de ce nombre de tentatives infructueuses, le démon redémarre complètement}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="reconnectMaxAttempts" />
+                </div>
             </div>
         </div>
     </fieldset>
 </form>
+<script>
+(function () {
+    'use strict'
+    const AJAX_URL = 'plugins/sms4g/core/ajax/sms4g.ajax.php'
+    const unknownHtml = '<i class="fas fa-question-circle" style="color:var(--al-default-color,#95a5a6)"></i> '
+
+    const indicator = (ok, label, warn) => {
+        const icon = ok ? 'fa-check-circle' : (warn ? 'fa-exclamation-triangle' : 'fa-times-circle')
+        const color = ok ? 'var(--al-success-color,#2ecc71)' : (warn ? 'var(--al-warning-color,#f39c12)' : 'var(--al-danger-color,#e74c3c)')
+        return `<i class="fas ${icon}" style="color:${color}"></i> ${label}`
+    }
+
+    const refreshModemManagerStatus = (onDone) => {
+        domUtils.ajax({
+            type: 'POST',
+            url: AJAX_URL,
+            data: { action: 'checkModemManagerStatus' },
+            dataType: 'json',
+            error: (request, status, error) => handleAjaxError(request, status, error),
+            success: (data) => {
+                if (data.state !== 'ok') {
+                    jeedomUtils.showAlert({ message: data.result, level: 'danger' })
+                    document.getElementById('modemManagerCheck_active').innerHTML = unknownHtml + '{{Actif}}'
+                    document.getElementById('modemManagerCheck_enabled').innerHTML = unknownHtml + '{{Activé au démarrage}}'
+                } else {
+                    const result = data.result
+                    if (!result.installed) {
+                        document.getElementById('modemManagerCheck_active').innerHTML = indicator(true, '{{Non installé}}')
+                        document.getElementById('modemManagerCheck_enabled').innerHTML = ''
+                    } else {
+                        document.getElementById('modemManagerCheck_active').innerHTML = indicator(!result.active, result.active ? '{{Actif}}' : '{{Inactif}}', result.active)
+                        document.getElementById('modemManagerCheck_enabled').innerHTML = indicator(!result.enabled, result.enabled ? '{{Activé au démarrage}}' : '{{Désactivé au démarrage}}', result.enabled)
+                    }
+                }
+                if (onDone) { onDone() }
+            }
+        })
+    }
+
+    document.getElementById('btn_checkModemManager').addEventListener('click', (event) => {
+        const btn = event.currentTarget
+        btn.disabled = true
+        refreshModemManagerStatus(() => { btn.disabled = false })
+    })
+
+    document.getElementById('btn_disableModemManager').addEventListener('click', (event) => {
+        const btn = event.currentTarget
+        jeeDialog.confirm({
+            title: '{{Désactivation de}} ModemManager',
+            message: '<div class="alert alert-warning"><i class="fas fa-exclamation-triangle"></i> {{ModemManager va être désactivé et arrêté}} (<code>systemctl disable --now</code>).<br>{{Ce changement est global au système.}}</div>{{Confirmer la désactivation ?}}'
+        }, (result) => {
+            if (!result) {
+                return
+            }
+            btn.disabled = true
+            domUtils.ajax({
+                type: 'POST',
+                url: AJAX_URL,
+                data: { action: 'disableModemManager' },
+                dataType: 'json',
+                error: (request, status, error) => { handleAjaxError(request, status, error); btn.disabled = false },
+                success: (data) => {
+                    if (data.state !== 'ok') {
+                        jeedomUtils.showAlert({ message: data.result, level: 'danger' })
+                        btn.disabled = false
+                    } else {
+                        jeedomUtils.showAlert({ message: '{{ModemManager désactivé avec succès}}', level: 'success' })
+                        refreshModemManagerStatus(() => { btn.disabled = false })
+                    }
+                }
+            })
+        })
+    })
+})()
+</script>

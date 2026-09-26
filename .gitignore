@@ -1,6 +1,23 @@
+# IDE & Editors
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.project
 nbproject/
-test.php
-core/config/common.config.php
-plugins
 sftp-config.json
-.vscode
+
+# OS Generated Files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Ruff
+.ruff_cache/

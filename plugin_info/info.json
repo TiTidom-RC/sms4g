@@ -1,47 +1,49 @@
 {
-    "id": "sms",
-    "name": "SMS",
-    "description": {
-        "fr_FR": "Plugin ajoutant la gestion (envoi\/réception) de SMS à Jeedom. Avec ce plugin vous pouvez ainsi être notifié par SMS, voire poser une question ou déclencher une action via SMS grâce au moteur d'interactions. (Nécessite une clé 3G et une carte SIM ).",
-        "en_US": "Plugin adding the management (sending \/ receiving) of SMS to Jeedom. With this plugin you can be notified by SMS, even ask a question or trigger an action via SMS thanks to the interaction engine. (Requires a 3G key and a SIM card)",
-        "es_ES": "Complemento que agrega la gestión (envío \/ recepción) de SMS a Jeedom. Con este plugin puedes ser notificado por SMS, incluso hacer una pregunta o activar una acción a través de SMS gracias al motor de interacción. (Requiere una clave 3G y una tarjeta SIM)",
-        "de_DE": "Plugin, das die Verwaltung (Senden \/ Empfangen) von SMS zu Jeedom hinzufügt. Mit diesem Plugin können Sie dank der Interaktions-Engine per SMS benachrichtigt, sogar eine Frage gestellt oder eine Aktion per SMS ausgelöst werden. (Benötigt einen 3G-Schlüssel und eine SIM-Karte)",
-        "pt_PT": "Plugin adicionando o gerenciamento (envio \/ recebimento) de SMS ao Jeedom. Com este plugin você pode ser notificado por SMS, até mesmo fazer uma pergunta ou acionar uma ação via SMS graças ao mecanismo de interação. (Requer uma chave 3G e um cartão SIM)",
-        "ru_RU": "Plugin ajoutant la gestion (envoi\/réception) de SMS à Jeedom. Avec ce plugin vous pouvez ainsi être notifié par SMS, voire poser une question ou déclencher une action via SMS grâce au moteur d'interactions. (Nécessite une clé 3G et une carte SIM )",
-        "id_ID": "Plugin ajoutant la gestion (envoi\/réception) de SMS à Jeedom. Avec ce plugin vous pouvez ainsi être notifié par SMS, voire poser une question ou déclencher une action via SMS grâce au moteur d'interactions. (Nécessite une clé 3G et une carte SIM )",
-        "it_IT": "Plugin ajoutant la gestion (envoi\/réception) de SMS à Jeedom. Avec ce plugin vous pouvez ainsi être notifié par SMS, voire poser une question ou déclencher une action via SMS grâce au moteur d'interactions. (Nécessite une clé 3G et une carte SIM )",
-        "ja_JP": "Plugin ajoutant la gestion (envoi\/réception) de SMS à Jeedom. Avec ce plugin vous pouvez ainsi être notifié par SMS, voire poser une question ou déclencher une action via SMS grâce au moteur d'interactions. (Nécessite une clé 3G et une carte SIM )",
-        "tr": "Plugin ajoutant la gestion (envoi\/réception) de SMS à Jeedom. Avec ce plugin vous pouvez ainsi être notifié par SMS, voire poser une question ou déclencher une action via SMS grâce au moteur d'interactions. (Nécessite une clé 3G et une carte SIM )"
-    },
-    "licence": "AGPL",
-    "author": "Jeedom SAS",
-    "require": "4.4.8",
-    "category": "communication",
-    "hasDependency": true,
-    "hasOwnDeamon": true,
-    "changelog": "https:\/\/doc.jeedom.com\/#language#\/plugins\/communication\/sms\/changelog",
-    "documentation": "https:\/\/doc.jeedom.com\/#language#\/plugins\/communication\/sms\/",
-    "language": [
-        "fr_FR",
-        "en_US",
-        "es_ES",
-        "de_DE",
-        "ru_RU",
-        "id_ID",
-        "it_IT",
-        "ja_JP",
-        "pt_PT",
-        "tr"
-    ],
-    "compatibility": [
-        "smart",
-        "atlas",
-        "rpi",
-        "docker",
-        "diy",
-        "mobile",
-        "v4"
-    ],
-    "changelog_beta": "https:\/\/doc.jeedom.com\/#language#\/plugins\/communication\/sms\/beta\/changelog",
-    "documentation_beta": "https:\/\/doc.jeedom.com\/#language#\/plugins\/communication\/sms\/beta"
+	"id": "sms4g",
+	"name": "SMS 4G",
+	"pluginVersion": "2.0.0",
+	"description": {
+		"fr_FR": "Plugin permettant l'envoi et la réception de SMS via un modem GSM/4G (clé USB Huawei ou modem SimCom type SIM7600G-H). Avec ce plugin, vous pouvez être notifié par SMS, poser une question ou déclencher une action via SMS grâce au moteur d'interactions de Jeedom. Prend en charge les SMS longs (multi-parties), les accusés de réception (livré/échec), la reconnexion automatique en cas de perte du modem, et la possibilité de forcer le mode 4G uniquement sur les modems compatibles. (Nécessite un modem GSM/4G et une carte SIM active)",
+		"en_US": "Plugin for sending and receiving SMS via a GSM/4G modem (Huawei USB key or SimCom modem such as the SIM7600G-H). With this plugin, you can be notified by SMS, ask a question, or trigger an action via SMS thanks to Jeedom's interaction engine. Supports long (multi-part) SMS, delivery reports (delivered/failed), automatic reconnection if the modem is lost, and forcing 4G-only mode on compatible modems. (Requires a GSM/4G modem and an active SIM card)",
+		"es_ES": "Complemento para el envío y la recepción de SMS a través de un módem GSM/4G (llave USB Huawei o módem SimCom como el SIM7600G-H). Con este plugin, puedes recibir notificaciones por SMS, hacer una pregunta o activar una acción por SMS gracias al motor de interacción de Jeedom. Admite SMS largos (multipartes), acuses de recibo (entregado/fallido), reconexión automática en caso de pérdida del módem, y la posibilidad de forzar el modo 4G exclusivo en módems compatibles. (Requiere un módem GSM/4G y una tarjeta SIM activa)",
+		"de_DE": "Plugin zum Senden und Empfangen von SMS über ein GSM/4G-Modem (Huawei-USB-Stick oder SimCom-Modem wie das SIM7600G-H). Mit diesem Plugin können Sie per SMS benachrichtigt werden, eine Frage stellen oder über SMS dank der Interaktions-Engine von Jeedom eine Aktion auslösen. Unterstützt lange SMS (mehrteilig), Empfangsbestätigungen (zugestellt/fehlgeschlagen), automatische Wiederverbindung bei Verbindungsverlust des Modems sowie das Erzwingen des reinen 4G-Modus bei kompatiblen Modems. (Erfordert ein GSM/4G-Modem und eine aktive SIM-Karte)",
+		"it_IT": "Plugin per l'invio e la ricezione di SMS tramite un modem GSM/4G (chiavetta USB Huawei o modem SimCom come il SIM7600G-H). Con questo plugin puoi ricevere notifiche via SMS, porre una domanda o attivare un'azione via SMS grazie al motore di interazione di Jeedom. Supporta SMS lunghi (multi-parte), conferme di consegna (consegnato/fallito), riconnessione automatica in caso di perdita del modem e la possibilità di forzare la modalità solo 4G sui modem compatibili. (Richiede un modem GSM/4G e una scheda SIM attiva)",
+		"pt_PT": "Plugin para o envio e receção de SMS através de um modem GSM/4G (pen USB Huawei ou modem SimCom como o SIM7600G-H). Com este plugin, pode ser notificado por SMS, colocar uma pergunta ou acionar uma ação via SMS graças ao motor de interação do Jeedom. Suporta SMS longos (multi-partes), avisos de entrega (entregue/falhou), reconexão automática em caso de perda do modem, e forçar o modo apenas 4G em modems compatíveis. (Requer um modem GSM/4G e um cartão SIM ativo)"
+	},
+	"utilization": "Ajoutez un équipement, sélectionnez le port du modem GSM/4G, puis ajoutez vos contacts avec leur numéro de téléphone au format international. Après sauvegarde, le démon se lance automatiquement et vous pouvez envoyer/recevoir des SMS, y compris longs ou multi-parties, activer les accusés de réception, et autoriser les interactions pour dialoguer avec Jeedom par SMS.",
+	"licence": "AGPL",
+	"author": "TiTidom",
+	"require": "4.6.1",
+	"category": "communication",
+	"hasDependency": true,
+	"hasOwnDeamon": true,
+	"maxDependancyInstallTime": 60,
+	"os": {
+		"min": 12
+	},
+	"changelog": "https://titidom-rc.github.io/Documentation/#language#/sms4g/changelog",
+	"documentation": "https://titidom-rc.github.io/Documentation/#language#/sms4g/index",
+	"changelog_beta": "https://titidom-rc.github.io/Documentation/#language#/sms4g/beta/changelog",
+	"documentation_beta": "https://titidom-rc.github.io/Documentation/#language#/sms4g/beta/index",
+	"link": {
+		"forum": "https://community.jeedom.com/tag/plugin-sms4g",
+		"video": ""
+	},
+	"language": [
+		"fr_FR",
+		"en_US",
+		"es_ES",
+		"de_DE",
+		"it_IT",
+		"pt_PT"
+	],
+	"compatibility": [
+		"smart",
+		"atlas",
+		"rpi",
+		"docker",
+		"diy",
+		"mobile",
+		"v4"
+	]
 }

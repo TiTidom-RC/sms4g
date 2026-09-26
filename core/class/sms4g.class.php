@@ -586,9 +586,23 @@ class sms4gCmd extends cmd {
 			}
 		}
 		foreach ($values as $value) {
-			$socket = socket_create(AF_INET, SOCK_STREAM, 0);
-			socket_connect($socket, '127.0.0.1', config::byKey('socketport', 'sms4g'));
-			socket_write($socket, $value, strlen($value));
+			$socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+			if ($socket === false) {
+				log::add('sms4g', 'error', '[Envoi SMS] socket_create : ' . socket_strerror(socket_last_error()));
+				return false;
+			}
+			if (@socket_connect($socket, '127.0.0.1', config::byKey('socketport', 'sms4g')) === false) {
+				$err = socket_last_error($socket);
+				socket_close($socket);
+				log::add('sms4g', 'error', '[Envoi SMS] socket_connect (démon arrêté ?) : ' . socket_strerror($err));
+				return false;
+			}
+			if (@socket_write($socket, $value, strlen($value)) === false) {
+				$err = socket_last_error($socket);
+				socket_close($socket);
+				log::add('sms4g', 'error', '[Envoi SMS] socket_write : ' . socket_strerror($err));
+				return false;
+			}
 			socket_close($socket);
 		}
 		return true;

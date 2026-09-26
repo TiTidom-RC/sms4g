@@ -83,12 +83,14 @@ class SerialComms:
         if self._expectUrcContinuation:
             if self.HEX_PDU_RE.match(line):
                 # This is the PDU data line following a bare "+CDS:" header line
+                self.log.debug('"+CDS:" continuation found after %d interleaved line(s) : %s', self._urcContinuationLinesSkipped, line)
                 self._expectUrcContinuation = False
                 self._urcContinuationLinesSkipped = 0
                 return True
             # Not the PDU yet - a command response or another notification got interleaved in between;
             # let this line go through the normal classification below, keep waiting for the real PDU
             self._urcContinuationLinesSkipped += 1
+            self.log.debug('Line interleaved while waiting for "+CDS:" continuation (%d/%d) : %s', self._urcContinuationLinesSkipped, self.MAX_URC_CONTINUATION_SKIP, line)
             if self._urcContinuationLinesSkipped >= self.MAX_URC_CONTINUATION_SKIP:
                 self.log.warning('Gave up waiting for the PDU continuation of a "+CDS:" header after %d interleaved lines', self._urcContinuationLinesSkipped)
                 self._expectUrcContinuation = False
@@ -97,6 +99,7 @@ class SerialComms:
             return True
         if line.startswith('+CDS:'):
             # Two-line URC (mode ds=1): the PDU data follows on the next line
+            self.log.debug('"+CDS:" header seen, awaiting PDU continuation : %s', line)
             self._expectUrcContinuation = True
             return True
         return False

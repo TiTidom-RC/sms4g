@@ -591,5 +591,6 @@ class sms4gCmd extends cmd {
 			socket_write($socket, $value, strlen($value));
 			socket_close($socket);
 		}
+		return true;
 	}
 }

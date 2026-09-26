@@ -269,68 +269,73 @@ if (!isConnect('admin')) {
 </form>
 <script>
 (function () {
-    var _unknownHtml = '<i class="fas fa-question-circle" style="color:var(--al-default-color,#95a5a6)"></i> ';
+    'use strict'
+    const AJAX_URL = 'plugins/sms4g/core/ajax/sms4g.ajax.php'
+    const unknownHtml = '<i class="fas fa-question-circle" style="color:var(--al-default-color,#95a5a6)"></i> '
 
-    function _indicator(ok, label, warn) {
-        var icon  = ok ? 'fa-check-circle' : (warn ? 'fa-exclamation-triangle' : 'fa-times-circle');
-        var color = ok ? 'var(--al-success-color,#2ecc71)' : (warn ? 'var(--al-warning-color,#f39c12)' : 'var(--al-danger-color,#e74c3c)');
-        return '<i class="fas ' + icon + '" style="color:' + color + '"></i> ' + label;
+    const indicator = (ok, label, warn) => {
+        const icon = ok ? 'fa-check-circle' : (warn ? 'fa-exclamation-triangle' : 'fa-times-circle')
+        const color = ok ? 'var(--al-success-color,#2ecc71)' : (warn ? 'var(--al-warning-color,#f39c12)' : 'var(--al-danger-color,#e74c3c)')
+        return `<i class="fas ${icon}" style="color:${color}"></i> ${label}`
     }
 
-    function _postAjax(action, onSuccess, onError) {
-        fetch('plugins/sms4g/core/ajax/sms4g.ajax.php', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-            body: 'action=' + action
-        })
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-            if (data.state === 'ok') {
-                onSuccess(data.result);
-            } else {
-                onError(data.result || '{{Erreur inconnue}}');
+    const refreshModemManagerStatus = (onDone) => {
+        domUtils.ajax({
+            type: 'POST',
+            url: AJAX_URL,
+            data: { action: 'checkModemManagerStatus' },
+            dataType: 'json',
+            error: (request, status, error) => handleAjaxError(request, status, error),
+            success: (data) => {
+                if (data.state !== 'ok') {
+                    jeedomUtils.showAlert({ message: data.result, level: 'danger' })
+                    document.getElementById('modemManagerCheck_active').innerHTML = unknownHtml + '{{Actif}}'
+                    document.getElementById('modemManagerCheck_enabled').innerHTML = unknownHtml + '{{Activé au démarrage}}'
+                } else {
+                    const result = data.result
+                    if (!result.installed) {
+                        document.getElementById('modemManagerCheck_active').innerHTML = indicator(true, '{{Non installé}}')
+                        document.getElementById('modemManagerCheck_enabled').innerHTML = ''
+                    } else {
+                        document.getElementById('modemManagerCheck_active').innerHTML = indicator(!result.active, result.active ? '{{Actif}}' : '{{Inactif}}', result.active)
+                        document.getElementById('modemManagerCheck_enabled').innerHTML = indicator(!result.enabled, result.enabled ? '{{Activé au démarrage}}' : '{{Désactivé au démarrage}}', result.enabled)
+                    }
+                }
+                if (onDone) { onDone() }
             }
         })
-        .catch(function (e) { onError(e.message || '{{Erreur réseau}}'); });
     }
 
-    function _refreshModemManagerStatus(onDone) {
-        _postAjax('checkModemManagerStatus', function (result) {
-            if (!result.installed) {
-                document.getElementById('modemManagerCheck_active').innerHTML = _indicator(true, '{{Non installé}}');
-                document.getElementById('modemManagerCheck_enabled').innerHTML = '';
-            } else {
-                document.getElementById('modemManagerCheck_active').innerHTML = _indicator(!result.active, result.active ? '{{Actif}}' : '{{Inactif}}', result.active);
-                document.getElementById('modemManagerCheck_enabled').innerHTML = _indicator(!result.enabled, result.enabled ? '{{Activé au démarrage}}' : '{{Désactivé au démarrage}}', result.enabled);
+    document.getElementById('btn_checkModemManager').addEventListener('click', (event) => {
+        const btn = event.currentTarget
+        btn.disabled = true
+        refreshModemManagerStatus(() => { btn.disabled = false })
+    })
+
+    document.getElementById('btn_disableModemManager').addEventListener('click', (event) => {
+        const btn = event.currentTarget
+        jeeDialog.confirm('{{ModemManager va être désactivé et arrêté (systemctl disable --now). Ce changement est global au système, pas seulement à ce plugin. Continuer ?}}', (result) => {
+            if (!result) {
+                return
             }
-            if (onDone) { onDone(); }
-        }, function (err) {
-            document.getElementById('modemManagerCheck_active').innerHTML = _unknownHtml + '{{Actif}}';
-            document.getElementById('modemManagerCheck_enabled').innerHTML = _unknownHtml + '{{Activé au démarrage}}';
-            jeedomUtils.showAlert({message: '{{ModemManager :: Erreur de vérification}} — ' + err, level: 'danger'});
-            if (onDone) { onDone(); }
-        });
-    }
-
-    document.getElementById('btn_checkModemManager').addEventListener('click', function () {
-        var btn = this;
-        btn.disabled = true;
-        _refreshModemManagerStatus(function () { btn.disabled = false; });
-    });
-
-    document.getElementById('btn_disableModemManager').addEventListener('click', function () {
-        if (!window.confirm('{{ModemManager va être désactivé et arrêté (systemctl disable --now). Ce changement est global au système, pas seulement à ce plugin. Continuer ?}}')) {
-            return;
-        }
-        var btn = this;
-        btn.disabled = true;
-        _postAjax('disableModemManager', function () {
-            jeedomUtils.showAlert({message: '{{ModemManager désactivé avec succès}}', level: 'success'});
-            _refreshModemManagerStatus(function () { btn.disabled = false; });
-        }, function (err) {
-            btn.disabled = false;
-            jeedomUtils.showAlert({message: '{{ModemManager :: Échec de la désactivation}} — ' + err, level: 'danger'});
-        });
-    });
+            btn.disabled = true
+            domUtils.ajax({
+                type: 'POST',
+                url: AJAX_URL,
+                data: { action: 'disableModemManager' },
+                dataType: 'json',
+                error: (request, status, error) => { handleAjaxError(request, status, error); btn.disabled = false },
+                success: (data) => {
+                    if (data.state !== 'ok') {
+                        jeedomUtils.showAlert({ message: data.result, level: 'danger' })
+                        btn.disabled = false
+                    } else {
+                        jeedomUtils.showAlert({ message: '{{ModemManager désactivé avec succès}}', level: 'success' })
+                        refreshModemManagerStatus(() => { btn.disabled = false })
+                    }
+                }
+            })
+        })
+    })
 })()
 </script>

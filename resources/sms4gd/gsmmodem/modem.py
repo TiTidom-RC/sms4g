@@ -956,7 +956,7 @@ class GsmModem(SerialComms):
             # If this is reached, the timer task has triggered
             raise TimeoutException()
 
-    def sendSms(self, destination, text, waitForDeliveryReport=False, deliveryTimeout=15, sendFlash=False):
+    def sendSms(self, destination, text, waitForDeliveryReport=False, deliveryTimeout=15, sendFlash=False, maxPartsPerGroup=0):
         """ Send an SMS text message
 
         :param destination: the recipient's phone number
@@ -967,6 +967,9 @@ class GsmModem(SerialComms):
         :type waitForDeliveryReport: boolean
         :param deliveryTimeout: the maximum time in seconds to wait for a delivery report (if "waitForDeliveryReport" is True)
         :type deliveryTimeout: int or float
+        :param maxPartsPerGroup: if the message needs more parts than this, it is sent as several independent
+            SMS groups instead of a single big one. 0 = no limit (PDU mode only, ignored in text mode).
+        :type maxPartsPerGroup: int
 
         :raise CommandError: if an error occurs while attempting to send the message
         :raise TimeoutException: if the operation times out
@@ -999,7 +1002,7 @@ class GsmModem(SerialComms):
                 self.smsEncoding = 'GSM'
 
             # Encode text into PDUs
-            pdus = encodeSmsSubmitPdu(destination, text, reference=self._smsRef, requestStatusReport=self.requestDelivery, sendFlash=sendFlash)
+            pdus = encodeSmsSubmitPdu(destination, text, reference=self._smsRef, requestStatusReport=self.requestDelivery, sendFlash=sendFlash, maxPartsPerGroup=maxPartsPerGroup)
 
             # Send SMS PDUs via AT commands
             for pdu in pdus:

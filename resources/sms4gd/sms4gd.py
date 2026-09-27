@@ -263,7 +263,7 @@ def read_socket():
             try:
                 gsm.waitForNetworkCoverage(timeout=_cycle)
                 logging.info("Sending message to %s: %s", message['number'], message['message'])
-                gsm.sendSms(message['number'], message['message'])
+                gsm.sendSms(message['number'], message['message'], maxPartsPerGroup=message.get('maxPartsPerGroup', 0))
             except Exception as e:
                 logging.error("Failed to send SMS to %s : %s", message['number'], e)
                 if j_com_instance:

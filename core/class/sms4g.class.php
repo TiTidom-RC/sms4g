@@ -156,7 +156,7 @@ class sms4g extends eqLogic {
 			if (config::byKey('pythonDepString', 'sms4g') != $pythonDepString) {
 				config::save('pythonDepString', $pythonDepString, 'sms4g');
 			}
-			if (config::byKey('pythonDepNum', 'sms4g') != $pythonDepNum) {
+			if (config::byKey('pythonDepNum', 'sms4g', 0) != $pythonDepNum) {
 				config::save('pythonDepNum', $pythonDepNum, 'sms4g');
 			}
 		} catch (\Exception $e) {
@@ -568,22 +568,16 @@ class sms4gCmd extends cmd {
 		if (config::byKey('textMode', 'sms4g') == 1) {
 			$message = self::cleanSMS(trim($message));
 		}
-		// Au-delà de cette longueur, découpe en plusieurs groupes de SMS concaténés (norme GSM 03.40) plutôt qu'un seul : certains opérateurs/modems anciens rejettent silencieusement un groupe de plus de ~4 parties liées
-		$maxLength = config::byKey('maxChartByMessage', 'sms4g');
-		if ($maxLength > 0 && strlen($message) > $maxLength) {
-			$messageChunks = str_split($message, $maxLength);
-		} else {
-			$messageChunks = array($message);
-		}
 		if (isset($_options['number'])) {
 			$phonenumbers = array($number);
 		} else {
 			$phonenumbers = explode(';', $this->getConfiguration('phonenumber'));
 		}
+		// Le découpage en parties/groupes SMS (encodage GSM-7 ou UCS-2, limite de parties liées) est entièrement
+		// géré côté démon Python, seul à connaître l'encodage réel du message ; on transmet juste le texte complet
+		$maxPartsPerGroup = (int) config::byKey('maxSmsPartsPerGroup', 'sms4g');
 		foreach ($phonenumbers as $phonenumber) {
-			foreach ($messageChunks as $messageChunk) {
-				$values[] = json_encode(array('apikey' => jeedom::getApiKey('sms4g'), 'number' => $phonenumber, 'message' => $messageChunk));
-			}
+			$values[] = json_encode(array('apikey' => jeedom::getApiKey('sms4g'), 'number' => $phonenumber, 'message' => $message, 'maxPartsPerGroup' => $maxPartsPerGroup));
 		}
 		foreach ($values as $value) {
 			$socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);

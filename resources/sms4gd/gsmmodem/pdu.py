@@ -3,7 +3,6 @@
 
 import codecs
 import sys
-from copy import copy
 from datetime import datetime, timedelta, tzinfo
 from typing import Any, Dict, List, Optional, Union
 
@@ -237,7 +236,7 @@ class Pdu(object):
         return self.data.hex().upper()
 
 
-def encodeSmsSubmitPdu(number: str, text: str, reference: int = 0, validity: Union[None, timedelta, datetime] = None, smsc: Optional[str] = None, requestStatusReport: bool = True, rejectDuplicates: bool = False, sendFlash: bool = False) -> List['Pdu']:
+def encodeSmsSubmitPdu(number: str, text: str, reference: int = 0, validity: Union[None, timedelta, datetime] = None, smsc: Optional[str] = None, requestStatusReport: bool = True, rejectDuplicates: bool = False, sendFlash: bool = False, maxPartsPerGroup: int = 0) -> List['Pdu']:
     """ Creates an SMS-SUBMIT PDU for sending a message with the specified text to the specified number
 
     :param number: the destination mobile number
@@ -252,6 +251,9 @@ def encodeSmsSubmitPdu(number: str, text: str, reference: int = 0, validity: Uni
     :type smsc: str
     :param rejectDuplicates: Flag that controls the TP-RD parameter (messages with same destination and reference may be rejected if True)
     :type rejectDuplicates: bool
+    :param maxPartsPerGroup: if the message needs more parts than this, it is sent as several independent
+        concatenation groups (each with its own reference) instead of a single big one. 0 = no limit.
+    :type maxPartsPerGroup: int
 
     :return: A list of one or more tuples containing the SMS PDU (as a bytearray, and the length of the TPDU part
     :rtype: list of tuples
@@ -280,87 +282,86 @@ def encodeSmsSubmitPdu(number: str, text: str, reference: int = 0, validity: Uni
     try:
         encodedTextLength = len(encodeGsm7(text))
     except ValueError:
-        # Cannot encode text using GSM-7; use UCS2 instead
-        encodedTextLength = len(text)
+        # Cannot encode text using GSM-7; use UCS2 instead. Count real UTF-16 code units (not Python
+        # characters): a char outside the Basic Multilingual Plane (e.g. most emoji) needs 2 units.
+        encodedTextLength = len(text.encode('utf-16-be')) // 2
         alphabet = 0x08  # UCS2
     else:
         alphabet = 0x00  # GSM-7
 
-    # Check if message should be concatenated
+    # Check if message should be concatenated, and divide it into parts if so
     if encodedTextLength > MAX_MESSAGE_LENGTH[alphabet]:
-        # Text too long for single PDU - add "concatenation" User Data Header
-        concatHeaderPrototype = Concatenation()
-        concatHeaderPrototype.reference = reference
-
-        # Divide whole text into parts
         if alphabet == 0x00:
             pduTextParts = divideTextGsm7(text)
         elif alphabet == 0x08:
             pduTextParts = divideTextUcs2(text)
         else:
             raise NotImplementedError
-
-        pduCount = len(pduTextParts)
-        concatHeaderPrototype.parts = pduCount
-        tpduFirstOctet |= 0x40
+        # Split into several independent concatenation groups (each with its own reference) if the
+        # message needs more parts than maxPartsPerGroup allows in a single linked group
+        if maxPartsPerGroup and maxPartsPerGroup > 0:
+            groups = [pduTextParts[i:i + maxPartsPerGroup] for i in range(0, len(pduTextParts), maxPartsPerGroup)]
+        else:
+            groups = [pduTextParts]
     else:
-        concatHeaderPrototype = None
-        pduCount = 1
+        groups = [[text]]
 
-    # Construct required PDU(s)
+    # Construct required PDU(s) : one independent concatenation group (and reference) per group
     pdus = []
-    for i in range(pduCount):
-        pdu = bytearray()
-        if smsc:
-            pdu.extend(_encodeAddressField(smsc, smscField=True))
-        else:
-            pdu.append(0x00)  # Don't supply an SMSC number - use the one configured in the device
-
-        udh = bytearray()
-        if concatHeaderPrototype is not None:
-            concatHeader = copy(concatHeaderPrototype)
-            concatHeader.number = i + 1
-            pduText = pduTextParts[i]
-            udh.extend(concatHeader.encode())
-        else:
-            pduText = text
-
-        udhLen = len(udh)
-
-        pdu.append(tpduFirstOctet)
-        pdu.append(reference)  # message reference
-        # Add destination number
-        pdu.extend(_encodeAddressField(number))
-        pdu.append(0x00)  # Protocol identifier - no higher-level protocol
-
-        pdu.append(alphabet if not sendFlash else (0x10 if alphabet == 0x00 else 0x18))
-        if validityPeriod:
-            pdu.extend(validityPeriod)
-
-        if alphabet == 0x00:  # GSM-7
-            encodedText = encodeGsm7(pduText)
-            userDataLength = len(encodedText)  # Payload size in septets/characters
-            if udhLen > 0:
-                shift = ((udhLen + 1) * 8) % 7  # "fill bits" needed to make the UDH end on a septet boundary
-                userData = packSeptets(encodedText, padBits=shift)
-                if shift > 0:
-                    userDataLength += 1  # take padding bits into account
+    for groupIndex, groupParts in enumerate(groups):
+        groupReference = (reference + groupIndex) % 256
+        groupHasConcat = len(groupParts) > 1
+        for i, pduText in enumerate(groupParts):
+            pdu = bytearray()
+            if smsc:
+                pdu.extend(_encodeAddressField(smsc, smscField=True))
             else:
-                userData = packSeptets(encodedText)
-        elif alphabet == 0x08:  # UCS2
-            userData = encodeUcs2(pduText)
-            userDataLength = len(userData)
+                pdu.append(0x00)  # Don't supply an SMSC number - use the one configured in the device
 
-        if udhLen > 0:
-            userDataLength += udhLen + 1  # +1 for the UDH length indicator byte
-            pdu.append(userDataLength)
-            pdu.append(udhLen)
-            pdu.extend(udh)  # UDH
-        else:
-            pdu.append(userDataLength)
-        pdu.extend(userData)  # User Data (message payload)
-        tpdu_length = len(pdu) - 1
-        pdus.append(Pdu(pdu, tpdu_length))
+            udh = bytearray()
+            if groupHasConcat:
+                concatHeader = Concatenation()
+                concatHeader.reference = groupReference
+                concatHeader.parts = len(groupParts)
+                concatHeader.number = i + 1
+                udh.extend(concatHeader.encode())
+
+            udhLen = len(udh)
+
+            pdu.append(tpduFirstOctet | (0x40 if groupHasConcat else 0x00))
+            pdu.append(groupReference)  # message reference
+            # Add destination number
+            pdu.extend(_encodeAddressField(number))
+            pdu.append(0x00)  # Protocol identifier - no higher-level protocol
+
+            pdu.append(alphabet if not sendFlash else (0x10 if alphabet == 0x00 else 0x18))
+            if validityPeriod:
+                pdu.extend(validityPeriod)
+
+            if alphabet == 0x00:  # GSM-7
+                encodedText = encodeGsm7(pduText)
+                userDataLength = len(encodedText)  # Payload size in septets/characters
+                if udhLen > 0:
+                    shift = ((udhLen + 1) * 8) % 7  # "fill bits" needed to make the UDH end on a septet boundary
+                    userData = packSeptets(encodedText, padBits=shift)
+                    if shift > 0:
+                        userDataLength += 1  # take padding bits into account
+                else:
+                    userData = packSeptets(encodedText)
+            elif alphabet == 0x08:  # UCS2
+                userData = encodeUcs2(pduText)
+                userDataLength = len(userData)
+
+            if udhLen > 0:
+                userDataLength += udhLen + 1  # +1 for the UDH length indicator byte
+                pdu.append(userDataLength)
+                pdu.append(udhLen)
+                pdu.extend(udh)  # UDH
+            else:
+                pdu.append(userDataLength)
+            pdu.extend(userData)  # User Data (message payload)
+            tpdu_length = len(pdu) - 1
+            pdus.append(Pdu(pdu, tpdu_length))
     return pdus
 
 
@@ -929,30 +930,22 @@ def decodeUcs2(byteIter, numBytes):
 def encodeUcs2(text):
     """ UCS2 text encoding algorithm
 
-    Encodes the specified text string into UCS2-encoded bytes.
-    Characters outside the Basic Multilingual Plane (e.g. many modern emoji, U+10000+)
-    cannot be represented in UCS2 and are replaced with '?'.
+    Encodes the specified text string into UCS2 (UTF-16BE) encoded bytes, including surrogate
+    pairs for characters outside the Basic Multilingual Plane (e.g. most emoji).
 
     :param text: the text string to encode
 
     :return: A bytearray containing the string encoded in UCS2 encoding
     :rtype: bytearray
     """
-    result = bytearray()
-
-    for char in text:
-        b = ord(char)
-        if b > 0xFFFF:
-            b = ord('?')
-        result.append(b >> 8)
-        result.append(b & 0xFF)
-    return result
+    return bytearray(text.encode('utf-16-be', errors='replace'))
 
 
 def divideTextUcs2(plainText):
     """ UCS-2 message dividing algorithm
 
-    Divides text into list of chunks that could be stored in a single, UCS-2 -encoded SMS message.
+    Divides text into a list of chunks that could each be stored in a single, UCS-2-encoded SMS
+    message part, without ever splitting a UTF-16 surrogate pair (e.g. an emoji) across two chunks.
 
     :param plainText: the text string to divide
     :type plainText: str
@@ -960,16 +953,19 @@ def divideTextUcs2(plainText):
     :return: A list of strings
     :rtype: list of str
     """
+    maxUnits = MAX_MULTIPART_MESSAGE_LENGTH[0x08]
+    encoded = plainText.encode('utf-16-be', errors='replace')
     result = []
-    resultLength = 0
-
-    fullChunksCount = int(len(plainText) / MAX_MULTIPART_MESSAGE_LENGTH[0x08])
-    for i in range(fullChunksCount):
-        result.append(plainText[i * MAX_MULTIPART_MESSAGE_LENGTH[0x08]:(i + 1) * MAX_MULTIPART_MESSAGE_LENGTH[0x08]])
-        resultLength += MAX_MULTIPART_MESSAGE_LENGTH[0x08]
-
-    # Add last, not fully filled chunk
-    if resultLength < len(plainText):
-        result.append(plainText[resultLength:])
-
+    i = 0
+    n = len(encoded)
+    while i < n:
+        end = min(i + maxUnits * 2, n)
+        if end < n:
+            # Never split between the two halves of a surrogate pair: back off if the last code
+            # unit included in this chunk is a high surrogate (0xD800-0xDBFF)
+            lastUnit = (encoded[end - 2] << 8) | encoded[end - 1]
+            if 0xD800 <= lastUnit <= 0xDBFF:
+                end -= 2
+        result.append(encoded[i:end].decode('utf-16-be'))
+        i = end
     return result

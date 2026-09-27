@@ -26,8 +26,9 @@ function sms4g_install() {
 
 	sms4g::getPythonDepFromRequirements();
 
-	if (config::byKey('api::sms::mode') == '') {
-		config::save('api::sms::mode', 'localhost');
+	// Limite l'accès API du plugin à localhost
+	if (config::byKey('api::sms4g::mode') != 'localhost') {
+		config::save('api::sms4g::mode', 'localhost');
 	}
 	if (config::byKey('pythonVersion', 'sms4g') == '') {
 		config::save('pythonVersion', '?.?.?', 'sms4g');
@@ -98,8 +99,9 @@ function sms4g_update() {
 
 	sms4g::getPythonDepFromRequirements();
 
-	if (config::byKey('api::sms::mode') == '') {
-		config::save('api::sms::mode', 'localhost');
+	// Limite l'accès API du plugin à localhost
+	if (config::byKey('api::sms4g::mode') != 'localhost') {
+		config::save('api::sms4g::mode', 'localhost');
 	}
 	if (config::byKey('pythonVersion', 'sms4g') == '') {
 		config::save('pythonVersion', '?.?.?', 'sms4g');

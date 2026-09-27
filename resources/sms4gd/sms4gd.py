@@ -14,6 +14,7 @@
 # along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
 
 import logging
+import re
 import sys
 import os
 import time
@@ -42,6 +43,32 @@ except ImportError as e:
 
 gsm: Optional[GsmModem] = None
 _smsSeq = count()  # compteur thread-safe (CPython) pour différencier les clés du buffer devices:: entre 2 flush
+
+
+class SecretMaskFilter(logging.Filter):
+    """Masque en direct les valeurs sensibles pouvant apparaître dans les logs de bibliothèques
+    tierces (ex: requests/urllib3 loguant l'URL complète d'une requête) ou du démon lui-même."""
+
+    @staticmethod
+    def _maskPhone(m: 're.Match') -> str:
+        number = m.group(0)
+        return number[:4] + 'XXXX' + number[-2:]
+
+    _RULES = [
+        (re.compile(r'(["\']?apikey["\']?\s*[:=]\s*["\']?)[^"\'&\s]+', re.IGNORECASE), r'\1sEcReT'),
+        (re.compile(r'(AT\+CPIN=")[^"]+(")', re.IGNORECASE), r'\1****\2'),
+        (re.compile(r'\+\d{6,15}'), _maskPhone),
+    ]
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        redacted = message
+        for pattern, repl in self._RULES:
+            redacted = pattern.sub(repl, redacted)
+        if redacted != message:
+            record.msg = redacted
+            record.args = ()
+        return True
 
 
 def handleSms(sms):
@@ -379,6 +406,10 @@ _cycle = float(_cycle)
 
 jeedom_utils.set_log_level(_log_level)
 
+_secret_filter = SecretMaskFilter()
+for _h in logging.root.handlers:
+    _h.addFilter(_secret_filter)
+
 logging.info('Start sms4gd')
 logging.info('Log level : %s', _log_level)
 logging.info('Socket port : %s', _socket_port)
@@ -388,7 +419,7 @@ logging.info('Device : %s', _device)
 logging.info('Callback : %s', _callback)
 logging.info('Cycle : %s', _cycle)
 logging.info('Serial rate : %s', _serial_rate)
-logging.info('Pin : %s', '***' if _pin and _pin != 'None' else _pin)
+logging.info('Pin : %s', '****' if _pin and _pin != 'None' else _pin)
 logging.info('Text mode : %s', _text_mode)
 logging.info('SMSC : %s', _smsc)
 logging.info('Force 4G only : %s', _force_4g)

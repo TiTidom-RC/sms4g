@@ -1,7 +1,7 @@
 {
 	"id": "sms4g",
 	"name": "SMS 4G",
-	"pluginVersion": "2.0.0",
+	"pluginVersion": "2.1.0",
 	"description": {
 		"fr_FR": "Plugin permettant l'envoi et la réception de SMS via un modem GSM/4G (clé USB Huawei ou modem SimCom type SIM7600G-H). Avec ce plugin, vous pouvez être notifié par SMS, poser une question ou déclencher une action via SMS grâce au moteur d'interactions de Jeedom. Prend en charge les SMS longs (multi-parties), les accusés de réception (livré/échec), la reconnexion automatique en cas de perte du modem, et la possibilité de forcer le mode 4G uniquement sur les modems compatibles. (Nécessite un modem GSM/4G et une carte SIM active)",
 		"en_US": "Plugin for sending and receiving SMS via a GSM/4G modem (Huawei USB key or SimCom modem such as the SIM7600G-H). With this plugin, you can be notified by SMS, ask a question, or trigger an action via SMS thanks to Jeedom's interaction engine. Supports long (multi-part) SMS, delivery reports (delivered/failed), automatic reconnection if the modem is lost, and forcing 4G-only mode on compatible modems. (Requires a GSM/4G modem and an active SIM card)",

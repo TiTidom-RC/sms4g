@@ -52,7 +52,8 @@ class SecretMaskFilter(logging.Filter):
     @staticmethod
     def _maskPhone(m: 're.Match') -> str:
         number = m.group(0)
-        return number[:4] + 'XXXX' + number[-2:]
+        prefix, suffix = number[:4], number[-2:]
+        return prefix + ('X' * (len(number) - len(prefix) - len(suffix))) + suffix
 
     _RULES = [
         (re.compile(r'(["\']?apikey["\']?\s*[:=]\s*["\']?)[^"\'&\s]+', re.IGNORECASE), r'\1sEcReT'),

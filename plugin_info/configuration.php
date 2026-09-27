@@ -201,11 +201,11 @@ if (!isConnect('admin')) {
         <div>
             <legend><i class="fas fa-sms"></i> {{Messages}}</legend>
             <div class="form-group">
-                <label class="col-lg-3 control-label">{{Découper au-delà de (caractères)}}
-                    <sup><i class="fas fa-question-circle tooltips" title="{{Au-delà de cette longueur, le message est envoyé en plusieurs SMS distincts plutôt qu'un seul. Par défaut 612 (4 parties) : certains opérateurs/modems anciens rejettent silencieusement un groupe de plus de 4 parties}}"></i></sup>
+                <label class="col-lg-3 control-label">{{SMS multi-segments (max)}}
+                    <sup><i class="fas fa-question-circle tooltips" title="{{0 = illimité. Certains opérateurs limitent le nombre de SMS pouvant être liés pour former un message long — indique la limite constatée si besoin}}"></i></sup>
                 </label>
                 <div class="col-lg-1">
-                    <input class="configKey form-control" data-l1key="maxChartByMessage" />
+                    <input class="configKey form-control" data-l1key="maxSmsPartsPerGroup" />
                 </div>
             </div>
             <div class="form-group">

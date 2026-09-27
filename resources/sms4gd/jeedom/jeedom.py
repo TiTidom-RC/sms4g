@@ -215,7 +215,6 @@ class jeedom_serial():
         else:
             logging.error("Device name missing.")
             return False
-        logging.debug("Open Serialport")
         try:
             self.port = serial.Serial(self.device, self.rate, timeout=self.timeout)
         except serial.SerialException as e:
@@ -284,8 +283,7 @@ class jeedom_socket_handler(StreamRequestHandler):
         JEEDOM_SOCKET_MESSAGE.put(lg)
         try:
             lgdecode = json.loads(lg.strip())
-            if lgdecode and lgdecode.get('apikey'):
-                lgdecode['apikey'] = '***'
+            # Masquage de l'apikey désormais assuré globalement par SecretMaskFilter (sms4gd.py)
             logging.debug("Message read from socket :: %s", str(json.dumps(lgdecode).encode('utf-8')))
         except Exception as error:
             logging.error("JSON Exception :: %s", error)

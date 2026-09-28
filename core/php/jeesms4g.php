@@ -73,6 +73,9 @@ if (isset($result['number']) && $result['number'] == 'deliveryReport' && isset($
 		$label = __('Livré', __FILE__);
 	} elseif ($sendFailed) {
 		$label = __('Échec d\'envoi', __FILE__);
+	} elseif ($result['status'] == 'unknown') {
+		// Accusés de réception incomplets (tous les segments n'ont pas été acquittés dans le délai)
+		$label = __('Inconnu', __FILE__);
 	} else {
 		$label = __('Échec', __FILE__);
 	}

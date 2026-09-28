@@ -26,7 +26,7 @@ from itertools import count
 from typing import Optional
 from queue import Empty
 from gsmmodem.exceptions import TimeoutException
-from gsmmodem.modem import GsmModem, StatusReport
+from gsmmodem.modem import GsmModem, SentSms, StatusReport
 
 try:
     from jeedom.jeedom import jeedom_com, jeedom_socket, jeedom_utils, JEEDOM_SOCKET_MESSAGE
@@ -85,11 +85,28 @@ def handleSms(sms):
         j_com_instance.add_changes(f'devices::{sms.number}#{next(_smsSeq)}', {'number': sms.number, 'message': message})
 
 
+_SENT_STATUS = {SentSms.DELIVERED: 'delivered', SentSms.FAILED: 'failed', SentSms.ENROUTE: 'unknown'}
+
+
 def handleStatusReport(report):
-    status = 'delivered' if report.deliveryStatus == StatusReport.DELIVERED else 'failed'
-    logging.info("Delivery report for %s : %s (ref %s)", report.number, status, report.reference)
+    # SentSms : résultat agrégé de TOUS les segments d'un SMS (un seul accusé remonté par SMS, même long) ;
+    # 'unknown' = accusés incomplets au bout de _delivery_report_ttl (purgeStaleSentSms)
+    # StatusReport : accusé isolé non rattaché à un envoi connu (ex : SMS envoyé avant un redémarrage du démon)
+    if isinstance(report, SentSms):
+        status = _SENT_STATUS[report.status]
+        destination = report.number
+        logging.info("Delivery report for %s : %s (%d/%d part(s) reported, ref %s)", destination, status,
+                     len(report.reports), report.expectedParts, ','.join(str(r) for r in report.references))
+    else:
+        if not report.isFinal:
+            # 0x20-0x3F : erreur temporaire, le SMSC réessaie encore - un autre accusé suivra
+            logging.info("Temporary delivery status 0x%02X for %s (ref %s), SMSC still trying", int(report.deliveryStatus), report.number, report.reference)
+            return
+        status = 'delivered' if report.isDelivered else 'failed'
+        destination = report.number
+        logging.info("Delivery report for %s : %s (untracked ref %s)", destination, status, report.reference)
     if j_com_instance:
-        j_com_instance.send_change_immediate({'number': 'deliveryReport', 'destination': report.number, 'status': status, 'reference': report.reference})
+        j_com_instance.send_change_immediate({'number': 'deliveryReport', 'destination': destination, 'status': status, 'reference': report.reference})
 
 
 def _backoffDelay(attempt):
@@ -271,6 +288,7 @@ def listen():
                     consecutive_network_failures = 0
                     _setModemStatus('connected')
                     gsm.purgeStaleSmsParts(_concat_parts_ttl)
+                    gsm.purgeStaleSentSms(_delivery_report_ttl)
                     _checkSmsStorage()
             except Exception as e:
                 if _isTransientNetworkError(e):
@@ -366,6 +384,9 @@ _reconnect_base_delay = 5.0
 _reconnect_max_delay = 300.0
 _reconnect_max_attempts = 10
 _concat_parts_ttl = 300.0
+# Attente max des accusés de tous les segments d'un SMS : un peu plus que la validité demandée au SMSC
+# (AT+CSMP=...,167 -> 24 h), au-delà le SMSC n'enverra plus rien
+_delivery_report_ttl = 25 * 3600.0
 
 
 parser = argparse.ArgumentParser(description='SMS Daemon for Jeedom plugin')

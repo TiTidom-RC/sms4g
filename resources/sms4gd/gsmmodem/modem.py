@@ -1,6 +1,7 @@
 """ High-level API classes for an attached GSM modem """
 
 import re
+import random
 import logging
 import weakref
 import time
@@ -79,22 +80,39 @@ class SentSms(Sms):
     DELIVERED = 1  # Status indicating message has been received by destination handset
     FAILED = 2  # Status indicating message delivery has failed
 
-    def __init__(self, number: str, text: str, reference: int, smsc: Optional[str] = None):
+    def __init__(self, number: str, text: str, reference: Union[int, List[int]], smsc: Optional[str] = None):
         super(SentSms, self).__init__(number, text, smsc)
-        self.report = None  # Status report for this SMS (StatusReport object)
-        self.reference = reference
+        # A long (concatenated) SMS is sent as several SMS-SUBMIT, each with its own TP-MR (returned by +CMGS)
+        # and its own status report: all of them are tracked, the message status is the aggregate of every part
+        self.references = list(reference) if isinstance(reference, (list, tuple)) else [reference]
+        self.reference = self.references[0] if self.references else None  # kept for compatibility: TP-MR of the first part
+        self.expectedParts = max(len(self.references), 1)  # number of parts (SMS-SUBMIT) the message was split into
+        self.reports = {}  # TP-MR -> latest StatusReport received for that part
+        self.report = None  # Latest status report received (any part)
+        self.sentAt = time.monotonic()
+        self.notified = False  # aggregated result already handed to smsStatusReportCallback
+
+    @property
+    def parts(self) -> int:
+        return len(self.references)
+
+    def addReport(self, report: 'StatusReport') -> None:
+        self.reports[report.reference] = report
+        self.report = report
 
     @property
     def status(self) -> int:
-        """ Status of this SMS. Can be ENROUTE, DELIVERED or FAILED
+        """ Aggregated status of this SMS (every part). Can be ENROUTE, DELIVERED or FAILED
 
-        The actual status report object may be accessed via the 'report' attribute
-        if status is 'DELIVERED' or 'FAILED'
+        FAILED as soon as one part has definitively failed, DELIVERED once every part has been
+        delivered, ENROUTE otherwise (reports missing, or only temporary "still trying" statuses).
         """
-        if self.report is None:
-            return SentSms.ENROUTE
-        else:
-            return SentSms.DELIVERED if self.report.deliveryStatus == StatusReport.DELIVERED else SentSms.FAILED
+        finals = [r for r in self.reports.values() if r.isFinal]
+        if any(not r.isDelivered for r in finals):
+            return SentSms.FAILED
+        if len(self.references) == self.expectedParts and all(ref in self.reports and self.reports[ref].isFinal for ref in self.references):
+            return SentSms.DELIVERED
+        return SentSms.ENROUTE
 
 
 class StatusReport(Sms):
@@ -117,6 +135,17 @@ class StatusReport(Sms):
         self.timeFinalized = timeFinalized
         self.deliveryStatus = deliveryStatus
         self.concat = None
+
+    # TP-Status (3GPP TS 23.040 §9.2.3.15): 0x00-0x1F transaction completed (delivered, forwarded, replaced),
+    # 0x20-0x3F temporary error - SC still trying, 0x40-0x5F permanent error, 0x60-0x7F temporary error - SC
+    # no longer trying. Only 0x20-0x3F is not final: a later report will follow for the same TP-MR.
+    @property
+    def isDelivered(self) -> bool:
+        return 0x00 <= int(self.deliveryStatus) <= 0x1F
+
+    @property
+    def isFinal(self) -> bool:
+        return not (0x20 <= int(self.deliveryStatus) <= 0x3F)
 
 
 class GsmModem(SerialComms):
@@ -161,7 +190,11 @@ class GsmModem(SerialComms):
         # Current active calls (ringing and/or answered), key is the unique call ID (not the remote number)
         self.activeCalls = {}
         # Dict containing sent SMS messages (for auto-tracking their delivery status)
-        self.sentSms = weakref.WeakValueDictionary()
+        # TP-MR -> SentSms, one entry per part of each sent SMS. Strong references (a WeakValueDictionary lost the entry
+        # as soon as the caller dropped the returned SentSms - always the case in sms4gd - so no report ever matched);
+        # entries are removed once the aggregated result is notified, or by purgeStaleSentSms()
+        self.sentSms = {}
+        self._sentSmsLock = threading.Lock()
         self._ussdSessionEvent = None  # threading.Event
         self._ussdResponse = None  # gsmmodem.modem.Ussd
         self._smsStatusReportEvent = None  # threading.Event
@@ -176,7 +209,8 @@ class GsmModem(SerialComms):
         self._smsTextMode = False  # Storage variable for the smsTextMode property
         self._gsmBusy = 0  # Storage variable for the GSMBUSY property
         self._smscNumber = None  # Default SMSC number
-        self._smsRef = 0  # Sent SMS reference counter
+        self._smsRef = 0  # Sent SMS reference counter (TP-MR)
+        self._concatRef = random.randint(0, 255)  # Concatenated SMS reference counter (UDH), independent from TP-MR
         self._smsMemReadDelete = None  # Preferred message storage memory for reads/deletes (<mem1> parameter used for +CPMS)
         self._smsMemWrite = None  # Preferred message storage memory for writes (<mem2> parameter used for +CPMS)
         self._smsReadSupported = True  # Whether or not reading SMS messages is supported via AT commands
@@ -986,11 +1020,16 @@ class GsmModem(SerialComms):
             except ValueError:
                 self.smsTextMode = False
 
+        # Created (and every part registered) BEFORE the next part is sent: the status report of part 1 routinely
+        # arrives while the following parts are still being sent, and must already find its SentSms
+        sms = SentSms(destination, text, [])
         if self.smsTextMode:
+            sms.expectedParts = 1
             # Send SMS via AT commands (prompt + text must not be split by another thread's command)
             with self._txLock:
                 self.write(f'AT+CMGS="{destination}"', timeout=5, expectedResponseTermSeq='> ')
                 result = lineStartingWith('+CMGS:', self.write(text, timeout=35, writeTerm=CTRLZ))
+                self._registerSentPart(sms, result)
         else:
             # Check encoding
             try:
@@ -1006,30 +1045,20 @@ class GsmModem(SerialComms):
             else:
                 self.smsEncoding = 'GSM'
 
-            # Encode text into PDUs
-            pdus = encodeSmsSubmitPdu(destination, text, reference=self._smsRef, requestStatusReport=self.requestDelivery, sendFlash=sendFlash, maxPartsPerGroup=maxPartsPerGroup)
+            # Encode text into PDUs - TP-MR (per part) and concatenation reference (per message) are distinct counters
+            concatReference = self._concatRef
+            pdus = encodeSmsSubmitPdu(destination, text, reference=self._smsRef, requestStatusReport=self.requestDelivery, sendFlash=sendFlash, maxPartsPerGroup=maxPartsPerGroup, concatReference=concatReference)
+            groups = len({pdu.concatReference for pdu in pdus if pdu.concatReference is not None})
+            self._concatRef = (concatReference + max(groups, 1)) % 256
+            sms.expectedParts = len(pdus)
 
             # Send SMS PDUs via AT commands - the whole sequence (every "AT+CMGS=n" / "> " / PDU+Ctrl-Z pair of every
             # segment) must be atomic: _txLock only covers a single write(), so without holding it here a notification
             # thread (+CMTI -> CPMS/CMGR/CMGD) could slip its commands in between (RLock: nested write() calls are fine)
             with self._txLock:
                 for pdu in pdus:
-                    result = self._sendPdu(pdu)
+                    self._registerSentPart(sms, self._sendPdu(pdu))
 
-        if result is None:
-            raise CommandError('Modem did not respond with +CMGS response')
-
-        # Keep SMS reference number in order to pair delivery reports with sent message
-        reference = int(result[7:])
-        self._smsRef = reference + 1
-        if self._smsRef > 255:
-            self._smsRef = 0
-
-        # Create sent SMS object for future delivery checks
-        sms = SentSms(destination, text, reference)
-
-        # Add a weak-referenced entry for this SMS (allows us to update the SMS state if a status report is received)
-        self.sentSms[reference] = sms
         if waitForDeliveryReport:
             self._smsStatusReportEvent = threading.Event()
             if self._smsStatusReportEvent.wait(deliveryTimeout):
@@ -1038,6 +1067,71 @@ class GsmModem(SerialComms):
                 self._smsStatusReportEvent = None
                 raise TimeoutException()
         return sms
+
+    def _registerSentPart(self, sms, result):
+        """ Records the TP-MR the modem assigned to a just-sent part (+CMGS: <mr>) and tracks it for status reports """
+        if result is None:
+            raise CommandError('Modem did not respond with +CMGS response')
+        reference = int(result[7:])
+        # Next TP-MR: follow the modem's own counter (it may override the TP-MR we put in the PDU)
+        self._smsRef = (reference + 1) % 256
+        with self._sentSmsLock:
+            sms.references.append(reference)
+            if len(sms.references) == 1:
+                sms.reference = reference
+            self.sentSms[reference] = sms
+
+    def _processStatusReport(self, report):
+        """ Pairs a status report with its SentSms and notifies ONE aggregated result per SMS (all parts),
+        instead of one per part. Reports for unknown TP-MRs (e.g. sent before a daemon restart) are passed on as-is. """
+        with self._sentSmsLock:
+            sms = self.sentSms.get(report.reference) if isinstance(report, StatusReport) else None
+            if sms is not None:
+                sms.addReport(report)
+                notify = not sms.notified and sms.status != SentSms.ENROUTE
+                if notify:
+                    sms.notified = True
+                else:
+                    self.log.debug('Status report for part ref %s of SMS to %s (%d/%d report(s)), %s',
+                                   report.reference, sms.number, len(sms.reports), sms.expectedParts,
+                                   'result already notified' if sms.notified else 'waiting for the others')
+                # Parts stay mapped until each has its final report: after an early FAILED, the remaining parts'
+                # reports must still be swallowed here - not forwarded as untracked (they would overwrite the failure)
+                if len(sms.references) == sms.expectedParts and all(ref in sms.reports and sms.reports[ref].isFinal for ref in sms.references):
+                    for ref in sms.references:
+                        if self.sentSms.get(ref) is sms:
+                            del self.sentSms[ref]
+                if not notify:
+                    sms = False  # nothing to notify (yet, or anymore)
+        if self._smsStatusReportEvent:
+            # A sendSms() call is waiting for this response - notify waiting thread
+            self._smsStatusReportEvent.set()
+        elif sms is not False and self.smsStatusReportCallback:
+            try:
+                self.smsStatusReportCallback(sms if sms is not None else report)
+            except Exception:
+                self.log.error('error in smsStatusReportCallback', exc_info=True)
+
+    def purgeStaleSentSms(self, maxAge):
+        """ Notifies (status still ENROUTE) and forgets sent SMS whose status reports did not all arrive within maxAge
+        seconds - otherwise they would never be reported, and their TP-MR could collide once the counter wraps """
+        now = time.monotonic()
+        stale = []
+        with self._sentSmsLock:
+            for ref, sms in list(self.sentSms.items()):
+                if now - sms.sentAt > maxAge:
+                    del self.sentSms[ref]
+                    if not sms.notified:
+                        sms.notified = True
+                        stale.append(sms)
+        for sms in stale:
+            self.log.warning('No complete status report for SMS to %s after %ds (%d/%d part(s) reported)',
+                             sms.number, maxAge, len(sms.reports), sms.expectedParts)
+            if self.smsStatusReportCallback:
+                try:
+                    self.smsStatusReportCallback(sms)
+                except Exception:
+                    self.log.error('error in smsStatusReportCallback', exc_info=True)
 
     def _sendPdu(self, pdu, retries=1, retryDelay=2):
         """ Sends a single SMS-SUBMIT PDU, retrying it once on a +CMS ERROR.
@@ -1558,18 +1652,7 @@ class GsmModem(SerialComms):
                 # can be re-read; treat this as a lost report rather than crashing the notification thread
                 self.log.warning('Unable to read/delete SMS status report at %s:%s (modem quirk?): %s', msgMemory, msgIndex, e)
                 return
-            # Update sent SMS status if possible
-            if isinstance(report, StatusReport) and report.reference in self.sentSms:
-                self.sentSms[report.reference].report = report
-            if self._smsStatusReportEvent:
-                # A sendSms() call is waiting for this response - notify waiting thread
-                self._smsStatusReportEvent.set()
-            elif self.smsStatusReportCallback:
-                # Nothing is waiting for this report directly - use callback
-                try:
-                    self.smsStatusReportCallback(report)
-                except Exception:
-                    self.log.error('error in smsStatusReportCallback', exc_info=True)
+            self._processStatusReport(report)
 
     def _handleSmsStatusReportTe(self, length, notificationLine):
         """ Handler for TE SMS status reports """
@@ -1583,18 +1666,7 @@ class GsmModem(SerialComms):
             self.log.warning('Discarding notification line from +CDS response: invalid PDU type %s', smsDict['type'])
             return
         report = StatusReport(self, int(smsDict['status']), smsDict['reference'], smsDict['number'], smsDict['time'], smsDict['discharge'], smsDict['status'])
-        # Update sent SMS status if possible
-        if report.reference in self.sentSms:
-            self.sentSms[report.reference].report = report
-        if self._smsStatusReportEvent:
-            # A sendSms() call is waiting for this response - notify waiting thread
-            self._smsStatusReportEvent.set()
-        else:
-            # Nothing is waiting for this report directly - use callback
-            try:
-                self.smsStatusReportCallback(report)
-            except Exception:
-                self.log.error('error in smsStatusReportCallback', exc_info=True)
+        self._processStatusReport(report)
 
     def readStoredSms(self, index, memory=None):
         """ Reads and returns the SMS message at the specified index

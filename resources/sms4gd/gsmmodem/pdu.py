@@ -222,21 +222,25 @@ IEI_CLASS_MAP = {0x00: Concatenation,  # Concatenated short messages, 8-bit refe
 class Pdu(object):
     """ Encoded SMS PDU. Contains raw PDU data and related meta-information """
 
-    def __init__(self, data, tpduLength):
+    def __init__(self, data, tpduLength, reference=None, concatReference=None):
         """ Constructor
         :param data: the raw PDU data (as bytes)
         :type data: bytearray
         :param tpduLength: Length (in bytes) of the TPDU
         :type tpduLength: int
+        :param reference: TP-MR written in this SMS-SUBMIT
+        :param concatReference: concatenation (UDH) reference of the group this part belongs to, None if not concatenated
         """
         self.data = data
         self.tpduLength = tpduLength
+        self.reference = reference
+        self.concatReference = concatReference
 
     def __str__(self):
         return self.data.hex().upper()
 
 
-def encodeSmsSubmitPdu(number: str, text: str, reference: int = 0, validity: Union[None, timedelta, datetime] = None, smsc: Optional[str] = None, requestStatusReport: bool = True, rejectDuplicates: bool = False, sendFlash: bool = False, maxPartsPerGroup: int = 0) -> List['Pdu']:
+def encodeSmsSubmitPdu(number: str, text: str, reference: int = 0, validity: Union[None, timedelta, datetime] = None, smsc: Optional[str] = None, requestStatusReport: bool = True, rejectDuplicates: bool = False, sendFlash: bool = False, maxPartsPerGroup: int = 0, concatReference: Optional[int] = None) -> List['Pdu']:
     """ Creates an SMS-SUBMIT PDU for sending a message with the specified text to the specified number
 
     :param number: the destination mobile number
@@ -254,6 +258,11 @@ def encodeSmsSubmitPdu(number: str, text: str, reference: int = 0, validity: Uni
     :param maxPartsPerGroup: if the message needs more parts than this, it is sent as several independent
         concatenation groups (each with its own reference) instead of a single big one. 0 = no limit.
     :type maxPartsPerGroup: int
+    :param concatReference: concatenation (UDH) reference of the first group - the next groups use the following values.
+        Distinct from the TP-MR: every part must carry the SAME concatenation reference (that is how the handset
+        reassembles them) but its OWN TP-MR (3GPP TS 23.040: TP-MR is incremented for each SMS-SUBMIT). None = reuse
+        "reference" (former behaviour).
+    :type concatReference: int
 
     :return: A list of one or more tuples containing the SMS PDU (as a bytearray, and the length of the TPDU part
     :rtype: list of tuples
@@ -308,8 +317,10 @@ def encodeSmsSubmitPdu(number: str, text: str, reference: int = 0, validity: Uni
 
     # Construct required PDU(s) : one independent concatenation group (and reference) per group
     pdus = []
+    concatBase = reference if concatReference is None else concatReference
+    partIndex = 0
     for groupIndex, groupParts in enumerate(groups):
-        groupReference = (reference + groupIndex) % 256
+        groupReference = (concatBase + groupIndex) % 256
         groupHasConcat = len(groupParts) > 1
         for i, pduText in enumerate(groupParts):
             pdu = bytearray()
@@ -329,7 +340,9 @@ def encodeSmsSubmitPdu(number: str, text: str, reference: int = 0, validity: Uni
             udhLen = len(udh)
 
             pdu.append(tpduFirstOctet | (0x40 if groupHasConcat else 0x00))
-            pdu.append(groupReference)  # message reference
+            messageReference = (reference + partIndex) % 256
+            partIndex += 1
+            pdu.append(messageReference)  # TP-MR: one per SMS-SUBMIT (not the concatenation reference)
             # Add destination number
             pdu.extend(_encodeAddressField(number))
             pdu.append(0x00)  # Protocol identifier - no higher-level protocol
@@ -361,7 +374,7 @@ def encodeSmsSubmitPdu(number: str, text: str, reference: int = 0, validity: Uni
                 pdu.append(userDataLength)
             pdu.extend(userData)  # User Data (message payload)
             tpdu_length = len(pdu) - 1
-            pdus.append(Pdu(pdu, tpdu_length))
+            pdus.append(Pdu(pdu, tpdu_length, messageReference, groupReference if groupHasConcat else None))
     return pdus
 
 

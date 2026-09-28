@@ -38,6 +38,8 @@ class jeedom_com():
         self._cycle = cycle if (cycle > 0 and cycle < 10) else 0.5
         self._retry = retry
         self._changes = {}
+        self._orderedChanges = Queue()
+        Thread(target=self.__thread_changes_ordered, daemon=True).start()
         if self._cycle > 0:
             Thread(target=self.__thread_changes_async, daemon=True).start()
         logging.debug('Init request module v%s', requests.__version__)  # type: ignore
@@ -80,6 +82,20 @@ class jeedom_com():
 
     def send_change_immediate(self, change):
         Thread(target=self.__post_change, args=(change,)).start()
+
+    def send_change_ordered(self, change):
+        """Envoi immédiat mais strictement dans l'ordre d'appel (un seul thread consommateur) : pour les changements
+        d'état successifs d'un même objet (ex : Envoyé -> En attente -> Livré), que send_change_immediate() - un
+        thread par envoi - pourrait faire arriver dans le désordre et donc écraser l'état final par un intermédiaire"""
+        self._orderedChanges.put(change)
+
+    def __thread_changes_ordered(self):
+        while True:
+            change = self._orderedChanges.get()
+            try:
+                self.__post_change(change)
+            except Exception as error:
+                logging.error('Error on ordered send to jeedom : %s', error)
 
     def __post_change(self, change):
         logging.debug('Send to jeedom : %s', change)

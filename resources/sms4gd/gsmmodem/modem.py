@@ -79,6 +79,11 @@ class SentSms(Sms):
     ENROUTE = 0  # Status indicating message is still enroute to destination
     DELIVERED = 1  # Status indicating message has been received by destination handset
     FAILED = 2  # Status indicating message delivery has failed
+    # Notified states (SentSms.notifiedState) - lifecycle of the whole message, only moves forward (see _STATE_RANK):
+    SENT = 3  # every part accepted by the modem/SMSC (+CMGS), no status report yet
+    PENDING = 4  # the SMSC reported a temporary error (TP-ST 0x20-0x3F) and keeps retrying
+    UNKNOWN = 5  # status reports still incomplete after the tracking timeout (purgeStaleSentSms)
+    _STATE_RANK = {None: 0, SENT: 1, PENDING: 2, DELIVERED: 3, FAILED: 3, UNKNOWN: 3}
 
     def __init__(self, number: str, text: str, reference: Union[int, List[int]], smsc: Optional[str] = None):
         super(SentSms, self).__init__(number, text, smsc)
@@ -90,7 +95,7 @@ class SentSms(Sms):
         self.reports = {}  # TP-MR -> latest StatusReport received for that part
         self.report = None  # Latest status report received (any part)
         self.sentAt = time.monotonic()
-        self.notified = False  # aggregated result already handed to smsStatusReportCallback
+        self.notifiedState = None  # last state handed to smsStatusReportCallback (SENT, PENDING, then a final one)
 
     @property
     def parts(self) -> int:
@@ -113,6 +118,17 @@ class SentSms(Sms):
         if len(self.references) == self.expectedParts and all(ref in self.reports and self.reports[ref].isFinal for ref in self.references):
             return SentSms.DELIVERED
         return SentSms.ENROUTE
+
+    @property
+    def notified(self) -> bool:
+        """ True once a final state (DELIVERED, FAILED, UNKNOWN) has been notified """
+        return SentSms._STATE_RANK[self.notifiedState] >= 3
+
+    @property
+    def lastTemporaryReport(self) -> Optional['StatusReport']:
+        """ Latest report with a temporary (non final) TP-ST, if any part is currently in that situation """
+        temporary = [r for r in self.reports.values() if not r.isFinal]
+        return temporary[-1] if temporary else None
 
 
 class StatusReport(Sms):
@@ -195,6 +211,7 @@ class GsmModem(SerialComms):
         # entries are removed once the aggregated result is notified, or by purgeStaleSentSms()
         self.sentSms = {}
         self._sentSmsLock = threading.Lock()
+        self._sentSmsNotifyLock = threading.Lock()
         self._ussdSessionEvent = None  # threading.Event
         self._ussdResponse = None  # gsmmodem.modem.Ussd
         self._smsStatusReportEvent = None  # threading.Event
@@ -1056,9 +1073,18 @@ class GsmModem(SerialComms):
             # segment) must be atomic: _txLock only covers a single write(), so without holding it here a notification
             # thread (+CMTI -> CPMS/CMGR/CMGD) could slip its commands in between (RLock: nested write() calls are fine)
             with self._txLock:
-                for pdu in pdus:
-                    self._registerSentPart(sms, self._sendPdu(pdu))
+                try:
+                    for pdu in pdus:
+                        self._registerSentPart(sms, self._sendPdu(pdu))
+                except Exception:
+                    # The caller reports the send failure itself: mark the message final (without notifying) so the
+                    # reports of the parts already sent are swallowed instead of turning it into PENDING/DELIVERED
+                    with self._sentSmsNotifyLock:
+                        sms.notifiedState = SentSms.FAILED
+                    raise
 
+        # Every part accepted: the message is on its way (no-op if a report already moved it further, e.g. FAILED)
+        self._advanceSentSms(sms, SentSms.SENT)
         if waitForDeliveryReport:
             self._smsStatusReportEvent = threading.Event()
             if self._smsStatusReportEvent.wait(deliveryTimeout):
@@ -1081,57 +1107,70 @@ class GsmModem(SerialComms):
                 sms.reference = reference
             self.sentSms[reference] = sms
 
-    def _processStatusReport(self, report):
-        """ Pairs a status report with its SentSms and notifies ONE aggregated result per SMS (all parts),
-        instead of one per part. Reports for unknown TP-MRs (e.g. sent before a daemon restart) are passed on as-is. """
-        with self._sentSmsLock:
-            sms = self.sentSms.get(report.reference) if isinstance(report, StatusReport) else None
-            if sms is not None:
-                sms.addReport(report)
-                notify = not sms.notified and sms.status != SentSms.ENROUTE
-                if notify:
-                    sms.notified = True
-                else:
-                    self.log.debug('Status report for part ref %s of SMS to %s (%d/%d report(s)), %s',
-                                   report.reference, sms.number, len(sms.reports), sms.expectedParts,
-                                   'result already notified' if sms.notified else 'waiting for the others')
-                # Parts stay mapped until each has its final report: after an early FAILED, the remaining parts'
-                # reports must still be swallowed here - not forwarded as untracked (they would overwrite the failure)
-                if len(sms.references) == sms.expectedParts and all(ref in sms.reports and sms.reports[ref].isFinal for ref in sms.references):
-                    for ref in sms.references:
-                        if self.sentSms.get(ref) is sms:
-                            del self.sentSms[ref]
-                if not notify:
-                    sms = False  # nothing to notify (yet, or anymore)
-        if self._smsStatusReportEvent:
-            # A sendSms() call is waiting for this response - notify waiting thread
-            self._smsStatusReportEvent.set()
-        elif sms is not False and self.smsStatusReportCallback:
-            try:
-                self.smsStatusReportCallback(sms if sms is not None else report)
-            except Exception:
-                self.log.error('error in smsStatusReportCallback', exc_info=True)
+    def _advanceSentSms(self, sms, state):
+        """ Notifies a new lifecycle state of a sent SMS, only if it moves it forward (SENT -> PENDING -> final).
 
-    def purgeStaleSentSms(self, maxAge):
-        """ Notifies (status still ENROUTE) and forgets sent SMS whose status reports did not all arrive within maxAge
-        seconds - otherwise they would never be reported, and their TP-MR could collide once the counter wraps """
-        now = time.monotonic()
-        stale = []
-        with self._sentSmsLock:
-            for ref, sms in list(self.sentSms.items()):
-                if now - sms.sentAt > maxAge:
-                    del self.sentSms[ref]
-                    if not sms.notified:
-                        sms.notified = True
-                        stale.append(sms)
-        for sms in stale:
-            self.log.warning('No complete status report for SMS to %s after %ds (%d/%d part(s) reported)',
-                             sms.number, maxAge, len(sms.reports), sms.expectedParts)
+        Decided and handed to the callback under one lock, so states reach it in order and never go backwards
+        (e.g. a late SENT/PENDING can never overwrite DELIVERED/FAILED). The callback must be quick (it queues). """
+        with self._sentSmsNotifyLock:
+            if SentSms._STATE_RANK[state] <= SentSms._STATE_RANK[sms.notifiedState]:
+                return
+            sms.notifiedState = state
             if self.smsStatusReportCallback:
                 try:
                     self.smsStatusReportCallback(sms)
                 except Exception:
                     self.log.error('error in smsStatusReportCallback', exc_info=True)
+
+    def _processStatusReport(self, report):
+        """ Pairs a status report with its SentSms and notifies the state of the whole message (all parts) - once per
+        state change, not once per part/report. Reports for unknown TP-MRs (e.g. sent before a daemon restart) are
+        passed on as-is. """
+        state = None
+        with self._sentSmsLock:
+            sms = self.sentSms.get(report.reference) if isinstance(report, StatusReport) else None
+            if sms is not None:
+                sms.addReport(report)
+                aggregated = sms.status
+                if aggregated != SentSms.ENROUTE:
+                    state = aggregated
+                elif sms.lastTemporaryReport is not None:
+                    state = SentSms.PENDING
+                self.log.debug('Status report for part ref %s of SMS to %s : TP-ST 0x%02X (%d/%d part(s) reported)',
+                               report.reference, sms.number, int(report.deliveryStatus), len(sms.reports), sms.expectedParts)
+                # Parts stay mapped until each has its final report: after an early FAILED, the remaining parts'
+                # reports must still land here - not be forwarded as untracked (they would overwrite the failure)
+                if len(sms.references) == sms.expectedParts and all(ref in sms.reports and sms.reports[ref].isFinal for ref in sms.references):
+                    for ref in sms.references:
+                        if self.sentSms.get(ref) is sms:
+                            del self.sentSms[ref]
+        if self._smsStatusReportEvent:
+            # A sendSms() call is waiting for this response - notify waiting thread
+            self._smsStatusReportEvent.set()
+        if sms is None:
+            if self.smsStatusReportCallback:
+                try:
+                    self.smsStatusReportCallback(report)
+                except Exception:
+                    self.log.error('error in smsStatusReportCallback', exc_info=True)
+        elif state is not None:
+            self._advanceSentSms(sms, state)
+
+    def purgeStaleSentSms(self, maxAge):
+        """ Notifies UNKNOWN and forgets sent SMS whose status reports did not all arrive within maxAge seconds -
+        otherwise they would never get a final state, and their TP-MR could collide once the counter wraps """
+        now = time.monotonic()
+        stale = set()
+        with self._sentSmsLock:
+            for ref, sms in list(self.sentSms.items()):
+                if now - sms.sentAt > maxAge:
+                    del self.sentSms[ref]
+                    if not sms.notified:
+                        stale.add(sms)
+        for sms in stale:
+            self.log.warning('No complete status report for SMS to %s after %ds (%d/%d part(s) reported)',
+                             sms.number, maxAge, len(sms.reports), sms.expectedParts)
+            self._advanceSentSms(sms, SentSms.UNKNOWN)
 
     def _sendPdu(self, pdu, retries=1, retryDelay=2):
         """ Sends a single SMS-SUBMIT PDU, retrying it once on a +CMS ERROR.

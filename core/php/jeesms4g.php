@@ -73,6 +73,11 @@ if (isset($result['number']) && $result['number'] == 'deliveryReport' && isset($
 		$label = __('Livré', __FILE__);
 	} elseif ($sendFailed) {
 		$label = __('Échec d\'envoi', __FILE__);
+	} elseif ($result['status'] == 'sent') {
+		$label = __('Envoyé', __FILE__);
+	} elseif ($result['status'] == 'pending') {
+		// Erreur temporaire côté destinataire (téléphone éteint, occupé...) : le SMSC réessaie
+		$label = __('En attente', __FILE__);
 	} elseif ($result['status'] == 'unknown') {
 		// Accusés de réception incomplets (tous les segments n'ont pas été acquittés dans le délai)
 		$label = __('Inconnu', __FILE__);
@@ -81,9 +86,19 @@ if (isset($result['number']) && $result['number'] == 'deliveryReport' && isset($
 	}
 	$statusText = $label . ' : ' . $destination . ' (' . date('d/m/Y H:i:s') . ')';
 	$success = ($result['status'] == 'delivered') ? 1 : 0;
+	// États intermédiaires : seul le statut texte évolue, delivery_success n'est mis à jour qu'au résultat final
+	// (sinon un 0 pendant 'Envoyé' / 'En attente' déclencherait les scénarios qui surveillent les échecs)
+	$isFinal = !in_array($result['status'], ['sent', 'pending']);
 	// Le SMS n'est jamais parti (refus du modem) : ce n'est pas un accusé de réception, on le loggue comme une erreur
 	$logLevel = $sendFailed ? 'error' : 'info';
-	$logPrefix = $sendFailed ? __('Échec d\'envoi du SMS : ', __FILE__) : __('Accusé de réception reçu : ', __FILE__);
+	if ($sendFailed) {
+		$logPrefix = __('Échec d\'envoi du SMS : ', __FILE__);
+	} elseif ($result['status'] == 'sent') {
+		// Pas encore un accusé de réception : juste l'acceptation de tous les segments par le modem
+		$logPrefix = __('Statut du SMS : ', __FILE__);
+	} else {
+		$logPrefix = __('Accusé de réception reçu : ', __FILE__);
+	}
 	$logSuffix = ($sendFailed && isset($result['error'])) ? ' - ' . $result['error'] : '';
 	$found = false;
 	foreach (eqLogic::byType('sms4g', true) as $eqLogic) {
@@ -97,7 +112,9 @@ if (isset($result['number']) && $result['number'] == 'deliveryReport' && isset($
 			}
 			$found = true;
 			$eqLogic->checkAndUpdateCmd('delivery_status_' . $cmd->getId(), $statusText);
-			$eqLogic->checkAndUpdateCmd('delivery_success_' . $cmd->getId(), $success);
+			if ($isFinal) {
+				$eqLogic->checkAndUpdateCmd('delivery_success_' . $cmd->getId(), $success);
+			}
 			log::add('sms4g', $logLevel, $logPrefix . secureXSS($statusText . $logSuffix));
 		}
 	}
@@ -108,7 +125,9 @@ if (isset($result['number']) && $result['number'] == 'deliveryReport' && isset($
 			$customNumberCmd = $eqLogic->getCmd(null, 'send_to_custom_number');
 			if (is_object($customNumberCmd)) {
 				$eqLogic->checkAndUpdateCmd('delivery_status_' . $customNumberCmd->getId(), $statusText);
-				$eqLogic->checkAndUpdateCmd('delivery_success_' . $customNumberCmd->getId(), $success);
+				if ($isFinal) {
+					$eqLogic->checkAndUpdateCmd('delivery_success_' . $customNumberCmd->getId(), $success);
+				}
 				$found = true;
 				log::add('sms4g', $logLevel, $logPrefix . secureXSS($statusText . $logSuffix));
 				break;

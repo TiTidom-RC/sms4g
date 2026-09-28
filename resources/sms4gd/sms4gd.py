@@ -85,28 +85,43 @@ def handleSms(sms):
         j_com_instance.add_changes(f'devices::{sms.number}#{next(_smsSeq)}', {'number': sms.number, 'message': message})
 
 
-_SENT_STATUS = {SentSms.DELIVERED: 'delivered', SentSms.FAILED: 'failed', SentSms.ENROUTE: 'unknown'}
+_SENT_STATUS = {SentSms.SENT: 'sent', SentSms.PENDING: 'pending', SentSms.DELIVERED: 'delivered',
+                SentSms.FAILED: 'failed', SentSms.UNKNOWN: 'unknown'}
+
+# TP-Status 0x20-0x3F (3GPP TS 23.040 §9.2.3.15) : erreur temporaire, le SMSC réessaie encore
+_TEMPORARY_TP_STATUS = {0x20: 'congestion', 0x21: 'destinataire occupé', 0x22: 'pas de réponse du destinataire',
+                        0x23: 'service rejeté', 0x24: 'qualité de service indisponible', 0x25: 'erreur du destinataire'}
+
+
+def _tpStatusText(report):
+    code = int(report.deliveryStatus)
+    return f"TP-ST 0x{code:02X} ({_TEMPORARY_TP_STATUS.get(code, 'erreur temporaire')})"
 
 
 def handleStatusReport(report):
-    # SentSms : résultat agrégé de TOUS les segments d'un SMS (un seul accusé remonté par SMS, même long) ;
-    # 'unknown' = accusés incomplets au bout de _delivery_report_ttl (purgeStaleSentSms)
+    # SentSms : un changement d'état du SMS entier (tous segments confondus), jamais en arrière :
+    #   sent (accepté par le modem) -> pending (le SMSC réessaie) -> delivered | failed | unknown (accusés incomplets)
     # StatusReport : accusé isolé non rattaché à un envoi connu (ex : SMS envoyé avant un redémarrage du démon)
     if isinstance(report, SentSms):
-        status = _SENT_STATUS[report.status]
+        status = _SENT_STATUS[report.notifiedState]
         destination = report.number
-        logging.info("Delivery report for %s : %s (%d/%d part(s) reported, ref %s)", destination, status,
-                     len(report.reports), report.expectedParts, ','.join(str(r) for r in report.references))
+        detail = ''
+        if report.notifiedState == SentSms.PENDING and report.lastTemporaryReport is not None:
+            detail = ', ' + _tpStatusText(report.lastTemporaryReport)
+        logging.info("SMS to %s : %s (%d/%d part(s) reported%s, ref %s)", destination, status,
+                     len(report.reports), report.expectedParts, detail, ','.join(str(r) for r in report.references))
     else:
-        if not report.isFinal:
-            # 0x20-0x3F : erreur temporaire, le SMSC réessaie encore - un autre accusé suivra
-            logging.info("Temporary delivery status 0x%02X for %s (ref %s), SMSC still trying", int(report.deliveryStatus), report.number, report.reference)
-            return
-        status = 'delivered' if report.isDelivered else 'failed'
+        if report.isFinal:
+            status = 'delivered' if report.isDelivered else 'failed'
+            logging.info("Delivery report for %s : %s (untracked ref %s)", report.number, status, report.reference)
+        else:
+            status = 'pending'
+            logging.info("Delivery report for %s : pending, %s (untracked ref %s)", report.number, _tpStatusText(report), report.reference)
         destination = report.number
-        logging.info("Delivery report for %s : %s (untracked ref %s)", destination, status, report.reference)
     if j_com_instance:
-        j_com_instance.send_change_immediate({'number': 'deliveryReport', 'destination': destination, 'status': status, 'reference': report.reference})
+        # Envoi ordonné : les états successifs d'un même SMS doivent arriver dans l'ordre (sinon un 'sent' en retard
+        # pourrait écraser le 'delivered' dans Jeedom)
+        j_com_instance.send_change_ordered({'number': 'deliveryReport', 'destination': destination, 'status': status, 'reference': report.reference})
 
 
 def _backoffDelay(attempt):
@@ -334,7 +349,7 @@ def read_socket():
                 logging.error("Failed to send SMS to %s : %s", message['number'], e)
                 if j_com_instance:
                     # 'send_failed' (and not 'failed') : le SMS n'est jamais parti, ce n'est pas un accusé de réception négatif
-                    j_com_instance.send_change_immediate({'number': 'deliveryReport', 'destination': message['number'], 'status': 'send_failed', 'error': str(e)})
+                    j_com_instance.send_change_ordered({'number': 'deliveryReport', 'destination': message['number'], 'status': 'send_failed', 'error': str(e)})
 
 
 def handler(signum=None, frame=None):

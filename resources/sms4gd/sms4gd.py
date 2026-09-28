@@ -159,12 +159,12 @@ def _createAndConnectModem():
                 j_com_instance.send_change_immediate({'number': 'networkName', 'message': str(modem.networkName)})
         except Exception as e:
             logging.error("Exception during send_change_immediate: %s", e)
-        for mem in ('ME', 'SM'):
-            try:
-                modem.write(f'AT+CPMS="{mem}","{mem}","{mem}"')
-                modem.write('AT+CMGD=1,4')
-            except Exception as e:
-                logging.error("Exception clearing '%s' storage: %s", mem, e)
+        # Purge ME + SM, then keep SM (larger than ME on SimCom: 100 vs 23 slots) - via the modem API so its
+        # memory cache matches what the modem really uses (raw AT+CPMS writes here used to desync it)
+        try:
+            modem.resetSmsStorage(memories=('ME', 'SM'), keep='SM')
+        except Exception as e:
+            logging.error("Exception resetting SMS storage: %s", e)
         return modem
     except Exception:
         # Otherwise a failed attempt leaves its read thread and serial port open, contending with the
@@ -174,6 +174,25 @@ def _createAndConnectModem():
         except Exception:
             pass
         raise
+
+
+_SMS_STORAGE_WARN_RATIO = 0.8
+_sms_storage_warned = False
+
+
+def _checkSmsStorage():
+    """Surveille l'occupation du stockage SMS (AT+CPMS?) : warning au-delà de 80 %, une seule fois par franchissement"""
+    global _sms_storage_warned
+    try:
+        usage = gsm.smsStorageUsage()
+    except Exception as e:
+        logging.debug("Failed to read SMS storage usage : %s", e)
+        return
+    logging.debug("SMS storage usage : %s", usage)
+    full = [f"{mem} {used}/{total}" for mem, used, total in usage if total > 0 and used >= total * _SMS_STORAGE_WARN_RATIO]
+    if full and not _sms_storage_warned:
+        logging.warning("SMS storage almost full : %s", ', '.join(full))
+    _sms_storage_warned = bool(full)
 
 
 def _catchUpStoredSms(modem):
@@ -252,6 +271,7 @@ def listen():
                     consecutive_network_failures = 0
                     _setModemStatus('connected')
                     gsm.purgeStaleSmsParts(_concat_parts_ttl)
+                    _checkSmsStorage()
             except Exception as e:
                 if _isTransientNetworkError(e):
                     consecutive_network_failures += 1
@@ -295,7 +315,8 @@ def read_socket():
             except Exception as e:
                 logging.error("Failed to send SMS to %s : %s", message['number'], e)
                 if j_com_instance:
-                    j_com_instance.send_change_immediate({'number': 'deliveryReport', 'destination': message['number'], 'status': 'failed'})
+                    # 'send_failed' (and not 'failed') : le SMS n'est jamais parti, ce n'est pas un accusé de réception négatif
+                    j_com_instance.send_change_immediate({'number': 'deliveryReport', 'destination': message['number'], 'status': 'send_failed', 'error': str(e)})
 
 
 def handler(signum=None, frame=None):

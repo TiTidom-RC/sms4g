@@ -393,8 +393,12 @@ class GsmModem(SerialComms):
                     for i in range(len(cpmsSupport)):
                         for memType in preferredMemoryTypes:
                             if memType in cpmsSupport[i]:
+                                # Cache kept unquoted, like the memory names parsed from +CMTI/+CDSI and passed
+                                # to _setSmsMemory() - otherwise every comparison fails and forces a useless AT+CPMS
                                 if i == 0:
-                                    self._smsMemReadDelete = memType
+                                    self._smsMemReadDelete = memType.strip('"')
+                                elif i == 1:
+                                    self._smsMemWrite = memType.strip('"')
                                 cpmsItems[i] = memType
                                 break
                     self.write(f'AT+CPMS={",".join(cpmsItems)}')  # Set message storage
@@ -983,9 +987,10 @@ class GsmModem(SerialComms):
                 self.smsTextMode = False
 
         if self.smsTextMode:
-            # Send SMS via AT commands
-            self.write(f'AT+CMGS="{destination}"', timeout=5, expectedResponseTermSeq='> ')
-            result = lineStartingWith('+CMGS:', self.write(text, timeout=35, writeTerm=CTRLZ))
+            # Send SMS via AT commands (prompt + text must not be split by another thread's command)
+            with self._txLock:
+                self.write(f'AT+CMGS="{destination}"', timeout=5, expectedResponseTermSeq='> ')
+                result = lineStartingWith('+CMGS:', self.write(text, timeout=35, writeTerm=CTRLZ))
         else:
             # Check encoding
             try:
@@ -1004,10 +1009,12 @@ class GsmModem(SerialComms):
             # Encode text into PDUs
             pdus = encodeSmsSubmitPdu(destination, text, reference=self._smsRef, requestStatusReport=self.requestDelivery, sendFlash=sendFlash, maxPartsPerGroup=maxPartsPerGroup)
 
-            # Send SMS PDUs via AT commands
-            for pdu in pdus:
-                self.write(f'AT+CMGS={pdu.tpduLength}', timeout=5, expectedResponseTermSeq='> ')
-                result = lineStartingWith('+CMGS:', self.write(str(pdu), timeout=35, writeTerm=CTRLZ))  # example: +CMGS: xx
+            # Send SMS PDUs via AT commands - the whole sequence (every "AT+CMGS=n" / "> " / PDU+Ctrl-Z pair of every
+            # segment) must be atomic: _txLock only covers a single write(), so without holding it here a notification
+            # thread (+CMTI -> CPMS/CMGR/CMGD) could slip its commands in between (RLock: nested write() calls are fine)
+            with self._txLock:
+                for pdu in pdus:
+                    result = self._sendPdu(pdu)
 
         if result is None:
             raise CommandError('Modem did not respond with +CMGS response')
@@ -1031,6 +1038,24 @@ class GsmModem(SerialComms):
                 self._smsStatusReportEvent = None
                 raise TimeoutException()
         return sms
+
+    def _sendPdu(self, pdu, retries=1, retryDelay=2):
+        """ Sends a single SMS-SUBMIT PDU, retrying it once on a +CMS ERROR.
+
+        Only the failing segment is re-sent (segments already accepted are not duplicated). A CMS error means the
+        modem refused this segment, so retrying cannot duplicate it; a timeout is NOT retried since the segment may
+        have been sent anyway. Must be called with _txLock held. """
+        attempt = 0
+        while True:
+            try:
+                self.write(f'AT+CMGS={pdu.tpduLength}', timeout=5, expectedResponseTermSeq='> ')
+                return lineStartingWith('+CMGS:', self.write(str(pdu), timeout=35, writeTerm=CTRLZ))  # example: +CMGS: xx
+            except CmsError as e:
+                if attempt >= retries:
+                    raise
+                attempt += 1
+                self.log.warning('SMS segment refused by modem (%s), retry %d/%d in %ds', e, attempt, retries, retryDelay)
+                time.sleep(retryDelay)
 
     def sendUssd(self, ussdString, responseTimeout=15):
         """ Starts a USSD session by dialing the the specified USSD string, or \
@@ -1497,13 +1522,25 @@ class GsmModem(SerialComms):
             if cmtiMatch:
                 msgMemory = cmtiMatch.group(1)
                 msgIndex = cmtiMatch.group(2)
-                sms = self.readStoredSms(msgIndex, msgMemory)
-                try:
-                    self._deliverOrBufferSms(sms)
-                except Exception:
-                    self.log.error('error in smsReceivedCallback', exc_info=True)
-                else:
-                    self.deleteStoredSms(msgIndex)
+                # Read + delete as one atomic sequence (no other command may switch the memory in between), and
+                # always free the slot: nothing retries a message left in storage before the next reconnection, and
+                # an undecodable one would fail again forever - occupying a slot each time until "memory full" (CMS 322)
+                sms = None
+                with self._txLock:
+                    try:
+                        sms = self.readStoredSms(msgIndex, msgMemory)
+                    except Exception:
+                        self.log.error('Unable to read/decode stored SMS at %s:%s - deleting it to free the slot', msgMemory, msgIndex, exc_info=True)
+                    try:
+                        self.deleteStoredSms(msgIndex, msgMemory)
+                    except CommandError as e:
+                        self.log.warning('Unable to delete stored SMS at %s:%s : %s', msgMemory, msgIndex, e)
+                if sms is not None:
+                    # Callback outside the lock (it only queues the message for Jeedom)
+                    try:
+                        self._deliverOrBufferSms(sms)
+                    except Exception:
+                        self.log.error('error in smsReceivedCallback', exc_info=True)
 
     def _handleSmsStatusReport(self, notificationLine):
         """ Handler for SMS status reports """
@@ -1513,8 +1550,9 @@ class GsmModem(SerialComms):
             msgMemory = cdsiMatch.group(1)
             msgIndex = cdsiMatch.group(2)
             try:
-                report = self.readStoredSms(msgIndex, msgMemory)
-                self.deleteStoredSms(msgIndex)
+                with self._txLock:
+                    report = self.readStoredSms(msgIndex, msgMemory)
+                    self.deleteStoredSms(msgIndex, msgMemory)
             except CommandError as e:
                 # Some modems (e.g. SimCom SIM7600) may clear the status report slot before it
                 # can be re-read; treat this as a lost report rather than crashing the notification thread
@@ -1636,6 +1674,29 @@ class GsmModem(SerialComms):
         self.write(f'AT+CMGD={index},0')
         # TODO: make a check how many params are supported by the modem and use the right command. For example, Siemens MC35, TC35 take only one parameter.
         # self.write('AT+CMGD={0}'.format(index))
+
+    def resetSmsStorage(self, memories=('ME', 'SM'), keep='SM'):
+        """ Empties every given storage, then selects `keep` for read/delete, write and receive.
+
+        Goes through the memory cache (unlike raw AT+CPMS writes), so later _setSmsMemory() calls stay consistent. """
+        with self._txLock:
+            for mem in memories:
+                try:
+                    self.write(f'AT+CPMS="{mem}","{mem}","{mem}"')
+                    self.write('AT+CMGD=1,4')
+                except CommandError as e:
+                    self.log.error("Unable to clear '%s' SMS storage: %s", mem, e)
+            self.write(f'AT+CPMS="{keep}","{keep}","{keep}"')
+            self._smsMemReadDelete = keep
+            self._smsMemWrite = keep
+
+    def smsStorageUsage(self):
+        """ Returns the SMS storage occupation as reported by AT+CPMS? : [(memory, used, total), ...] for mem1, mem2, mem3 """
+        line = lineStartingWith('+CPMS:', self.write('AT+CPMS?'))
+        if line is None:
+            return []
+        values = [v.strip().strip('"') for v in line.split(':', 1)[1].split(',')]
+        return [(values[i], int(values[i + 1]), int(values[i + 2])) for i in range(0, len(values) - 2, 3)]
 
     def deleteMultipleStoredSms(self, delFlag=4, memory=None):
         """ Deletes all SMS messages that have the specified read status.

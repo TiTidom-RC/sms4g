@@ -68,9 +68,20 @@ if (isset($result['number']) && $result['number'] == 'modemStatus' && isset($res
 
 if (isset($result['number']) && $result['number'] == 'deliveryReport' && isset($result['destination']) && isset($result['status'])) {
 	[$destination, $formattedDestination] = formatSmsNumber($result['destination']);
-	$label = ($result['status'] == 'delivered') ? __('Livré', __FILE__) : __('Échec', __FILE__);
+	$sendFailed = ($result['status'] == 'send_failed');
+	if ($result['status'] == 'delivered') {
+		$label = __('Livré', __FILE__);
+	} elseif ($sendFailed) {
+		$label = __('Échec d\'envoi', __FILE__);
+	} else {
+		$label = __('Échec', __FILE__);
+	}
 	$statusText = $label . ' : ' . $destination . ' (' . date('d/m/Y H:i:s') . ')';
 	$success = ($result['status'] == 'delivered') ? 1 : 0;
+	// Le SMS n'est jamais parti (refus du modem) : ce n'est pas un accusé de réception, on le loggue comme une erreur
+	$logLevel = $sendFailed ? 'error' : 'info';
+	$logPrefix = $sendFailed ? __('Échec d\'envoi du SMS : ', __FILE__) : __('Accusé de réception reçu : ', __FILE__);
+	$logSuffix = ($sendFailed && isset($result['error'])) ? ' - ' . $result['error'] : '';
 	$found = false;
 	foreach (eqLogic::byType('sms4g', true) as $eqLogic) {
 		/** @var cmd $cmd */
@@ -84,7 +95,7 @@ if (isset($result['number']) && $result['number'] == 'deliveryReport' && isset($
 			$found = true;
 			$eqLogic->checkAndUpdateCmd('delivery_status_' . $cmd->getId(), $statusText);
 			$eqLogic->checkAndUpdateCmd('delivery_success_' . $cmd->getId(), $success);
-			log::add('sms4g', 'info', __('Accusé de réception reçu : ', __FILE__) . secureXSS($statusText));
+			log::add('sms4g', $logLevel, $logPrefix . secureXSS($statusText . $logSuffix));
 		}
 	}
 	if (!$found) {
@@ -96,7 +107,7 @@ if (isset($result['number']) && $result['number'] == 'deliveryReport' && isset($
 				$eqLogic->checkAndUpdateCmd('delivery_status_' . $customNumberCmd->getId(), $statusText);
 				$eqLogic->checkAndUpdateCmd('delivery_success_' . $customNumberCmd->getId(), $success);
 				$found = true;
-				log::add('sms4g', 'info', __('Accusé de réception reçu : ', __FILE__) . secureXSS($statusText));
+				log::add('sms4g', $logLevel, $logPrefix . secureXSS($statusText . $logSuffix));
 				break;
 			}
 		}

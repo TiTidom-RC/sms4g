@@ -1,5 +1,6 @@
 {
     "cSpell.words": [
+        "asyncio",
         "Aucamp",
         "baudrate",
         "CCFC",
@@ -53,6 +54,7 @@
         "davidjb",
         "DDET",
         "deliveryreport",
+        "Discordlink",
         "dnumber",
         "dsrdtr",
         "dtmf",
@@ -74,6 +76,7 @@
         "jeesms4g",
         "lgdecode",
         "nkfd",
+        "nutfreed",
         "OLDDIR",
         "pdus",
         "phonebook",
@@ -97,6 +100,7 @@
         "statusreport",
         "textmode",
         "tpdu",
+        "tvremoted",
         "UDHI",
         "ussd",
         "USSD",

@@ -61,7 +61,8 @@ Le workspace contient, à côté de ce dépôt, des dépôts voisins directement
   - Python : `ruff check resources/sms4gd/` (config [ruff.toml](ruff.toml), `py312`, règles `E`/`F`).
   - JS : `node --check` sur tous les `.js`.
 - Traductions : générées automatiquement (workflow `translations.yml` sur push `beta`, DeepL) → **ne jamais éditer à la main** `core/i18n/*.json` ni les descriptions traduites de `plugin_info/info.json` ; seul le `fr_FR` est rédigé manuellement.
-- Messages de commit : anglais, courts, à l'impératif (ex. `Restrict sms4g API mode to localhost`).
+- **Commits** : faits exclusivement par l'utilisateur via GitHub Desktop, dans ce dépôt comme dans `../Documentation`. Ne jamais commiter, pousser ni ouvrir de PR, et ne pas le proposer en fin de tâche : lister simplement les fichiers modifiés.
+- Messages de commit (si l'utilisateur demande une proposition de message) : anglais, courts, à l'impératif (ex. `Restrict sms4g API mode to localhost`).
 
 ## Conventions de code
 
@@ -76,7 +77,14 @@ Le workspace contient, à côté de ce dépôt, des dépôts voisins directement
 
 ## Patterns Jeedom à respecter
 
-- Ne jamais réimplémenter une fonction déjà fournie par le Core (`log::add`, `config::byKey`/`config::save`, `eqLogic::byType`, `jeedom::getApiKey`/`getTmpFolder`, `system::fuserk`...).
+- **Helpers du Core en priorité (règle systématique)** : le Core Jeedom fournit de nombreux helpers, et le plugin ne doit jamais réécrire ce qui existe déjà. Avant d'écrire une fonction utilitaire (PHP ou JS), **chercher d'abord dans `../Jeedom/core`** si un équivalent existe et l'utiliser. On ne code une implémentation propre que si rien n'existe, en le signalant explicitement dans le plan. Où chercher :
+  - **PHP, classes du Core** (`core/class/`) : `log::add`, `config::byKey`/`config::save`, `eqLogic::byType`, `cmd::byEqLogicIdAndLogicalId`, `jeedom::getApiKey`/`apiAccess`/`getTmpFolder`, `network::getNetworkAccess`, `system::fuserk`/`getCmdSudo`, `message::add`, `cache::set`/`byKey`...
+  - **PHP, fonctions globales** ([core/php/utils.inc.php](../Jeedom/core/core/php/utils.inc.php)) : `init`, `sendVarToJS`, `include_file`, `is_json`, `secureXSS`, `sanitizeAccent`, `convertDuration`, `sizeFormat`, `date_fr`, `cleanPath`, `rrmdir`, `getClientIp`, `netMatch`...
+  - **JS, manipulation du DOM** ([core/dom/dom.utils.js](../Jeedom/core/core/dom/dom.utils.js), `domUtils`) : sélection, événements, requêtes Ajax (`domUtils.ajax`), plutôt que du JS natif ad hoc.
+  - **JS, UI** ([desktop/common/js/utils.js](../Jeedom/core/desktop/common/js/utils.js), `jeedomUtils`) : `showAlert`/`hideAlert`, `sanitizeHTML`, `linkify`, `readableFileSize`, `initTooltips`, `datePickerInit`, `checkPageModified`...
+  - **JS, modales** : `jeeDialog` (alert/confirm/prompt/dialog), jamais `alert()`/`confirm()` natifs ni de modale maison.
+  - **JS, API métier** ([core/js/*.class.js](../Jeedom/core/core/js/)) : `jeedom.cmd.*`, `jeedom.eqLogic.*`, `jeedom.config.*`, `jeedom.plugin.*`... pour les appels au Core plutôt que des requêtes Ajax écrites à la main.
+  - En cas de doute sur la signature ou le comportement d'un helper, lire sa source dans le Core plutôt que de supposer. Les plugins voisins montrent comment l'auteur les utilise en pratique.
 - `cmd::save()` n'appelle **pas** `postSave()` (contrairement à `eqLogic::save()`) — toute logique dépendant de l'état final des cmds doit passer par `postAjax()` ou une création à la demande, jamais par un hook `cmd::postSave()` seul en cas de dépendance à l'ordre de sauvegarde.
 - **Nouvelle option de configuration du démon** — la chaîne complète doit être mise à jour :
   1. valeur par défaut dans [plugin_info/install.php](plugin_info/install.php), **dans `sms4g_install()` et `sms4g_update()`** (les deux blocs sont dupliqués) ;

@@ -75,6 +75,16 @@ function sms4g_install() {
 	if (config::byKey('disableUpdateMsg', 'sms4g') == '') {
 		config::save('disableUpdateMsg', '0', 'sms4g');
 	}
+	if (config::byKey('diagMode', 'sms4g') == '') {
+		config::save('diagMode', '0', 'sms4g');
+	}
+
+	// Équipement virtuel Modem (connexion, signal, réseau, commande AT de diagnostic)
+	try {
+		sms4g::manageModemEquipment();
+	} catch (\Throwable $e) {
+		log::add('sms4g', 'error', '[Modem] Création de l\'équipement virtuel Modem impossible : ' . $e->getMessage());
+	}
 
 	$dependencyInfo = sms4g::dependancy_info();
 	if (!isset($dependencyInfo['state'])) {
@@ -148,6 +158,16 @@ function sms4g_update() {
 	if (config::byKey('disableUpdateMsg', 'sms4g') == '') {
 		config::save('disableUpdateMsg', '0', 'sms4g');
 	}
+	if (config::byKey('diagMode', 'sms4g') == '') {
+		config::save('diagMode', '0', 'sms4g');
+	}
+
+	// Équipement virtuel Modem (connexion, signal, réseau, commande AT de diagnostic)
+	try {
+		sms4g::manageModemEquipment();
+	} catch (\Throwable $e) {
+		log::add('sms4g', 'error', '[Modem] Création de l\'équipement virtuel Modem impossible : ' . $e->getMessage());
+	}
 
 	$dependencyInfo = sms4g::dependancy_info();
 	if (!isset($dependencyInfo['state'])) {
@@ -161,15 +181,15 @@ function sms4g_update() {
 		}
 	}
 
-	// Crée les commandes manquantes sur les équipements/contacts créés avant l'ajout de ces fonctionnalités
+	// Crée les commandes compagnon manquantes sur les équipements SMS créés avant l'ajout de cette fonctionnalité
 	foreach (eqLogic::byType('sms4g') as $eqLogic) {
+		if ($eqLogic->getLogicalId() == 'modem') {
+			continue;
+		}
 		foreach ($eqLogic->getCmd('action') as $cmd) {
 			if ($cmd->getSubType() == 'message' && (!is_object($eqLogic->getCmd(null, 'delivery_status_' . $cmd->getId())) || !is_object($eqLogic->getCmd(null, 'delivery_success_' . $cmd->getId())))) {
 				$cmd->save();
 			}
-		}
-		if (!is_object($eqLogic->getCmd(null, 'connection')) || !is_object($eqLogic->getCmd(null, 'connection_state')) || !is_object($eqLogic->getCmd(null, 'online'))) {
-			$eqLogic->save();
 		}
 	}
 	$paths = array(

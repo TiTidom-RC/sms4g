@@ -115,32 +115,32 @@ class ClassifierTest(unittest.TestCase):
     def setUp(self):
         self.c = LineClassifier()
 
-    def test_always_spontaneous_even_during_a_command(self):
+    def testUrcAlwaysNotification(self):
         for line in ('+CMTI: "SM",3', '+CDSI: "SM",4', 'RING', 'RDY', 'SMS DONE', '+CLIP: "+33600000000",145'):
             self.assertEqual(self.c.classify(line, 'AT+CSQ'), LineKind.NOTIFICATION, line)
 
-    def test_response_when_a_command_is_in_progress(self):
+    def testResponseDuringCommand(self):
         self.assertEqual(self.c.classify('+CSQ: 20,99', 'AT+CSQ'), LineKind.RESPONSE)
         self.assertEqual(self.c.classify('OK', 'AT+CSQ'), LineKind.RESPONSE)
 
-    def test_notification_when_no_command(self):
+    def testNotificationWithoutCommand(self):
         self.assertEqual(self.c.classify('+CSQ: 20,99', None), LineKind.NOTIFICATION)
 
-    def test_ambiguous_prefix_depends_on_the_command(self):
+    def testAmbiguousPrefix(self):
         self.assertEqual(self.c.classify('+CPIN: READY', 'AT+CPIN?'), LineKind.RESPONSE)
         self.assertEqual(self.c.classify('+CPIN: READY', 'AT+CSQ'), LineKind.NOTIFICATION)
         self.assertEqual(self.c.classify('+CPIN: READY', None), LineKind.NOTIFICATION)
         self.assertEqual(self.c.classify('+CREG: 0,1', 'AT+CREG?'), LineKind.RESPONSE)
         self.assertEqual(self.c.classify('+CREG: 1', 'AT+CSQ'), LineKind.NOTIFICATION)
 
-    def test_caret_notification_unless_it_answers_the_command(self):
+    def testCaretNotification(self):
         self.assertEqual(self.c.classify('^RSSI:20', 'AT+CSQ'), LineKind.NOTIFICATION)
         self.assertEqual(self.c.classify('^SYSINFO:2,3,0,5,1', 'AT^SYSINFO'), LineKind.RESPONSE)
 
-    def test_echo_is_ignored(self):
+    def testEchoIgnored(self):
         self.assertEqual(self.c.classify('AT+CSQ', 'AT+CSQ'), LineKind.IGNORE)
 
-    def test_cds_pdu_continuation(self):
+    def testCdsPduContinuation(self):
         self.assertEqual(self.c.classify('+CDS: 25', 'AT+CSQ'), LineKind.NOTIFICATION)
         self.assertTrue(self.c.expectingContinuation)
         # A response interleaved before the PDU stays a response
@@ -148,7 +148,7 @@ class ClassifierTest(unittest.TestCase):
         self.assertEqual(self.c.classify('0791530000000000', 'AT+CSQ'), LineKind.NOTIFICATION)
         self.assertFalse(self.c.expectingContinuation)
 
-    def test_profile_prefixes(self):
+    def testProfilePrefixes(self):
         self.c.urcPrefixes = ('^BOOT',)
         self.assertEqual(self.c.classify('^BOOT:1,2', 'AT+CSQ'), LineKind.NOTIFICATION)
 
@@ -179,11 +179,11 @@ class ExecutorTestCase(unittest.TestCase):
 
 
 class ExecutorTest(ExecutorTestCase):
-    def test_simple_command_with_echo(self):
+    def testSimpleCommandWithEcho(self):
         FakeSerial.behavior = answer({'AT+CSQ': '\r\n+CSQ: 20,99\r\n\r\nOK\r\n'}, echo=True)
         self.assertEqual(self.executor.submit('AT+CSQ').result(2), ['+CSQ: 20,99', 'OK'])
 
-    def test_errors(self):
+    def testErrors(self):
         FakeSerial.behavior = answer({'AT+A': 'ERROR\r\n', 'AT+B': '+CME ERROR: 11\r\n', 'AT+C': '+CMS ERROR: 322\r\n',
                                       'AT+D': 'COMMAND NOT SUPPORT\r\n'})
         with self.assertRaises(CommandError):
@@ -197,19 +197,19 @@ class ExecutorTest(ExecutorTestCase):
             self.executor.submit('AT+D').result(2)
         self.assertEqual(self.executor.submit('AT+A', parseError=False).result(2), ['ERROR'])
 
-    def test_pin_is_masked_in_errors(self):
+    def testPinMaskedInErrors(self):
         FakeSerial.behavior = answer({'AT+CPIN="1234"': '+CME ERROR: 16\r\n'})
         with self.assertRaises(CommandError) as ctx:
             self.executor.submit('AT+CPIN="1234"').result(2)
         self.assertNotIn('1234', str(ctx.exception.command))
 
-    def test_notification_during_a_command_is_not_mixed_in_the_response(self):
+    def testNotificationNotMixedInResponse(self):
         FakeSerial.behavior = answer({'AT+CSQ': '+CMTI: "SM",1\r\n+CSQ: 20,99\r\nOK\r\n'})
         self.assertEqual(self.executor.submit('AT+CSQ').result(2), ['+CSQ: 20,99', 'OK'])
         self.assertTrue(waitFor(lambda: self.notifications))
         self.assertEqual(self.notifications[0], ['+CMTI: "SM",1'])
 
-    def test_priority_orders_the_waiting_transactions(self):
+    def testPriorityOrder(self):
         order: list[str] = []
 
         def behavior(fake, data):
@@ -224,7 +224,7 @@ class ExecutorTest(ExecutorTestCase):
             future.result(2)
         self.assertLess(order.index('AT+HIGH'), order.index('AT+LOW'))
 
-    def test_timeout_releases_the_caller_but_not_the_port(self):
+    def testTimeoutReleasesCallerNotPort(self):
         slow = 'AT+COPS=?'
         FakeSerial.behavior = answer({
             'AT+CSQ': '+CSQ: 20,99\r\nOK\r\n',
@@ -241,7 +241,7 @@ class ExecutorTest(ExecutorTestCase):
         self.assertGreater(time.monotonic() - started, 0.7)  # coarse Windows clock: the late answer comes at 0.8 s
         self.assertEqual(self.fake.commands(), [slow, 'AT+CSQ'])
 
-    def test_resynchronization_marker_after_the_hold_limit(self):
+    def testResynchronizationMarker(self):
         FakeSerial.behavior = answer({'AT+CMEE?': '+CMEE: 1\r\nOK\r\n', 'AT+CSQ': '+CSQ: 20,99\r\nOK\r\n'})
         a = self.executor.submit('AT+NOANSWER', timeout=0.2, maxHold=0.4)
         b = self.executor.submit('AT+CSQ')
@@ -251,7 +251,7 @@ class ExecutorTest(ExecutorTestCase):
         self.assertEqual(self.fake.commands(), ['AT+NOANSWER', 'AT+CMEE?', 'AT+CSQ'])
         self.assertEqual(self.stuck, [])
 
-    def test_modem_not_answering_the_marker_is_stuck(self):
+    def testModemStuck(self):
         self.executor.MARKER_TIMEOUT = 0.3
         a = self.executor.submit('AT+NOANSWER', timeout=0.2, maxHold=0.3)
         b = self.executor.submit('AT+CSQ')
@@ -263,7 +263,7 @@ class ExecutorTest(ExecutorTestCase):
         with self.assertRaises(NotConnectedError):
             self.executor.submit('AT').result(1)
 
-    def test_prompt_transaction(self):
+    def testPromptTransaction(self):
         def behavior(fake, data):
             text = data.decode()
             if text.startswith('AT+CMGS'):
@@ -276,14 +276,14 @@ class ExecutorTest(ExecutorTestCase):
         self.assertEqual(self.executor.submitTransaction(transaction).result(2), ['+CMGS: 7', 'OK'])
         self.assertEqual([data for _, data in self.fake.written], [b'AT+CMGS=5\r', b'00110000\x1a'])
 
-    def test_prompt_timeout_sends_escape(self):
+    def testPromptTimeoutSendsEscape(self):
         FakeSerial.behavior = answer({'AT+CMEE?': '+CMEE: 1\r\nOK\r\n'})
         transaction = Transaction([Step('AT+CMGS=5', timeout=0.2, expectPrompt=True), Step('00', terminator=CTRL_Z)])
         with self.assertRaises(TimeoutException):
             self.executor.submitTransaction(transaction).result(2)
         self.assertTrue(waitFor(lambda: any(data == b'\x1b' for _, data in self.fake.written)))
 
-    def test_busy_error_is_retried(self):
+    def testBusyErrorRetried(self):
         calls = []
 
         def behavior(fake, data):
@@ -294,20 +294,20 @@ class ExecutorTest(ExecutorTestCase):
         self.assertEqual(self.executor.submit('AT+X').result(3), ['OK'])
         self.assertEqual(len(calls), 2)
 
-    def test_cache_follows_the_succeeded_commands(self):
+    def testCache(self):
         FakeSerial.behavior = answer({'AT+CMGF=0': 'OK\r\n', 'AT+CPMS="SM","SM","SM"': '+CPMS: 0,100,0,100,0,100\r\nOK\r\n'})
         self.executor.submit('AT+CMGF=0').result(2)
         self.executor.submit('AT+CPMS="SM","SM","SM"').result(2)
         self.assertEqual(self.executor.cache, {'smsMode': 0, 'smsMemories': ('SM', 'SM', 'SM')})
 
-    def test_lost_port_is_signaled_once_and_fails_the_command(self):
+    def testLostPort(self):
         self.fake.unplug()
         self.assertTrue(waitFor(lambda: self.lost))
         self.assertEqual(len(self.lost), 1)
         with self.assertRaises(NotConnectedError):
             self.executor.submit('AT').result(2)
 
-    def test_stop_fails_pending_transactions(self):
+    def testStopFailsPending(self):
         pending = self.executor.submit('AT+WAIT', timeout=30)
         time.sleep(0.2)
         self.executor.stop()
@@ -321,7 +321,9 @@ def simcomTable(**overrides) -> dict:
         'AT+CMEE=1': 'OK\r\n', 'AT+CPIN?': '+CPIN: READY\r\nOK\r\n', 'AT+CGMI': 'SIMCOM INCORPORATED\r\nOK\r\n',
         'AT+CGMM': 'SIMCOM_SIM7600G-H\r\nOK\r\n', 'AT+CGMR': '+CGMR: LE20B04SIM7600G22\r\nOK\r\n', 'AT+COPS=3,0': 'OK\r\n',
         'AT+CMGF=0': 'OK\r\n', 'AT+CSCA?': '+CSCA: "+33695000695",145\r\nOK\r\n', 'AT+CSMP=17,167,0,0': 'OK\r\n',
-        'AT+CPMS=?': '+CPMS: ("ME","SM","MT"),("ME","SM","MT"),("ME","SM","MT")\r\nOK\r\n',
+        'AT+CPMS=?': '+CPMS: ("ME","MT","SM","SR"),("ME","MT","SM"),("ME","SM")\r\nOK\r\n',
+        'AT+CPMS="ME"': '+CPMS: 3,23,0,100,0,100\r\nOK\r\n', 'AT+CPMS="SM"': '+CPMS: 0,100,0,100,0,100\r\nOK\r\n',
+        'AT+CPMS="SR"': '+CPMS: 1,50,0,100,0,100\r\nOK\r\n',
         'AT+CPMS="SM","SM","SM"': '+CPMS: 0,100,0,100,0,100\r\nOK\r\n',
         'AT+CNMI=1,1,0,1': 'ERROR\r\n', 'AT+CNMI=0,1,0,1': 'OK\r\n', 'AT+CNMP=38': 'OK\r\n',
         'AT+CSQ': '+CSQ: 20,99\r\nOK\r\n',
@@ -349,7 +351,7 @@ class ModemTest(unittest.TestCase):
     def states(self) -> list[str]:
         return [event.state for event in self.events if isinstance(event, StateChanged)]
 
-    def test_initialization_on_a_simcom(self):
+    def testSimcomInitialization(self):
         modem = self.makeModem(force4g=True)
         modem.start()
         self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
@@ -367,12 +369,31 @@ class ModemTest(unittest.TestCase):
         self.assertIn('AT+CNMP=38', commands)
         self.assertEqual(modem.command('AT+CSQ').result(2), ['+CSQ: 20,99', 'OK'])
 
-    def test_command_when_not_connected(self):
+    def testSmsMemoryUsageLogged(self):
+        modem = self.makeModem()
+        with self.assertLogs('wwanlib', level='INFO') as logs:
+            modem.start()
+            self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        self.assertIn('SMS memory usage: ME 3/23, SM 0/100, SR 1/50', '\n'.join(logs.output))
+        commands = FakeSerial.instances[0].commands()
+        self.assertLess(commands.index('AT+CPMS="SR"'), commands.index('AT+CPMS="SM","SM","SM"'))
+        self.assertFalse([c for c in commands if c.startswith('AT+CMGD')])
+
+    def testSmsMemoryUsageSkipsRefusedMemory(self):
+        FakeSerial.behavior = answer(simcomTable(**{'AT+CPMS="SR"': '+CMS ERROR: 303\r\n'}))
+        modem = self.makeModem()
+        with self.assertLogs('wwanlib', level='INFO') as logs:
+            modem.start()
+            self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        self.assertIn('SMS memory usage: ME 3/23, SM 0/100', '\n'.join(logs.output))
+        self.assertNotIn('SR', ' '.join(line for line in logs.output if 'usage' in line))
+
+    def testCommandNotConnected(self):
         modem = self.makeModem()
         with self.assertRaises(NotConnectedError):
             modem.command('AT').result(1)
 
-    def test_pin_is_sent_and_never_logged_in_clear(self):
+    def testPinNeverLoggedInClear(self):
         FakeSerial.behavior = answer(simcomTable(**{'AT+CPIN?': '+CPIN: SIM PIN\r\nOK\r\n', 'AT+CPIN="1234"': 'OK\r\n'}))
         modem = self.makeModem(pin='1234')
         with self.assertLogs('wwanlib', level='DEBUG') as logs:
@@ -381,7 +402,7 @@ class ModemTest(unittest.TestCase):
         self.assertIn('AT+CPIN="1234"', FakeSerial.instances[0].commands())
         self.assertFalse([line for line in logs.output if '1234' in line])
 
-    def test_missing_pin_is_fatal(self):
+    def testMissingPinIsFatal(self):
         FakeSerial.behavior = answer(simcomTable(**{'AT+CPIN?': '+CPIN: SIM PIN\r\nOK\r\n'}))
         modem = self.makeModem()
         modem.start()
@@ -390,7 +411,7 @@ class ModemTest(unittest.TestCase):
         last = [event for event in self.events if isinstance(event, StateChanged)][-1]
         self.assertTrue(last.details['fatal'])
 
-    def test_reconnection_after_the_port_is_lost(self):
+    def testReconnectionAfterPortLost(self):
         modem = self.makeModem()
         modem.start()
         self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
@@ -401,7 +422,7 @@ class ModemTest(unittest.TestCase):
         self.assertEqual(reconnecting[0].details, {'attempt': 1, 'maxAttempts': 3})
         self.assertEqual(modem.command('AT+CSQ').result(2), ['+CSQ: 20,99', 'OK'])
 
-    def test_gives_up_after_the_maximum_number_of_attempts(self):
+    def testGivesUpAfterMaxAttempts(self):
         def opener(**kwargs):
             raise serial.SerialException('no such device')
 
@@ -411,7 +432,7 @@ class ModemTest(unittest.TestCase):
             self.assertTrue(waitFor(lambda: modem.state == ConnectionState.DISCONNECTED))
         self.assertEqual(self.states(), ['connecting', 'reconnecting', 'reconnecting', 'reconnecting', 'disconnected'])
 
-    def test_stop_is_prompt_and_closes_the_port(self):
+    def testStopClosesPort(self):
         modem = self.makeModem()
         modem.start()
         self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
@@ -420,7 +441,7 @@ class ModemTest(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 2.0)
         self.assertTrue(FakeSerial.instances[-1].closed)
 
-    def test_stop_during_initialization(self):
+    def testStopDuringInitialization(self):
         FakeSerial.behavior = None  # the modem never answers
         modem = self.makeModem()
         modem.start()

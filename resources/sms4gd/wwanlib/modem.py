@@ -260,8 +260,25 @@ class Modem:
         if not chosen:
             log.warning('SMS memory selection not supported by the modem (%s): SMS reading unavailable', cpms)
             return False
+        Modem._logSmsMemoryUsage(run, groups[0])
         run('AT+CPMS=' + ','.join(f'"{memory}"' for memory in chosen))
         return True
+
+    @staticmethod
+    def _logSmsMemoryUsage(run: Callable[..., list[str]], readableMemories: str) -> None:
+        """ Logs how full each SMS memory is (ME, SM, SR). Selecting a memory has no side effect: the final selection follows. """
+        usage = []
+        for memory in ('ME', 'SM', 'SR'):
+            if f'"{memory}"' not in readableMemories:
+                continue
+            try:
+                counts = lineMatching(r'^\+CPMS:\s*(\d+),(\d+)', run(f'AT+CPMS="{memory}"'))
+            except CommandError:
+                continue
+            if counts:
+                usage.append(f'{memory} {counts.group(1)}/{counts.group(2)}')
+        if usage:
+            log.info('SMS memory usage: %s', ', '.join(usage))
 
     @staticmethod
     def _setupNotifications(run: Callable[..., list[str]], profile: Profile) -> None:

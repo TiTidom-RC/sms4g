@@ -1,4 +1,4 @@
-""" Some common utility classes used by tests """
+""" Common helpers for parsing modem responses """
 
 from datetime import datetime, timedelta, tzinfo
 import re
@@ -23,7 +23,7 @@ class SimpleOffsetTzInfo(tzinfo):
         return timedelta(0)
 
     def __repr__(self):
-        return f'gsmmodem.util.SimpleOffsetTzInfo({self.offsetInHours})'
+        return f'wwanlib.util.SimpleOffsetTzInfo({self.offsetInHours})'
 
 
 def parseTextModeTimeStr(timeStr):
@@ -95,33 +95,3 @@ def lineMatchingPattern(pattern, lines):
     else:
         return None
 
-
-def allLinesMatchingPattern(pattern, lines):
-    """ Like lineMatchingPattern, but returns all lines that match the specified pattern
-
-    :type pattern: Compiled regular expression pattern to use
-    :type lines: List of lines to search
-
-    :return: list of re.Match objects for each line matched, or an empty list if none matched
-    :rtype: list
-    """
-    result = []
-    for line in lines:
-        m = pattern.match(line)
-        if m:
-            result.append(m)
-    return result
-
-
-def removeAtPrefix(string):
-    """ Remove AT prefix from a specified string.
-
-    :param string: An original string
-    :type string: str
-
-    :return: A string with AT prefix removed
-    :rtype: str
-    """
-    if string.startswith('AT'):
-        return string[2:]
-    return string

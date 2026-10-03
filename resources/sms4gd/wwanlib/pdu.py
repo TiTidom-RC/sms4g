@@ -522,7 +522,7 @@ def _decodeTimestamp(byteIter):
 def _encodeTimestamp(timestamp):
     """ Encodes a 7-octet timestamp from the specified date
 
-    Note: the specified timestamp must have a UTC offset set; you can use gsmmodem.util.SimpleOffsetTzInfo for simple cases
+    Note: the specified timestamp must have a UTC offset set; you can use wwanlib.util.SimpleOffsetTzInfo for simple cases
 
     :param timestamp: The timestamp to encode
     :type timestamp: datetime.datetime
@@ -531,7 +531,7 @@ def _encodeTimestamp(timestamp):
     :rtype: bytearray
     """
     if timestamp.tzinfo is None:
-        raise ValueError('Please specify time zone information for the timestamp (e.g. by using gsmmodem.util.SimpleOffsetTzInfo)')
+        raise ValueError('Please specify time zone information for the timestamp (e.g. by using wwanlib.util.SimpleOffsetTzInfo)')
 
     # See if the timezone difference is positive/negative
     tzDelta = timestamp.utcoffset()

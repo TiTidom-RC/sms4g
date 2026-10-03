@@ -1,11 +1,11 @@
-""" Module defines exceptions used by gsmmodem """
+""" Exceptions used by wwanlib """
 
 
-class GsmModemException(Exception):
+class WwanException(Exception):
     """ Base exception raised for error conditions when interacting with the GSM modem """
 
 
-class TimeoutException(GsmModemException):
+class TimeoutException(WwanException):
     """ Raised when a write command times out """
 
     def __init__(self, data=None):
@@ -14,7 +14,11 @@ class TimeoutException(GsmModemException):
         self.data = data
 
 
-class InvalidStateException(GsmModemException):
+class NotConnectedError(WwanException):
+    """ Raised when a command is submitted while the modem is not connected (connecting, reconnecting, disconnected or stopped) """
+
+
+class InvalidStateException(WwanException):
     """ Raised when an API method call is invoked on an object that is in an incorrect state """
 
 
@@ -28,7 +32,7 @@ class InterruptedException(InvalidStateException):
         self.cause = cause
 
 
-class CommandError(GsmModemException):
+class CommandError(WwanException):
     """ Raised if the modem returns an error in response to an AT command
 
     May optionally include an error type (CME or CMS) and -code (error-specific).
@@ -132,5 +136,5 @@ class SmscNumberUnknownError(CmsError):
         super(SmscNumberUnknownError, self).__init__(command, code)
 
 
-class EncodingError(GsmModemException):
+class EncodingError(WwanException):
     """ Raised if a decoding- or encoding operation failed """

@@ -16,7 +16,7 @@
 ### Architecture
 
 - **PHP** ([core/class/sms4g.class.php](core/class/sms4g.class.php) — étend `eqLogic`/`cmd`) : cycle de vie du démon (`deamon_info`/`deamon_start`/`deamon_stop`), configuration des contacts, envoi de SMS via socket TCP vers le démon.
-- **Démon Python** ([resources/sms4gd/sms4gd.py](resources/sms4gd/sms4gd.py)) : pilote le modem en commandes AT via port série, s'appuie sur un fork de `python-gsmmodem` ([resources/sms4gd/gsmmodem/](resources/sms4gd/gsmmodem/)) et sur la lib démon Jeedom ([resources/sms4gd/jeedom/jeedom.py](resources/sms4gd/jeedom/jeedom.py)).
+- **Démon Python** ([resources/sms4gd/sms4gd.py](resources/sms4gd/sms4gd.py)) : pilote le modem en commandes AT via port série, s'appuie sur la lib modem `wwanlib` ([resources/sms4gd/wwanlib/](resources/sms4gd/wwanlib/), réécriture en cours : plan dans `../Documentation/_docs/sms4g/rewrite/`) et sur la lib démon Jeedom ([resources/sms4gd/jeedom/jeedom.py](resources/sms4gd/jeedom/jeedom.py)).
 - **Callback HTTP** ([core/php/jeesms4g.php](core/php/jeesms4g.php)) : point d'entrée appelé par le démon pour remonter messages reçus, accusés de réception, état de connexion. Contrôle d'accès via `jeedom::apiAccess(init('apikey'), 'sms4g')`.
 - **Ajax / UI** : [core/ajax/sms4g.ajax.php](core/ajax/sms4g.ajax.php), [desktop/php/sms4g.php](desktop/php/sms4g.php), [desktop/js/sms4g.js](desktop/js/sms4g.js), configuration plugin dans [plugin_info/configuration.php](plugin_info/configuration.php).
 - **Communication** :
@@ -45,7 +45,7 @@ Le workspace contient, à côté de ce dépôt, des dépôts voisins directement
   - avant d'écrire une fonctionnalité, vérifier si un équivalent existe dans l'un de ces plugins (en priorité ceux à démon Python classique : TVRemote, TTSCast, NUT_Free) et s'en inspirer ;
   - les workflows CI (`checkPHP.yml`, `checkPHPCompat.yml`, `checkPython.yml`, `js-check.yml`, `translations.yml`) sont communs à ces dépôts : s'y référer pour toute évolution de la CI de `sms4g` ;
   - reproduire dans le code **nouveau** de `sms4g` les habitudes de l'auteur (nommage, structure des méthodes, format des logs, gestion d'erreurs, commentaires) ; si les plugins divergent entre eux, privilégier le plus récent / le plus proche fonctionnellement ;
-  - en cas de divergence avec le code existant de `sms4g`, garder la cohérence locale du fichier modifié (pas de reformatage massif) ; le fork `gsmmodem/` conserve son style d'origine.
+  - en cas de divergence avec le code existant de `sms4g`, garder la cohérence locale du fichier modifié (pas de reformatage massif) ; `wwanlib/pdu.py` conserve son style d'origine (repris de `python-gsmmodem`).
 
 ## Environnement de développement
 
@@ -72,7 +72,7 @@ Le workspace contient, à côté de ce dépôt, des dépôts voisins directement
 - Indentation : tabulations en PHP (style Core Jeedom), 4 espaces en Python.
 - PHP **8.2 minimum, sans repli 7.4** (Debian 12 est la cible minimum supportée). Les syntaxes 8.0+ (`match`, `str_contains`/`str_starts_with`, named arguments, `enum`, `readonly`, union types) sont utilisables librement, sans commentaire `// TODO: PHP X.Y`. Ne pas utiliser de syntaxe > 8.2 (la CI teste 8.2).
 - Python : **3.12**, Ruff uniquement pour le lint, pas de flake8/black. Ne pas reformater massivement les fichiers existants.
-- `resources/sms4gd/gsmmodem/` est un fork tiers : modifications ciblées et minimales, en conservant le style d'origine.
+- `resources/sms4gd/wwanlib/pdu.py` est repris du fork `python-gsmmodem` : modifications ciblées et minimales, en conservant le style d'origine. Tests de `wwanlib` (faux port série) : `python -m unittest discover -s tests -t .` depuis `resources/sms4gd`.
 - Nouveaux termes techniques (commandes AT, noms d'options) : les ajouter à `cSpell.words` dans [.vscode/settings.json](.vscode/settings.json) si besoin.
 
 ## Patterns Jeedom à respecter

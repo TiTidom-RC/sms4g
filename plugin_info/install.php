@@ -82,7 +82,7 @@ function sms4g_install() {
 	// Équipement virtuel Modem (connexion, signal, réseau, commande AT de diagnostic)
 	try {
 		sms4g::manageModemEquipment();
-	} catch (\Throwable $e) {
+	} catch (\Exception $e) {
 		log::add('sms4g', 'error', '[MODEM] Création de l\'équipement virtuel Modem impossible : ' . $e->getMessage());
 	}
 
@@ -165,7 +165,7 @@ function sms4g_update() {
 	// Équipement virtuel Modem (connexion, signal, réseau, commande AT de diagnostic)
 	try {
 		sms4g::manageModemEquipment();
-	} catch (\Throwable $e) {
+	} catch (\Exception $e) {
 		log::add('sms4g', 'error', '[MODEM] Création de l\'équipement virtuel Modem impossible : ' . $e->getMessage());
 	}
 

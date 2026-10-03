@@ -48,6 +48,7 @@ if (isset($result['messages']) && is_array($result['messages'])) {
 			continue;
 		}
 		$time = isset($message['time']) ? date('Y-m-d H:i:s', (int) $message['time']) : null;
+		// \Throwable (et non \Exception) : un message mal formé peut lever une Error (TypeError...), qui ne doit pas perdre le reste du lot
 		try {
 			switch ($message['type']) {
 				case 'modemState':

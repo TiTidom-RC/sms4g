@@ -449,24 +449,6 @@ class sms4g extends eqLogic {
 			$orderCmd++;
 		}
 
-		// at_response (info/string) : réponse de la console de diagnostic AT, toujours notifiée même identique
-		$cmd = $modem->getCmd(null, 'at_response');
-		if (!is_object($cmd)) {
-			$cmd = new sms4gCmd();
-			$cmd->setName(__('Réponse AT', __FILE__));
-			$cmd->setEqLogic_id($modem->getId());
-			$cmd->setLogicalId('at_response');
-			$cmd->setType('info');
-			$cmd->setSubType('string');
-			$cmd->setIsVisible(0);
-			$cmd->setConfiguration('repeatEventManagement', 'always');
-			$cmd->setConfiguration('interact::auto::disable', 1);
-			$cmd->setOrder($orderCmd++);
-			$cmd->save();
-		} else {
-			$orderCmd++;
-		}
-
 		// at_command (action/message) : le message est la commande AT, le titre est le délai en secondes (facultatif)
 		$cmd = $modem->getCmd(null, 'at_command');
 		if (!is_object($cmd)) {
@@ -485,8 +467,25 @@ class sms4g extends eqLogic {
 		} else {
 			$orderCmd++;
 		}
-	}
 
+		// at_response (info/string) : réponse de la console de diagnostic AT, toujours notifiée même identique
+		$cmd = $modem->getCmd(null, 'at_response');
+		if (!is_object($cmd)) {
+			$cmd = new sms4gCmd();
+			$cmd->setName(__('Réponse AT', __FILE__));
+			$cmd->setEqLogic_id($modem->getId());
+			$cmd->setLogicalId('at_response');
+			$cmd->setType('info');
+			$cmd->setSubType('string');
+			$cmd->setIsVisible(0);
+			$cmd->setConfiguration('repeatEventManagement', 'always');
+			$cmd->setConfiguration('interact::auto::disable', 1);
+			$cmd->setOrder($orderCmd++);
+			$cmd->save();
+		} else {
+			$orderCmd++;
+		}
+	}
 
 	/**
 	 * Envoie un message au démon par sa socket (protocole : apikey + cmd + paramètres).

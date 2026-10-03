@@ -13,7 +13,8 @@ from unittest import mock
 
 import serial
 
-from wwanlib import ConnectionState, Modem, ModemIdentified, ModemOptions, StateChanged
+from wwanlib import (ConnectionState, Modem, ModemIdentified, ModemOptions, NetworkChanged, Registration, SignalChanged,
+                    StateChanged)
 from wwanlib.exceptions import CmsError, CommandError, NotConnectedError, PinRequiredError, TimeoutException
 from wwanlib.executor import CTRL_Z, Executor, Priority, Step, Transaction
 from wwanlib.transport import LineClassifier, LineKind, Transport
@@ -307,6 +308,11 @@ class ExecutorTest(ExecutorTestCase):
         with self.assertRaises(NotConnectedError):
             self.executor.submit('AT').result(2)
 
+    def testStopIsImmediate(self):
+        started = time.monotonic()
+        self.executor.stop()
+        self.assertLess(time.monotonic() - started, 0.3)
+
     def testStopFailsPending(self):
         pending = self.executor.submit('AT+WAIT', timeout=30)
         time.sleep(0.2)
@@ -327,6 +333,7 @@ def simcomTable(**overrides) -> dict:
         'AT+CPMS="SM","SM","SM"': '+CPMS: 0,100,0,100,0,100\r\nOK\r\n',
         'AT+CNMI=1,1,0,1': 'ERROR\r\n', 'AT+CNMI=0,1,0,1': 'OK\r\n', 'AT+CNMP=38': 'OK\r\n',
         'AT+CSQ': '+CSQ: 20,99\r\nOK\r\n',
+        'AT+CREG?': '+CREG: 0,1\r\nOK\r\n', 'AT+CEREG?': '+CEREG: 0,1\r\nOK\r\n', 'AT+COPS?': '+COPS: 0,0,"Free Free",7\r\nOK\r\n',
     }
     table.update(overrides)
     return table
@@ -340,6 +347,9 @@ class ModemTest(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.events: list = []
+        intervalPatcher = mock.patch.object(Modem, 'MIN_MONITOR_INTERVAL', 0.05)
+        intervalPatcher.start()
+        self.addCleanup(intervalPatcher.stop)
 
     def makeModem(self, pin: str | None = None, **optionArgs) -> Modem:
         options = ModemOptions(reconnectBaseDelay=0.05, reconnectMaxDelay=0.1, reconnectMaxAttempts=3, **optionArgs)
@@ -388,6 +398,79 @@ class ModemTest(unittest.TestCase):
         self.assertIn('SMS memory usage: ME 3/23, SM 0/100', '\n'.join(logs.output))
         self.assertNotIn('SR', ' '.join(line for line in logs.output if 'usage' in line))
 
+    def eventsOf(self, kind) -> list:
+        return [event for event in self.events if isinstance(event, kind)]
+
+    def testMonitoringPublishesSignalAndNetwork(self):
+        modem = self.makeModem(monitorInterval=0.1)
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED and self.eventsOf(NetworkChanged)[-1:]
+                                and self.eventsOf(NetworkChanged)[-1].operator))
+        self.assertEqual(self.eventsOf(NetworkChanged)[-1], NetworkChanged(Registration.REGISTERED, 'Free Free'))
+        self.assertIn(SignalChanged(20), self.eventsOf(SignalChanged))
+        time.sleep(0.4)
+        self.assertEqual(self.eventsOf(SignalChanged).count(SignalChanged(20)), 1)  # published on change only
+
+    def testSignalUnknownIsMinusOne(self):
+        FakeSerial.behavior = answer(simcomTable(**{'AT+CSQ': '+CSQ: 99,99\r\nOK\r\n'}))
+        modem = self.makeModem()
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED and self.eventsOf(NetworkChanged)))
+        self.assertTrue(waitFor(lambda: self.eventsOf(NetworkChanged)[-1].registration == Registration.REGISTERED))
+        self.assertEqual(self.eventsOf(SignalChanged)[-1], SignalChanged(-1))
+
+    def testSearchingWhenNotRegisteredThenConnectedAgain(self):
+        registration = {'creg': '+CREG: 0,1', 'cereg': '+CEREG: 0,1'}
+        table = simcomTable()
+        table['AT+CREG?'] = lambda fake: fake.feed((registration['creg'] + '\r\nOK\r\n').encode())
+        table['AT+CEREG?'] = lambda fake: fake.feed((registration['cereg'] + '\r\nOK\r\n').encode())
+        FakeSerial.behavior = answer(table)
+        modem = self.makeModem(monitorInterval=0.1)
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        registration.update(creg='+CREG: 0,2', cereg='+CEREG: 0,2')
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.SEARCHING))
+        self.assertEqual(self.eventsOf(NetworkChanged)[-1], NetworkChanged(Registration.SEARCHING, None))
+        self.assertEqual(modem.command('AT+CSQ').result(2), ['+CSQ: 20,99', 'OK'])  # the modem still answers
+        registration.update(creg='+CREG: 0,5', cereg='+CEREG: 0,0')  # roaming on CS is enough
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        self.assertEqual(self.states(), ['connecting', 'connected', 'searching', 'connected'])
+
+    def testRegistrationDenied(self):
+        FakeSerial.behavior = answer(simcomTable(**{'AT+CREG?': '+CREG: 0,3\r\nOK\r\n', 'AT+CEREG?': '+CEREG: 0,3\r\nOK\r\n'}))
+        modem = self.makeModem()
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.SEARCHING))
+        self.assertEqual(self.eventsOf(NetworkChanged)[-1], NetworkChanged(Registration.DENIED, None))
+
+    def testCeregNotSupported(self):
+        FakeSerial.behavior = answer(simcomTable(**{'AT+CEREG?': 'ERROR\r\n'}))
+        modem = self.makeModem()
+        modem.start()
+        self.assertTrue(waitFor(lambda: self.eventsOf(NetworkChanged)
+                                and self.eventsOf(NetworkChanged)[-1].registration == Registration.REGISTERED))
+        self.assertEqual(modem.state, ConnectionState.CONNECTED)
+
+    def testSignalAndNetworkUnknownWhenConnectionLost(self):
+        modem = self.makeModem()
+        modem.start()
+        self.assertTrue(waitFor(lambda: self.eventsOf(SignalChanged) and self.eventsOf(SignalChanged)[-1] == SignalChanged(20)))
+        FakeSerial.instances[0].unplug()
+        self.assertTrue(waitFor(lambda: len(FakeSerial.instances) == 2 and modem.state == ConnectionState.CONNECTED))
+        signals = [event.value for event in self.eventsOf(SignalChanged)]
+        self.assertEqual(signals, [-1, 20, -1, 20])
+        self.assertEqual(self.eventsOf(NetworkChanged)[-2], NetworkChanged(Registration.UNKNOWN, None))
+
+    def testPortLostDuringMonitoringDoesNotDelayReconnection(self):
+        FakeSerial.behavior = answer(simcomTable(**{'AT+CREG?': lambda fake: None}))  # never answers
+        modem = self.makeModem()
+        modem.start()
+        self.assertTrue(waitFor(lambda: FakeSerial.instances and 'AT+CREG?' in FakeSerial.instances[0].commands()))
+        started = time.monotonic()
+        FakeSerial.instances[0].unplug()
+        self.assertTrue(waitFor(lambda: 'reconnecting' in self.states(), timeout=3))
+        self.assertLess(time.monotonic() - started, 2.0)  # not after the 5 s timeout of the monitoring command
+
     def testCommandNotConnected(self):
         modem = self.makeModem()
         with self.assertRaises(NotConnectedError):
@@ -410,6 +493,7 @@ class ModemTest(unittest.TestCase):
         self.assertEqual(len(FakeSerial.instances), 1)  # no new attempt
         last = [event for event in self.events if isinstance(event, StateChanged)][-1]
         self.assertTrue(last.details['fatal'])
+        self.assertEqual(last.details['errorType'], 'PinRequiredError')
 
     def testReconnectionAfterPortLost(self):
         modem = self.makeModem()

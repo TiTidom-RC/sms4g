@@ -7,7 +7,8 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any
 
-from .events import ConnectionState, EventDispatcher, ModemIdentified, StateChanged, UnsolicitedNotification
+from .events import (ConnectionState, EventDispatcher, ModemIdentified, NetworkChanged, Registration, SignalChanged,
+                     StateChanged, UnsolicitedNotification)
 from .exceptions import (CommandError, IncorrectPinError, NotConnectedError, PinRequiredError, PukRequiredError,
                          SmscNumberUnknownError, TimeoutException, WwanException)
 from .executor import Executor, Priority
@@ -28,6 +29,7 @@ class ModemOptions:
     reconnectBaseDelay: float = 5.0
     reconnectMaxDelay: float = 300.0
     reconnectMaxAttempts: int = 10
+    monitorInterval: float = 30.0  # seconds between two readings of the signal and of the network (5 at least)
 
 
 class _Session:
@@ -49,7 +51,7 @@ class Modem:
     Usage::
 
         modem = Modem('/dev/ttyUSB2', 115200, pin=None, options=ModemOptions(textMode=False))
-        modem.onEvent(callback)   # StateChanged, ModemIdentified, UnsolicitedNotification
+        modem.onEvent(callback)   # StateChanged, ModemIdentified, SignalChanged, NetworkChanged, UnsolicitedNotification
         modem.start()             # does not block: the Supervisor connects (and reconnects) in the background
         lines = modem.command('AT+CSQ', timeout=10).result()
         modem.stop()
@@ -57,6 +59,8 @@ class Modem:
     The library never imports Jeedom, takes its settings from the constructor only and logs through
     ``logging.getLogger(__name__)``: it never configures the logging.
     """
+
+    MIN_MONITOR_INTERVAL = 5.0  # seconds
 
     def __init__(self, port: str, baudrate: int = 115200, pin: str | None = None, options: ModemOptions | None = None):
         self.port = port
@@ -67,10 +71,13 @@ class Modem:
         self._profile: Profile = GENERIC
         self._session: _Session | None = None
         self._dispatcher = EventDispatcher()
+        self._lastSignal: int | None = None
+        self._lastNetwork: tuple[str, str | None] | None = None
         self._supervisor = Supervisor(
             connect=self._connect, disconnect=self._disconnect, publish=self._publishState, isFatal=self._isFatal,
             baseDelay=self.options.reconnectBaseDelay, maxDelay=self.options.reconnectMaxDelay,
-            maxAttempts=self.options.reconnectMaxAttempts)
+            maxAttempts=self.options.reconnectMaxAttempts, monitor=self._monitor,
+            monitorInterval=max(self.MIN_MONITOR_INTERVAL, self.options.monitorInterval))
 
     # ---- public API -------------------------------------------------------------------------------
 
@@ -85,7 +92,8 @@ class Modem:
         return self._profile
 
     def onEvent(self, callback: Callable[[Any], None]) -> None:
-        """ Subscribes to the events (``StateChanged``, ``ModemIdentified``, ``UnsolicitedNotification``).
+        """ Subscribes to the events (``StateChanged``, ``ModemIdentified``, ``SignalChanged``, ``NetworkChanged``,
+        ``UnsolicitedNotification``).
         Callbacks run in a dedicated thread: a slow callback never blocks the modem. """
         self._dispatcher.subscribe(callback)
 
@@ -107,7 +115,7 @@ class Modem:
         """ Sends an AT command (diagnostic priority). The Future resolves to the response lines, or fails with
         ``CommandError`` / ``TimeoutException`` / ``NotConnectedError`` (not connected, e.g. while reconnecting). """
         session = self._session
-        if self._state != ConnectionState.CONNECTED or session is None:
+        if self._state not in (ConnectionState.CONNECTED, ConnectionState.SEARCHING) or session is None:
             failed: Future = Future()
             failed.set_exception(NotConnectedError(f'Modem not connected (state: {self._state})'))
             return failed
@@ -124,6 +132,83 @@ class Modem:
         self._state = state
         log.info('State: %s %s', state, details or '')
         self._dispatcher.post(StateChanged(state, dict(details)))
+        if state in (ConnectionState.CONNECTING, ConnectionState.RECONNECTING, ConnectionState.DISCONNECTED):
+            self._publishSignal(-1)
+            self._publishNetwork(Registration.UNKNOWN, None)
+
+    def _publishSignal(self, value: int) -> None:
+        if value != self._lastSignal:
+            self._lastSignal = value
+            self._dispatcher.post(SignalChanged(value))
+
+    def _publishNetwork(self, registration: str, operator: str | None) -> None:
+        if (registration, operator) != self._lastNetwork:
+            self._lastNetwork = (registration, operator)
+            self._dispatcher.post(NetworkChanged(registration, operator))
+
+    # ---- monitoring (called by the Supervisor, from its own thread) -------------------------------
+
+    def _monitor(self) -> str | None:
+        """ Reads the signal and the network registration. :return: the registration, None if it could not be read """
+        session = self._session
+        if session is None:
+            return None
+        try:
+            signal = self._readSignal(session)
+            registration = self._readRegistration(session)
+            operator = self._readOperator(session) if registration == Registration.REGISTERED else None
+        except WwanException as e:
+            log.debug('Monitoring failed: %s', e)
+            return None
+        if signal is not None:
+            self._publishSignal(signal)
+        if registration is not None:
+            self._publishNetwork(registration, operator)
+        return registration
+
+    def _query(self, session: _Session, command: str) -> list[str]:
+        """ Monitoring command (lowest priority). Gives up as soon as the connection failed, so that a lost port
+        does not delay the reconnection by the timeout of the command. """
+        future = session.executor.submit(command, 5.0, Priority.SUPERVISION, maxHold=10.0)
+        while True:
+            try:
+                return future.result(timeout=0.2)
+            except TimeoutError:
+                if self._supervisor.failed:
+                    raise NotConnectedError('Connection lost') from None
+
+    def _readSignal(self, session: _Session) -> int | None:
+        match = lineMatching(r'^\+CSQ:\s*(\d+),', self._query(session, 'AT+CSQ'))
+        if match is None:
+            return None
+        value = int(match.group(1))
+        return -1 if value == 99 else value
+
+    def _readRegistration(self, session: _Session) -> str | None:
+        """ CS (+CREG) and PS / LTE (+CEREG) registrations: registered as soon as one of them is (1 home, 5 roaming) """
+        statuses: list[int] = []
+        for command, name in (('AT+CREG?', 'CREG'), ('AT+CEREG?', 'CEREG')):
+            try:
+                lines = self._query(session, command)
+            except CommandError:
+                continue  # not supported by this modem
+            match = lineMatching(rf'^\+{name}:\s*\d+,(\d)', lines)
+            if match:
+                statuses.append(int(match.group(1)))
+        if not statuses:
+            return None
+        if any(status in (1, 5) for status in statuses):
+            return Registration.REGISTERED
+        if 3 in statuses:
+            return Registration.DENIED
+        return Registration.SEARCHING
+
+    def _readOperator(self, session: _Session) -> str | None:
+        try:
+            match = lineMatching(r'^\+COPS:\s*\d+,\d+,"([^"]*)"', self._query(session, 'AT+COPS?'))
+        except CommandError:
+            return None
+        return match.group(1) if match else None
 
     def _connect(self, token: object) -> None:
         session = _Session()

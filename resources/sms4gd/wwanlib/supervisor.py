@@ -1,6 +1,7 @@
-""" Supervisor: owner of the connection (connect, wait for a failure, reconnect).
+""" Supervisor: owner of the connection (connect, monitor, reconnect).
 
-Later milestones add the network monitoring (J2), the keep-alive and the graduated reaction (J6).
+While connected it runs the periodic monitoring and moves the state between ``connected`` and ``searching``
+according to the registration on the mobile network. The keep-alive and the graduated reaction come later (J6).
 """
 
 import logging
@@ -8,7 +9,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from .events import ConnectionState
+from .events import ConnectionState, Registration
 
 log = logging.getLogger(__name__)
 
@@ -16,12 +17,15 @@ log = logging.getLogger(__name__)
 class Supervisor:
     def __init__(self, connect: Callable[[Any], None], disconnect: Callable[[], None],
                  publish: Callable[[str, dict[str, Any]], None], isFatal: Callable[[Exception], bool],
-                 baseDelay: float, maxDelay: float, maxAttempts: int):
+                 baseDelay: float, maxDelay: float, maxAttempts: int,
+                 monitor: Callable[[], str | None] | None = None, monitorInterval: float = 30.0):
         """ :param connect: opens and initializes a connection; receives a token that the connection must use
             to report its failures to ``reportFailure``; raises if it fails
         :param disconnect: closes everything the last ``connect`` opened (also after a failed ``connect``)
         :param publish: called with the new state and its details, once per change
-        :param isFatal: True for an error that retrying cannot fix (wrong PIN...) """
+        :param isFatal: True for an error that retrying cannot fix (wrong PIN...)
+        :param monitor: called right after the connection, then every ``monitorInterval`` seconds while connected;
+            returns the registration on the mobile network (see ``Registration``) or None if it could not be read """
         self._connect = connect
         self._disconnect = disconnect
         self._publish = publish
@@ -29,6 +33,8 @@ class Supervisor:
         self._baseDelay = baseDelay
         self._maxDelay = maxDelay
         self._maxAttempts = maxAttempts
+        self._monitor = monitor
+        self._monitorInterval = monitorInterval
         self._stop = threading.Event()
         self._failure = threading.Event()
         self._reason = ''
@@ -56,6 +62,11 @@ class Supervisor:
             self._reason = reason
             self._failure.set()
 
+    @property
+    def failed(self) -> bool:
+        """ True once the current connection reported a failure (or when stopping) """
+        return self._failure.is_set()
+
     def backoffDelay(self, attempt: int) -> float:
         return min(self._baseDelay * (2 ** (attempt - 1)), self._maxDelay)
 
@@ -71,7 +82,7 @@ class Supervisor:
         while not self._stop.is_set():
             if error is None:
                 self._setState(ConnectionState.CONNECTED)
-                self._failure.wait()
+                self._superviseConnection()
                 if self._stop.is_set():
                     return
                 log.error('Connection lost: %s', self._reason)
@@ -79,6 +90,24 @@ class Supervisor:
             if not self._reconnect(error):
                 return
             error = None
+
+    def _superviseConnection(self) -> None:
+        """ Returns when the connection failed or when stopping """
+        while not self._failure.is_set():
+            if self._monitor is not None:
+                try:
+                    registration = self._monitor()
+                except Exception:
+                    log.exception('Error in the monitoring')
+                    registration = None
+                if self._failure.is_set():
+                    return
+                if registration == Registration.REGISTERED:
+                    self._setState(ConnectionState.CONNECTED)
+                elif registration in (Registration.SEARCHING, Registration.DENIED):
+                    self._setState(ConnectionState.SEARCHING)
+            if self._failure.wait(self._monitorInterval if self._monitor is not None else None):
+                return
 
     def _connectOnce(self) -> Exception | None:
         token = object()
@@ -119,8 +148,9 @@ class Supervisor:
                 return False
         if error is not None and self._isFatal(error):
             log.error('Fatal error, no further attempt: %s', error)
-            self._setState(ConnectionState.DISCONNECTED, reason=str(error), fatal=True)
+            self._setState(ConnectionState.DISCONNECTED, reason=str(error), fatal=True, errorType=type(error).__name__)
         else:
             log.error('Maximum number of reconnection attempts reached (%d), giving up', self._maxAttempts)
-            self._setState(ConnectionState.DISCONNECTED, reason=str(error) if error else self._reason, fatal=False)
+            self._setState(ConnectionState.DISCONNECTED, reason=str(error) if error else self._reason, fatal=False,
+                           errorType=type(error).__name__ if error else None)
         return False

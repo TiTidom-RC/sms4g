@@ -15,17 +15,42 @@ class ConnectionState:
 
     CONNECTING = 'connecting'
     CONNECTED = 'connected'
+    SEARCHING = 'searching'  # connected to the modem, but not registered on the mobile network
     RECONNECTING = 'reconnecting'
     DISCONNECTED = 'disconnected'
+
+
+class Registration:
+    """ Registration on the mobile network, as published in ``NetworkChanged`` """
+
+    REGISTERED = 'registered'
+    SEARCHING = 'searching'
+    DENIED = 'denied'
+    UNKNOWN = 'unknown'
 
 
 @dataclass(frozen=True)
 class StateChanged:
     """ The connection state changed. ``details`` depends on the state:
-    reconnecting -> attempt, maxAttempts ; disconnected -> reason, fatal """
+    reconnecting -> attempt, maxAttempts ; disconnected -> reason, fatal, errorType (class name of the cause) """
 
     state: str
     details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SignalChanged:
+    """ Signal quality: AT+CSQ value from 0 to 31, -1 when unknown (not connected, or reported as 99) """
+
+    value: int
+
+
+@dataclass(frozen=True)
+class NetworkChanged:
+    """ Registration on the mobile network (see ``Registration``) and operator name (None when not registered) """
+
+    registration: str
+    operator: str | None
 
 
 @dataclass(frozen=True)

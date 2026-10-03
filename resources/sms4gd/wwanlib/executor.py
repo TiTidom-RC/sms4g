@@ -151,12 +151,17 @@ class Executor:
             pending = []
             while True:
                 try:
-                    pending.append(self._queue.get_nowait()[2])
+                    transaction = self._queue.get_nowait()[2]
                 except queue.Empty:
                     break
+                if transaction is not None:
+                    pending.append(transaction)
         for transaction in pending:
             if not transaction.future.done():
                 transaction.future.set_exception(error)
+        # Wake the thread at once: it may be waiting for a transaction or for a line of the modem
+        self._queue.put((-1, next(self._sequence), None))
+        self._lines.put(None)
 
     def _run(self) -> None:
         while not self._stopEvent.is_set():
@@ -164,7 +169,7 @@ class Executor:
                 transaction = self._queue.get(timeout=self.POLL_INTERVAL)[2]
             except queue.Empty:
                 continue
-            if not transaction.future.set_running_or_notify_cancel():
+            if transaction is None or not transaction.future.set_running_or_notify_cancel():
                 continue
             try:
                 self._process(transaction)
@@ -267,7 +272,10 @@ class Executor:
             if remaining <= 0:
                 raise _Deadline
             try:
-                return self._lines.get(timeout=min(remaining, self.POLL_INTERVAL))
+                line = self._lines.get(timeout=min(remaining, self.POLL_INTERVAL))
+                if line is None:
+                    raise NotConnectedError('Modem stopped')
+                return line
             except queue.Empty:
                 if self._stopEvent.is_set():
                     raise NotConnectedError('Modem stopped') from None

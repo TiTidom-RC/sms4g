@@ -270,7 +270,7 @@ if (!isConnect('admin')) {
             <div class="form-group">
                 <label class="col-lg-3 control-label">{{Mode diagnostic (commandes AT)}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
-                    <sup><i class="fas fa-question-circle tooltips" title="{{Autorise l'envoi de commandes AT au modem depuis Jeedom, avec la commande « Commande AT » de l'équipement Modem (la réponse arrive dans « Réponse AT »). Les commandes dangereuses sont refusées par le démon. A activer le temps d'un diagnostic.}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Autorise l'envoi de commandes AT au modem depuis Jeedom, avec la commande « Commande AT » de l'équipement Modem (le résultat arrive dans « Statut AT » et « Réponse AT »). Les commandes dangereuses sont refusées par le démon. A activer le temps d'un diagnostic.}}"></i></sup>
                 </label>
                 <div class="col-lg-1">
                     <input type="checkbox" class="configKey" data-l1key="diagMode" />

@@ -468,7 +468,24 @@ class sms4g extends eqLogic {
 			$orderCmd++;
 		}
 
-		// at_response (info/string) : réponse de la console de diagnostic AT, toujours notifiée même identique
+		// at_status (info/string) : commande et code de fin de la console de diagnostic AT, toujours notifié même identique
+		$cmd = $modem->getCmd(null, 'at_status');
+		if (!is_object($cmd)) {
+			$cmd = new sms4gCmd();
+			$cmd->setName(__('Statut AT', __FILE__));
+			$cmd->setEqLogic_id($modem->getId());
+			$cmd->setLogicalId('at_status');
+			$cmd->setType('info');
+			$cmd->setSubType('string');
+			$cmd->setIsVisible(0);
+			$cmd->setConfiguration('repeatEventManagement', 'always');
+			$cmd->setConfiguration('interact::auto::disable', 1);
+			$cmd->setOrder($orderCmd++);
+			$cmd->save();
+		} else {
+			$orderCmd++;
+		}
+		// at_response (info/string) : lignes d'information de la réponse du modem (sans le code de fin), toujours notifiées même identiques
 		$cmd = $modem->getCmd(null, 'at_response');
 		if (!is_object($cmd)) {
 			$cmd = new sms4gCmd();
@@ -513,6 +530,7 @@ class sms4g extends eqLogic {
 			return false;
 		}
 	}
+
 	/**
 	 * Envoie un SMS à chaque numéro. Le découpage en parties/groupes SMS (encodage GSM-7 ou UCS-2, limite de parties
 	 * liées) est entièrement géré côté démon Python, seul à connaître l'encodage réel du message : on lui transmet
@@ -540,46 +558,59 @@ class sms4g extends eqLogic {
 		}
 		return true;
 	}
+
 	/**
-	 * Commande AT du mode diagnostic. Rend la main aussitôt : la réponse arrive plus tard dans la commande
-	 * « Réponse AT » (onAtResponse). Ici seul le mode diagnostic est contrôlé : le format et le filtre des
-	 * commandes autorisées sont ceux du démon, qui fait foi (sa réponse « refused » arrive dans « Réponse AT »).
+	 * Commande AT du mode diagnostic. Rend la main aussitôt : le résultat arrive plus tard dans les commandes
+	 * « Statut AT » et « Réponse AT » (onAtResponse). Ici seul le mode diagnostic est contrôlé : le format et le
+	 * filtre des commandes autorisées sont ceux du démon, qui fait foi (son refus arrive dans « Statut AT »).
 	 *
 	 * @param string $_command commande AT
 	 * @param mixed $_timeout délai en secondes (facultatif, le démon le borne)
 	 * @return bool
 	 */
 	public static function sendAtCommand($_command, $_timeout = '') {
+		$modem = self::byLogicalId('modem', 'sms4g');
+		if (!is_object($modem)) {
+			log::add('sms4g', 'debug', '[AT] Équipement virtuel Modem non trouvé');
+			return false;
+		}
 		$command = trim((string) $_command);
 		if (config::byKey('diagMode', 'sms4g', 0) != 1) {
 			log::add('sms4g', 'warning', '[AT] Commande refusée : le mode diagnostic est désactivé');
-			self::setAtResponse($command . ' → refused (diagnostic mode is disabled)');
+			self::setAtResult($modem, $command, 'refused', 'diagnostic mode is disabled', '');
 			return false;
 		}
-
 		$payload = array('cmd' => 'atCommand', 'id' => bin2hex(random_bytes(8)), 'command' => $command);
 		if (is_numeric($_timeout) && $_timeout > 0) {
 			$payload['timeout'] = (float) $_timeout;
 		}
 		log::add('sms4g', 'info', '[AT] Commande envoyée au démon : ' . self::maskPhoneNumbers($command));
 		if (!self::sendToDaemon($payload)) {
-			self::setAtResponse($command . ' → notConnected (daemon not reachable)');
+			self::setAtResult($modem, $command, 'notConnected', 'daemon not reachable', '');
 			return false;
 		}
 		return true;
 	}
 
 	/**
-	 * Écrit la commande « Réponse AT ». Le texte est protégé des balises HTML : il peut venir du modem, ou d'une
-	 * commande saisie par une IA.
+	 * Écrit « Réponse AT » puis « Statut AT » (commande, flèche, code de fin en majuscules, détail éventuel entre
+	 * parenthèses). La réponse passe en premier : un scénario déclenché par le statut trouve toujours une réponse
+	 * complète. Les textes sont protégés des balises HTML : ils peuvent venir du modem, ou d'une commande saisie par
+	 * une IA ; les guillemets restent lisibles (+COPS: 0,0,"Free Free",7).
 	 */
-	private static function setAtResponse($_text) {
-		$modem = self::byLogicalId('modem', 'sms4g');
-		if (!is_object($modem)) {
-			log::add('sms4g', 'debug', '[AT] Équipement virtuel Modem non trouvé');
-			return;
+	private static function setAtResult($_modem, $_command, $_status, $_detail, $_response, $_time = null) {
+		$labels = array('ok' => 'OK', 'error' => 'ERROR', 'timeout' => 'TIMEOUT', 'refused' => 'REFUSED', 'notConnected' => 'NOT CONNECTED');
+		$label = isset($labels[$_status]) ? $labels[$_status] : strtoupper($_status);
+		$status = $_command . ' → ' . $label;
+		if ($_detail != '') {
+			$status .= ' (' . $_detail . ')';
 		}
-		$modem->checkAndUpdateCmd('at_response', htmlspecialchars($_text, ENT_NOQUOTES | ENT_SUBSTITUTE, 'UTF-8'));
+		// Jamais vide : sans ligne du modem (refus, démon arrêté, délai dépassé sans réponse), la réponse porte le code de fin
+		if ($_response === '') {
+			$_response = $label;
+		}
+		$_modem->checkAndUpdateCmd('at_response', htmlspecialchars($_response, ENT_NOQUOTES | ENT_SUBSTITUTE, 'UTF-8'), $_time);
+		$_modem->checkAndUpdateCmd('at_status', htmlspecialchars($status, ENT_NOQUOTES | ENT_SUBSTITUTE, 'UTF-8'), $_time);
 	}
 
 	/**
@@ -676,19 +707,24 @@ class sms4g extends eqLogic {
 		$command = isset($_message['command']) ? (string) $_message['command'] : '';
 		$status = isset($_message['status']) ? (string) $_message['status'] : 'error';
 		$lines = (isset($_message['lines']) && is_array($_message['lines'])) ? $_message['lines'] : array();
-		$text = $command . ' → ' . $status;
-		if ($status != 'ok' && !empty($_message['error'])) {
-			$text .= ' (' . $_message['error'] . ')';
-		}
-		if (count($lines) > 0) {
-			$text .= "\n" . implode("\n", $lines);
-		}
-		if (!empty($_message['truncated'])) {
-			$text .= "\n[…]";
-		}
+		$detail = ($status != 'ok' && !empty($_message['error'])) ? (string) $_message['error'] : '';
+		$truncated = !empty($_message['truncated']);
 		log::add('sms4g', 'info', '[AT] ' . self::maskPhoneNumbers($command) . ' → ' . $status);
 		log::add('sms4g', 'debug', '[AT] Réponse : ' . self::maskPhoneNumbers(implode(' | ', $lines)));
-		$_modem->checkAndUpdateCmd('at_response', htmlspecialchars($text, ENT_NOQUOTES | ENT_SUBSTITUTE, 'UTF-8'), $_time);
+		// Délai dépassé : les lignes reçues sont incomplètes, elles restent dans le log (la réponse portera TIMEOUT)
+		if ($status == 'timeout') {
+			$lines = array();
+			$truncated = false;
+		}
+		// Le code de fin du modem (OK, +CME ERROR…) est dans le statut : la réponse ne le répète que s'il est seul
+		if (!$truncated && in_array($status, array('ok', 'error')) && count($lines) > 1) {
+			array_pop($lines);
+		}
+		$response = implode("\n", $lines);
+		if ($truncated) {
+			$response = trim($response . "\n[…]");
+		}
+		self::setAtResult($_modem, $command, $status, $detail, $response, $_time);
 	}
 
 	/**
@@ -787,7 +823,7 @@ class sms4gCmd extends cmd {
 		// commandes signal / connexion des équipements SMS se suppriment à la main)
 		$eqLogic = $this->getEqLogic();
 		if (is_object($eqLogic) && $eqLogic->getLogicalId() == 'modem') {
-			return in_array($this->getLogicalId(), array('signal', 'operator', 'connection', 'connection_state', 'online', 'at_response', 'at_command'));
+			return in_array($this->getLogicalId(), array('signal', 'operator', 'connection', 'connection_state', 'online', 'at_status', 'at_response', 'at_command'));
 		}
 		if (str_starts_with($this->getLogicalId(), 'delivery_status_') || str_starts_with($this->getLogicalId(), 'delivery_success_')) {
 			return true;

@@ -265,6 +265,11 @@ class sms4g extends eqLogic {
 		if ($deamon_info['launchable'] != 'ok') {
 			throw new Exception(__('Veuillez vérifier la configuration', __FILE__));
 		}
+		try {
+			self::manageModemEquipment();
+		} catch (\Exception $e) {
+			log::add('sms4g', 'error', '[MODEM] Création de l\'équipement virtuel Modem impossible : ' . $e->getMessage());
+		}
 		$port = config::byKey('port', 'sms4g');
 		$port = jeedom::getUsbMapping($port);
 		$sms_path = realpath(__DIR__ . '/../../resources/sms4gd');
@@ -277,6 +282,7 @@ class sms4g extends eqLogic {
 		$cmd .= ' --textmode ' . ((config::byKey('textMode', 'sms4g') == 1) ? 'yes' : 'no');
 		$cmd .= ' --smsc ' . config::byKey('smsc', 'sms4g', 'None');
 		$cmd .= ' --force4g ' . ((config::byKey('force4gOnly', 'sms4g') == 1) ? 'yes' : 'no');
+		$cmd .= ' --diagnostic ' . ((config::byKey('diagMode', 'sms4g', 0) == 1) ? 'yes' : 'no');
 		$cmd .= ' --cycle ' . config::byKey('cycle', 'sms4g');
 		$cmd .= ' --deliveryreport ' . ((config::byKey('deliveryReport', 'sms4g', 0) == 1) ? 'yes' : 'no');
 		$cmd .= ' --reconnectbasedelay ' . config::byKey('reconnectBaseDelay', 'sms4g', 5);
@@ -326,6 +332,373 @@ class sms4g extends eqLogic {
 		}
 	}
 
+	/**
+	 * Équipement virtuel « Modem » : crée l'équipement s'il n'existe pas, puis ses commandes manquantes
+	 * (installation, mise à jour, démarrage du démon). Le Modem n'est pas un équipement SMS : il n'a ni numéros ni
+	 * interactions, ses commandes sont toutes créées ici.
+	 */
+	public static function manageModemEquipment() {
+		$modem = self::byLogicalId('modem', 'sms4g');
+		if (!is_object($modem)) {
+			log::add('sms4g', 'info', '[MODEM] Création de l\'équipement virtuel Modem');
+			$modem = new sms4g();
+			$modem->setLogicalId('modem');
+			$modem->setName('Modem');
+			$modem->setEqType_name('sms4g');
+			$modem->setIsEnable(1);
+			$modem->setIsVisible(1);
+			$modem->save();
+		}
+
+		$orderCmd = 1;
+
+		// signal (info/numeric)
+		$cmd = $modem->getCmd(null, 'signal');
+		if (!is_object($cmd)) {
+			$cmd = new sms4gCmd();
+			$cmd->setName(__('Signal', __FILE__));
+			$cmd->setEqLogic_id($modem->getId());
+			$cmd->setLogicalId('signal');
+			$cmd->setType('info');
+			$cmd->setSubType('numeric');
+			$cmd->setIsVisible(1);
+			$cmd->setTemplate('dashboard', 'core::tile');
+			$cmd->setTemplate('mobile', 'core::tile');
+			$cmd->setOrder($orderCmd++);
+			$cmd->save();
+		} else {
+			$orderCmd++;
+		}
+
+		// operator (info/string)
+		$cmd = $modem->getCmd(null, 'operator');
+		if (!is_object($cmd)) {
+			$cmd = new sms4gCmd();
+			$cmd->setName(__('Opérateur', __FILE__));
+			$cmd->setEqLogic_id($modem->getId());
+			$cmd->setLogicalId('operator');
+			$cmd->setType('info');
+			$cmd->setSubType('string');
+			$cmd->setIsVisible(1);
+			$cmd->setTemplate('dashboard', 'core::line');
+			$cmd->setTemplate('mobile', 'core::line');
+			$cmd->setDisplay('forceReturnLineBefore', 1);
+			$cmd->setDisplay('forceReturnLineAfter', 1);
+			$cmd->setOrder($orderCmd++);
+			$cmd->save();
+		} else {
+			$orderCmd++;
+		}
+
+		// connection (info/string)
+		$cmd = $modem->getCmd(null, 'connection');
+		if (!is_object($cmd)) {
+			$cmd = new sms4gCmd();
+			$cmd->setName(__('Connexion', __FILE__));
+			$cmd->setEqLogic_id($modem->getId());
+			$cmd->setLogicalId('connection');
+			$cmd->setType('info');
+			$cmd->setSubType('string');
+			$cmd->setIsVisible(0);
+			$cmd->setTemplate('dashboard', 'core::line');
+			$cmd->setTemplate('mobile', 'core::line');
+			$cmd->setDisplay('forceReturnLineBefore', 1);
+			$cmd->setDisplay('forceReturnLineAfter', 1);
+			$cmd->setOrder($orderCmd++);
+			$cmd->save();
+		} else {
+			$orderCmd++;
+		}
+
+		// connection_state (info/numeric) : 0 déconnecté, 1 reconnexion, 2 recherche opérateur, 3 connexion, 4 connecté
+		$cmd = $modem->getCmd(null, 'connection_state');
+		if (!is_object($cmd)) {
+			$cmd = new sms4gCmd();
+			$cmd->setName(__('Connexion (Code)', __FILE__));
+			$cmd->setEqLogic_id($modem->getId());
+			$cmd->setLogicalId('connection_state');
+			$cmd->setType('info');
+			$cmd->setSubType('numeric');
+			$cmd->setIsVisible(0);
+			$cmd->setIsHistorized(1);
+			// Chaque changement d'état est historisé, même à valeur identique (plusieurs tentatives de reconnexion)
+			$cmd->setConfiguration('repeatEventManagement', 'always');
+			$cmd->setTemplate('dashboard', 'core::tile');
+			$cmd->setTemplate('mobile', 'core::tile');
+			$cmd->setOrder($orderCmd++);
+			$cmd->save();
+		} else {
+			$orderCmd++;
+		}
+
+		// online (info/binary) : 1 seulement quand le modem est connecté et enregistré sur le réseau
+		$cmd = $modem->getCmd(null, 'online');
+		if (!is_object($cmd)) {
+			$cmd = new sms4gCmd();
+			$cmd->setName(__('En Ligne', __FILE__));
+			$cmd->setEqLogic_id($modem->getId());
+			$cmd->setLogicalId('online');
+			$cmd->setType('info');
+			$cmd->setSubType('binary');
+			$cmd->setIsVisible(0);
+			$cmd->setIsHistorized(1);
+			$cmd->setConfiguration('repeatEventManagement', 'always');
+			$cmd->setOrder($orderCmd++);
+			$cmd->save();
+		} else {
+			$orderCmd++;
+		}
+
+		// at_response (info/string) : réponse de la console de diagnostic AT, toujours notifiée même identique
+		$cmd = $modem->getCmd(null, 'at_response');
+		if (!is_object($cmd)) {
+			$cmd = new sms4gCmd();
+			$cmd->setName(__('Réponse AT', __FILE__));
+			$cmd->setEqLogic_id($modem->getId());
+			$cmd->setLogicalId('at_response');
+			$cmd->setType('info');
+			$cmd->setSubType('string');
+			$cmd->setIsVisible(0);
+			$cmd->setConfiguration('repeatEventManagement', 'always');
+			$cmd->setConfiguration('interact::auto::disable', 1);
+			$cmd->setOrder($orderCmd++);
+			$cmd->save();
+		} else {
+			$orderCmd++;
+		}
+
+		// at_command (action/message) : le message est la commande AT, le titre est le délai en secondes (facultatif)
+		$cmd = $modem->getCmd(null, 'at_command');
+		if (!is_object($cmd)) {
+			$cmd = new sms4gCmd();
+			$cmd->setName(__('Commande AT', __FILE__));
+			$cmd->setEqLogic_id($modem->getId());
+			$cmd->setLogicalId('at_command');
+			$cmd->setType('action');
+			$cmd->setSubType('message');
+			$cmd->setIsVisible(0);
+			$cmd->setConfiguration('interact::auto::disable', 1);
+			$cmd->setDisplay('title_placeholder', __('Délai en secondes (facultatif)', __FILE__));
+			$cmd->setDisplay('message_placeholder', __('Commande AT', __FILE__));
+			$cmd->setOrder($orderCmd++);
+			$cmd->save();
+		} else {
+			$orderCmd++;
+		}
+	}
+
+
+	/**
+	 * Envoie un message au démon par sa socket (protocole : apikey + cmd + paramètres).
+	 *
+	 * @param array $_payload
+	 * @return bool false si le démon n'a pas pu être joint
+	 */
+	public static function sendToDaemon($_payload) {
+		try {
+			$_payload['apikey'] = jeedom::getApiKey('sms4g');
+			$value = json_encode($_payload);
+			$socket = socket_create(AF_INET, SOCK_STREAM, 0);
+			if (@socket_connect($socket, '127.0.0.1', config::byKey('socketport', 'sms4g', '55115')) === false) {
+				throw new Exception('socket_connect (démon arrêté ?) :: ' . socket_strerror(socket_last_error($socket)));
+			}
+			if (@socket_write($socket, $value, strlen($value)) === false) {
+				throw new Exception('socket_write :: ' . socket_strerror(socket_last_error($socket)));
+			}
+			socket_close($socket);
+			return true;
+		} catch (\Exception $e) {
+			log::add('sms4g', 'error', '[SOCKET][SendToDaemon] Exception :: ' . $e->getMessage());
+			return false;
+		}
+	}
+	/**
+	 * Envoie un SMS à chaque numéro. Le découpage en parties/groupes SMS (encodage GSM-7 ou UCS-2, limite de parties
+	 * liées) est entièrement géré côté démon Python, seul à connaître l'encodage réel du message : on lui transmet
+	 * juste le texte complet.
+	 *
+	 * @param string[] $_phonenumbers
+	 * @param string $_message
+	 * @return bool false si un envoi au démon a échoué
+	 */
+	public static function sendSms($_phonenumbers, $_message) {
+		$message = trim($_message);
+		if (config::byKey('textMode', 'sms4g') == 1) {
+			$message = sms4gCmd::cleanSMS($message);
+		}
+		$phonenumbers = array_filter(array_map('trim', $_phonenumbers), 'strlen');
+		if (count($phonenumbers) == 0 || $message == '') {
+			log::add('sms4g', 'warning', '[SMS] Envoi ignoré : numéro ou message vide');
+			return false;
+		}
+		$maxPartsPerGroup = (int) config::byKey('maxSmsPartsPerGroup', 'sms4g');
+		foreach ($phonenumbers as $phonenumber) {
+			if (!self::sendToDaemon(array('cmd' => 'sendSms', 'number' => $phonenumber, 'message' => $message, 'maxPartsPerGroup' => $maxPartsPerGroup))) {
+				return false;
+			}
+		}
+		return true;
+	}
+	/**
+	 * Commande AT du mode diagnostic. Rend la main aussitôt : la réponse arrive plus tard dans la commande
+	 * « Réponse AT » (onAtResponse). Ici seul le mode diagnostic est contrôlé : le format et le filtre des
+	 * commandes autorisées sont ceux du démon, qui fait foi (sa réponse « refused » arrive dans « Réponse AT »).
+	 *
+	 * @param string $_command commande AT
+	 * @param mixed $_timeout délai en secondes (facultatif, le démon le borne)
+	 * @return bool
+	 */
+	public static function sendAtCommand($_command, $_timeout = '') {
+		$command = trim((string) $_command);
+		if (config::byKey('diagMode', 'sms4g', 0) != 1) {
+			log::add('sms4g', 'warning', '[AT] Commande refusée : le mode diagnostic est désactivé');
+			self::setAtResponse($command . ' → refused (diagnostic mode is disabled)');
+			return false;
+		}
+
+		$payload = array('cmd' => 'atCommand', 'id' => bin2hex(random_bytes(8)), 'command' => $command);
+		if (is_numeric($_timeout) && $_timeout > 0) {
+			$payload['timeout'] = (float) $_timeout;
+		}
+		log::add('sms4g', 'info', '[AT] Commande envoyée au démon : ' . self::maskPhoneNumbers($command));
+		if (!self::sendToDaemon($payload)) {
+			self::setAtResponse($command . ' → notConnected (daemon not reachable)');
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Écrit la commande « Réponse AT ». Le texte est protégé des balises HTML : il peut venir du modem, ou d'une
+	 * commande saisie par une IA.
+	 */
+	private static function setAtResponse($_text) {
+		$modem = self::byLogicalId('modem', 'sms4g');
+		if (!is_object($modem)) {
+			log::add('sms4g', 'debug', '[AT] Équipement virtuel Modem non trouvé');
+			return;
+		}
+		$modem->checkAndUpdateCmd('at_response', htmlspecialchars($_text, ENT_NOQUOTES | ENT_SUBSTITUTE, 'UTF-8'));
+	}
+
+	/**
+	 * @param mixed $_id identifiant du message
+	 * @return bool true si ce message a déjà été traité. Il est marqué dès maintenant (et non après son traitement) :
+	 *              un renvoi qui arrive pendant que le premier tourne encore est ignoré lui aussi.
+	 */
+	public static function isDuplicateMessage($_id) {
+		if (!is_scalar($_id) || $_id === '') {
+			return false;
+		}
+		$key = 'sms4g::message::' . preg_replace('/[^0-9a-zA-Z]/', '', (string) $_id);
+		if (cache::byKey($key)->getValue(null) !== null) {
+			return true;
+		}
+		// Mémorise l'identifiant 10 minutes pour détecter les renvois du démon
+		cache::set($key, 1, 600);
+		return false;
+	}
+
+	/**
+	 * Handlers des messages du démon (aiguillés par jeesms4g.php) : chacun met à jour l'équipement virtuel Modem.
+	 * $_time : date du message côté démon (pour l'historique), ou null.
+	 */
+	public static function onModemState($_modem, $_message, $_time) {
+		$state = isset($_message['state']) ? $_message['state'] : '';
+		$attempt = isset($_message['attempt']) ? (int) $_message['attempt'] : 0;
+		$maxAttempts = isset($_message['maxAttempts']) ? (int) $_message['maxAttempts'] : 0;
+		// connection_state : échelle de 0 (déconnecté) à 4 (connecté) ; online = 1 seulement quand le modem est connecté et enregistré
+		switch ($state) {
+			case 'connecting':
+				$text = __('Connexion en cours', __FILE__);
+				$code = 3;
+				$online = 0;
+				break;
+			case 'connected':
+				$text = __('Connecté', __FILE__);
+				$code = 4;
+				$online = 1;
+				break;
+			case 'searching':
+				$text = __('Recherche opérateur', __FILE__);
+				$code = 2;
+				$online = 0;
+				break;
+			case 'reconnecting':
+				// Deux états par tentative : l'annonce (avec le délai d'attente), puis la tentative elle-même
+				if (isset($_message['retryIn'])) {
+					$text = __('Reconnexion dans', __FILE__) . ' ' . (int) round($_message['retryIn']) . ' s (' . $attempt . '/' . $maxAttempts . ')';
+				} else {
+					$text = __('Reconnexion', __FILE__) . ' ' . $attempt . '/' . $maxAttempts;
+				}
+				$code = 1;
+				$online = 0;
+				break;
+			case 'disconnected':
+				$text = __('Déconnecté', __FILE__);
+				$code = 0;
+				$online = 0;
+				break;
+			default:
+				log::add('sms4g', 'warning', '[CALLBACK] État du modem inconnu : ' . secureXSS($state));
+				return;
+		}
+		log::add('sms4g', 'info', '[MODEM] ' . $text);
+		$_modem->checkAndUpdateCmd('connection', $text, $_time);
+		$_modem->checkAndUpdateCmd('connection_state', $code, $_time);
+		$_modem->checkAndUpdateCmd('online', $online, $_time);
+
+		if ($state == 'disconnected' && !empty($_message['fatal'])) {
+			$reason = isset($_message['reason']) ? secureXSS($_message['reason']) : '';
+			message::add('sms4g', __('Erreur du modem', __FILE__) . ' : ' . $reason, '', 'sms4gcmderror');
+			// Un nouveau démarrage ne corrigerait pas ces erreurs, et un PIN incorrect répété bloque la SIM
+			if (isset($_message['errorType']) && in_array($_message['errorType'], array('PinRequiredError', 'IncorrectPinError', 'PukRequiredError'))) {
+				log::add('sms4g', 'error', '[MODEM] Code PIN absent ou incorrect : redémarrage automatique du démon désactivé');
+				config::save('deamonAutoMode', 0, 'sms4g');
+			}
+		}
+	}
+
+	public static function onSignal($_modem, $_message, $_time) {
+		$value = isset($_message['value']) ? (int) $_message['value'] : -1;
+		config::save('signalStrength', $value, 'sms4g');
+		$_modem->checkAndUpdateCmd('signal', $value, $_time);
+	}
+
+	public static function onNetwork($_modem, $_message, $_time) {
+		$operator = (isset($_message['operator']) && $_message['operator'] !== null) ? (string) $_message['operator'] : '';
+		config::save('networkName', $operator, 'sms4g');
+		$_modem->checkAndUpdateCmd('operator', $operator, $_time);
+	}
+
+	public static function onAtResponse($_modem, $_message, $_time) {
+		$command = isset($_message['command']) ? (string) $_message['command'] : '';
+		$status = isset($_message['status']) ? (string) $_message['status'] : 'error';
+		$lines = (isset($_message['lines']) && is_array($_message['lines'])) ? $_message['lines'] : array();
+		$text = $command . ' → ' . $status;
+		if ($status != 'ok' && !empty($_message['error'])) {
+			$text .= ' (' . $_message['error'] . ')';
+		}
+		if (count($lines) > 0) {
+			$text .= "\n" . implode("\n", $lines);
+		}
+		if (!empty($_message['truncated'])) {
+			$text .= "\n[…]";
+		}
+		log::add('sms4g', 'info', '[AT] ' . self::maskPhoneNumbers($command) . ' → ' . $status);
+		log::add('sms4g', 'debug', '[AT] Réponse : ' . self::maskPhoneNumbers(implode(' | ', $lines)));
+		$_modem->checkAndUpdateCmd('at_response', htmlspecialchars($text, ENT_NOQUOTES | ENT_SUBSTITUTE, 'UTF-8'), $_time);
+	}
+
+	/**
+	 * Masque les numéros de téléphone d'un texte de log (même règle que le démon : 4 premiers et 2 derniers caractères).
+	 */
+	private static function maskPhoneNumbers($_text) {
+		return preg_replace_callback('/\+\d{6,15}/', function ($match) {
+			return substr($match[0], 0, 4) . str_repeat('X', strlen($match[0]) - 6) . substr($match[0], -2);
+		}, $_text);
+	}
+
 	/*     * *********************Méthode d'instance************************* */
 	public function preSave() {
 		if ($this->getConfiguration('allowUnknownOrigin', 0) == 0) {
@@ -334,66 +707,10 @@ class sms4g extends eqLogic {
 	}
 
 	public function postSave() {
-		$signal = $this->getCmd(null, 'signal');
-		if (!is_object($signal)) {
-			$signal = new sms4gCmd();
-			$signal->setEqLogic_id($this->getId());
-			$signal->setLogicalId('signal');
-			$signal->setIsVisible(0);
-			$signal->setName(__('Signal', __FILE__));
-			$signal->setTemplate('dashboard', 'core::tile');
-			$signal->setTemplate('mobile', 'core::tile');
+		// Équipement virtuel Modem : ses commandes sont gérées par manageModemEquipment()
+		if ($this->getLogicalId() == 'modem') {
+			return;
 		}
-		$signal->setType('info');
-		$signal->setSubType('numeric');
-		$signal->save();
-
-		$connection = $this->getCmd(null, 'connection');
-		if (!is_object($connection)) {
-			$connection = new sms4gCmd();
-			$connection->setEqLogic_id($this->getId());
-			$connection->setLogicalId('connection');
-			$connection->setIsVisible(0);
-			$connection->setName(__('Connexion', __FILE__));
-			$connection->setTemplate('dashboard', 'core::line');
-			$connection->setTemplate('mobile', 'core::line');
-			$connection->setDisplay('forceReturnLineBefore', 1);
-			$connection->setDisplay('forceReturnLineAfter', 1);
-		}
-		$connection->setType('info');
-		$connection->setSubType('string');
-		$connection->save();
-
-		$connectionState = $this->getCmd(null, 'connection_state');
-		if (!is_object($connectionState)) {
-			$connectionState = new sms4gCmd();
-			$connectionState->setEqLogic_id($this->getId());
-			$connectionState->setLogicalId('connection_state');
-			$connectionState->setIsVisible(0);
-			$connectionState->setName(__('Connexion (Code)', __FILE__));
-			$connectionState->setIsHistorized(1);
-			$connectionState->setConfiguration('repeatEventManagement', 'always');
-			$connectionState->setTemplate('dashboard', 'core::tile');
-			$connectionState->setTemplate('mobile', 'core::tile');
-		}
-		$connectionState->setType('info');
-		$connectionState->setSubType('numeric');
-		$connectionState->save();
-
-		$online = $this->getCmd(null, 'online');
-		if (!is_object($online)) {
-			$online = new sms4gCmd();
-			$online->setEqLogic_id($this->getId());
-			$online->setLogicalId('online');
-			$online->setIsVisible(0);
-			$online->setName(__('En Ligne', __FILE__));
-			$online->setIsHistorized(1);
-			$online->setConfiguration('repeatEventManagement', 'always');
-		}
-		$online->setType('info');
-		$online->setSubType('binary');
-		$online->save();
-
 		$sms = $this->getCmd(null, 'sms');
 		if (!is_object($sms)) {
 			$sms = new sms4gCmd();
@@ -465,8 +782,11 @@ class sms4gCmd extends cmd {
 	/*     * *********************Méthode d'instance************************* */
 
 	public function dontRemoveCmd() {
-		if (in_array($this->getLogicalId(), array('signal', 'connection', 'connection_state', 'online'))) {
-			return true;
+		// Équipement virtuel Modem : seules les commandes créées par le plugin sont protégées (les anciennes
+		// commandes signal / connexion des équipements SMS se suppriment à la main)
+		$eqLogic = $this->getEqLogic();
+		if (is_object($eqLogic) && $eqLogic->getLogicalId() == 'modem') {
+			return in_array($this->getLogicalId(), array('signal', 'operator', 'connection', 'connection_state', 'online', 'at_response', 'at_command'));
 		}
 		if (str_starts_with($this->getLogicalId(), 'delivery_status_') || str_starts_with($this->getLogicalId(), 'delivery_success_')) {
 			return true;
@@ -481,7 +801,7 @@ class sms4gCmd extends cmd {
 	 * @return void
 	 */
 	public function postSave() {
-		if ($this->getType() != 'action' || $this->getSubType() != 'message') {
+		if ($this->getType() != 'action' || $this->getSubType() != 'message' || $this->getLogicalId() == 'at_command') {
 			return;
 		}
 		$eqLogic = $this->getEqLogic();
@@ -530,7 +850,7 @@ class sms4gCmd extends cmd {
 	 * @return void
 	 */
 	public function preRemove() {
-		if ($this->getType() != 'action' || $this->getSubType() != 'message') {
+		if ($this->getType() != 'action' || $this->getSubType() != 'message' || $this->getLogicalId() == 'at_command') {
 			return;
 		}
 		$eqLogic = $this->getEqLogic();
@@ -543,62 +863,35 @@ class sms4gCmd extends cmd {
 	}
 
 	public function preSave() {
-		if ($this->getSubtype() == 'message' && $this->getLogicalId() != 'send_to_custom_number') {
+		if ($this->getSubtype() == 'message' && !in_array($this->getLogicalId(), array('send_to_custom_number', 'at_command'))) {
 			$this->setDisplay('title_disable', 1);
 		}
 	}
 
 	public function execute($_options = null) {
-		$number = $this->getConfiguration('phonenumber');
-		if ($this->getLogicalId() == 'send_to_custom_number' && isset($_options['title'])) {
-			$number = $_options['title'];
+		if ($this->getLogicalId() == 'at_command') {
+			// Commande AT du mode diagnostic : la commande est le message, le délai (facultatif) est le titre
+			return sms4g::sendAtCommand(isset($_options['message']) ? $_options['message'] : '', isset($_options['title']) ? $_options['title'] : '');
 		}
-		if (isset($_options['number'])) {
-			$number = $_options['number'];
-		}
+		$title = isset($_options['title']) ? $_options['title'] : '';
+		$message = isset($_options['message']) ? $_options['message'] : '';
 		if (isset($_options['answer'])) {
-			$_options['message'] .= ' (' . implode(';', $_options['answer']) . ')';
+			$message .= ' (' . implode(';', $_options['answer']) . ')';
 		}
-		$values = array();
-		if (isset($_options['message']) && $_options['message'] != '') {
-			$message = trim($_options['message']);
-		} else {
-			$message = trim($_options['title'] . ' ' . $_options['message']);
-		}
-		if (config::byKey('textMode', 'sms4g') == 1) {
-			$message = self::cleanSMS(trim($message));
-		}
+		$isCustomNumber = ($this->getLogicalId() == 'send_to_custom_number');
 		if (isset($_options['number'])) {
-			$phonenumbers = array($number);
+			// Réponse à une interaction : le numéro de l'expéditeur
+			$phonenumbers = array($_options['number']);
+		} elseif ($isCustomNumber) {
+			// "Envoyer message à" : le numéro est le titre, le texte est le message
+			$phonenumbers = array($title);
 		} else {
 			$phonenumbers = explode(';', $this->getConfiguration('phonenumber'));
 		}
-		// Le découpage en parties/groupes SMS (encodage GSM-7 ou UCS-2, limite de parties liées) est entièrement
-		// géré côté démon Python, seul à connaître l'encodage réel du message ; on transmet juste le texte complet
-		$maxPartsPerGroup = (int) config::byKey('maxSmsPartsPerGroup', 'sms4g');
-		foreach ($phonenumbers as $phonenumber) {
-			$values[] = json_encode(array('apikey' => jeedom::getApiKey('sms4g'), 'number' => $phonenumber, 'message' => $message, 'maxPartsPerGroup' => $maxPartsPerGroup));
+		$message = trim($message);
+		if ($message == '' && !$isCustomNumber) {
+			$message = trim($title);
 		}
-		foreach ($values as $value) {
-			$socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
-			if ($socket === false) {
-				log::add('sms4g', 'error', '[Envoi SMS] socket_create : ' . socket_strerror(socket_last_error()));
-				return false;
-			}
-			if (@socket_connect($socket, '127.0.0.1', config::byKey('socketport', 'sms4g')) === false) {
-				$err = socket_last_error($socket);
-				socket_close($socket);
-				log::add('sms4g', 'error', '[Envoi SMS] socket_connect (démon arrêté ?) : ' . socket_strerror($err));
-				return false;
-			}
-			if (@socket_write($socket, $value, strlen($value)) === false) {
-				$err = socket_last_error($socket);
-				socket_close($socket);
-				log::add('sms4g', 'error', '[Envoi SMS] socket_write : ' . socket_strerror($err));
-				return false;
-			}
-			socket_close($socket);
-		}
-		return true;
+		return sms4g::sendSms($phonenumbers, $message);
 	}
 }

@@ -32,6 +32,7 @@ class FakeSerial:
         self._cancel = False
         self.unplugged = False
         self.closed = False
+        self.outputReset = False
         self.written: list[tuple[float, bytes]] = []
         FakeSerial.instances.append(self)
 
@@ -41,6 +42,9 @@ class FakeSerial:
 
     def reset_input_buffer(self):
         pass
+
+    def reset_output_buffer(self):
+        self.outputReset = True
 
     def feed(self, data: bytes):
         with self._cond:
@@ -347,9 +351,10 @@ class ModemTest(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.events: list = []
-        intervalPatcher = mock.patch.object(Modem, 'MIN_MONITOR_INTERVAL', 0.05)
-        intervalPatcher.start()
-        self.addCleanup(intervalPatcher.stop)
+        for owner, name, value in ((Modem, 'MIN_MONITOR_INTERVAL', 0.05), (Executor, 'READY_INTERVAL', 0.1)):
+            patcher = mock.patch.object(owner, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def makeModem(self, pin: str | None = None, **optionArgs) -> Modem:
         options = ModemOptions(reconnectBaseDelay=0.05, reconnectMaxDelay=0.1, reconnectMaxAttempts=3, **optionArgs)
@@ -471,6 +476,39 @@ class ModemTest(unittest.TestCase):
         self.assertTrue(waitFor(lambda: 'reconnecting' in self.states(), timeout=3))
         self.assertLess(time.monotonic() - started, 2.0)  # not after the 5 s timeout of the monitoring command
 
+    def testWaitsForModemToStart(self):
+        started = time.monotonic()
+        respond = answer(simcomTable())
+
+        def behavior(fake, data):
+            if time.monotonic() - started >= 0.5:  # until then the modem is starting: the bytes are lost
+                respond(fake, data)
+
+        FakeSerial.behavior = behavior
+        modem = self.makeModem()
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        self.assertGreater(FakeSerial.instances[0].commands().count('AT'), 2)
+        self.assertEqual(len(FakeSerial.instances), 1)  # connected at the first attempt
+
+    def testLateAnswersToProbesAreDiscarded(self):
+        # The modem answers every AT after 0.25 s: several answers arrive after the first one has been taken
+        FakeSerial.behavior = answer(simcomTable(**{'AT': lambda fake: fake.feedLater(0.25, b'OK\r\n')}))
+        modem = self.makeModem()
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        self.assertEqual(self.states(), ['connecting', 'connected'])  # no answer shifted: SIM seen as READY
+        self.assertEqual(self.eventsOf(ModemIdentified)[0].model, 'SIMCOM_SIM7600G-H')
+
+    def testModemNeverAnswering(self):
+        FakeSerial.behavior = None
+        modem = self.makeModem(readyTimeout=0.4)
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.DISCONNECTED, timeout=10))
+        self.assertEqual(len(FakeSerial.instances), 4)  # first attempt + 3 reconnections
+        for fake in FakeSerial.instances:
+            self.assertEqual(set(fake.commands()), {'AT'})
+
     def testCommandNotConnected(self):
         modem = self.makeModem()
         with self.assertRaises(NotConnectedError):
@@ -524,6 +562,7 @@ class ModemTest(unittest.TestCase):
         modem.stop()
         self.assertLess(time.monotonic() - started, 2.0)
         self.assertTrue(FakeSerial.instances[-1].closed)
+        self.assertTrue(FakeSerial.instances[-1].outputReset)  # pending output is dropped before closing
 
     def testStopDuringInitialization(self):
         FakeSerial.behavior = None  # the modem never answers

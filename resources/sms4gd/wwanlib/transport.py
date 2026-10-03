@@ -3,6 +3,7 @@
 import logging
 import re
 import threading
+import time
 from collections.abc import Callable
 from enum import Enum
 
@@ -133,6 +134,7 @@ class Transport:
             raise
 
     def close(self) -> None:
+        started = time.monotonic()
         self._alive = False
         port = self._serial
         if port is not None:
@@ -143,12 +145,19 @@ class Transport:
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(3)
+        joined = time.monotonic()
         if port is not None:
+            try:
+                # Closing a port waits until its pending output is sent: not for bytes a modem never consumed
+                port.reset_output_buffer()
+            except Exception:
+                pass
             try:
                 port.close()
             except Exception:
                 pass
-        log.debug('Port %s closed', self.port)
+        log.debug('Port %s closed (reader stopped in %.1fs, port closed in %.1fs)', self.port, joined - started,
+                  time.monotonic() - joined)
 
     def _signalLost(self, error: Exception) -> None:
         with self._lostLock:

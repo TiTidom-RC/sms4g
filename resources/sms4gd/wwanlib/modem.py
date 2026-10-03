@@ -30,6 +30,7 @@ class ModemOptions:
     reconnectMaxDelay: float = 300.0
     reconnectMaxAttempts: int = 10
     monitorInterval: float = 30.0  # seconds between two readings of the signal and of the network (5 at least)
+    readyTimeout: float = 20.0  # seconds to wait for a modem that is still starting to answer AT
 
 
 class _Session:
@@ -221,6 +222,7 @@ class Modem:
             onNotification=lambda lines: self._dispatcher.post(UnsolicitedNotification(lines)),
             onLost=lambda error: self._supervisor.reportFailure(token, str(error)))
         session.transport.open()
+        session.executor.waitReady(self.options.readyTimeout)
         session.executor.start()
         self._initialize(session)
 
@@ -237,8 +239,6 @@ class Modem:
     def _initialize(self, session: _Session) -> None:
         run = session.run
 
-        # The modem may still be starting: a single AT, answered as soon as it is ready
-        run('AT', timeout=5.0, maxHold=5.0)
 
         pinChecked = False
         try:

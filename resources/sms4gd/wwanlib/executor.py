@@ -83,6 +83,10 @@ class Executor:
     ESCAPE_GRACE = 2.0
     MARKER_TIMEOUT = 10.0
     POLL_INTERVAL = 0.5
+    # Waiting for a modem that is still starting (right after a USB replug): one AT per interval
+    READY_INTERVAL = 1.0
+    # After the first answer, the probes sent earlier may still answer: let them arrive, then discard them
+    READY_SETTLE = 0.3
 
     def __init__(self, write: Callable[[bytes], None], onStuck: Callable[[str], None]):
         """ :param write: writes raw bytes to the port (raises on a lost port)
@@ -109,6 +113,34 @@ class Executor:
         thread = threading.Thread(target=self._run, name='wwanlib-executor', daemon=True)
         thread.start()
         self._thread = thread
+
+    def waitReady(self, timeout: float) -> None:
+        """ Waits until the modem answers ``AT``. A modem that has just been (re)plugged needs several seconds
+        before it listens: the bytes written meanwhile are lost, hence one probe per ``READY_INTERVAL``.
+
+        Must be called before ``start()``, from the thread that opens the connection: nothing else can use the
+        port, so the late answers of the probes can neither be taken for an answer to another command.
+
+        :raise TimeoutException: if the modem did not answer within ``timeout`` seconds
+        :raise NotConnectedError: if stopped meanwhile """
+        deadline = time.monotonic() + timeout
+        self._active = 'AT'
+        try:
+            while True:
+                self._discardStale()
+                self._write(('AT' + TERMINATOR).encode())
+                try:
+                    attemptEnd = min(deadline, time.monotonic() + self.READY_INTERVAL)
+                    while self._nextLine(attemptEnd) != 'OK':
+                        pass
+                    break
+                except _Deadline:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutException() from None
+            self._stopEvent.wait(self.READY_SETTLE)
+            self._discardStale()
+        finally:
+            self._active = None
 
     def stop(self, timeout: float = 5.0) -> None:
         self._shutdown(NotConnectedError('Modem stopped'))
@@ -241,12 +273,7 @@ class Executor:
         return lines, len(transaction.steps) - 1
 
     def _runStep(self, step: Step) -> list[str]:
-        while True:
-            try:
-                stale = self._lines.get_nowait()
-            except queue.Empty:
-                break
-            log.debug('Stale line discarded: %s', stale)
+        self._discardStale()
         self._active = step.data
         self._promptWanted = step.expectPrompt
         log.debug('write: %s', self._mask(step.data))
@@ -265,6 +292,15 @@ class Executor:
             if self.FINAL_CODE.match(line):
                 log.debug('response: %s', lines)
                 return lines
+
+    def _discardStale(self) -> None:
+        while True:
+            try:
+                stale = self._lines.get_nowait()
+            except queue.Empty:
+                return
+            if stale is not None:
+                log.debug('Stale line discarded: %s', stale)
 
     def _nextLine(self, deadline: float) -> str:
         while True:

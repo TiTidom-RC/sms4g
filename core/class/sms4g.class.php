@@ -480,6 +480,8 @@ class sms4g extends eqLogic {
 			$cmd->setIsVisible(0);
 			$cmd->setConfiguration('repeatEventManagement', 'always');
 			$cmd->setConfiguration('interact::auto::disable', 1);
+			$cmd->setDisplay('forceReturnLineBefore', 1);
+			$cmd->setDisplay('forceReturnLineAfter', 1);
 			$cmd->setOrder($orderCmd++);
 			$cmd->save();
 		} else {

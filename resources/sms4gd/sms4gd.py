@@ -30,7 +30,8 @@ import traceback
 from queue import Empty
 from typing import Optional
 
-from wwanlib import ConnectionState, Modem, ModemIdentified, ModemOptions, StateChanged, WwanException
+from wwanlib import (ConnectionState, Modem, ModemIdentified, ModemOptions, NetworkChanged, SignalChanged, StateChanged,
+                     WwanException)
 
 try:
     from jeedom.jeedom import jeedom_com, jeedom_socket, jeedom_utils, JEEDOM_SOCKET_MESSAGE
@@ -107,12 +108,18 @@ def onModemEvent(event):
         elif event.state == ConnectionState.CONNECTED:
             logging.info("Modem connected")
             runDiagnostic()
+        elif event.state == ConnectionState.SEARCHING:
+            logging.warning("Modem not registered on the mobile network, searching")
         elif event.state == ConnectionState.RECONNECTING:
             logging.warning("Modem reconnecting %s/%s", event.details.get('attempt'), event.details.get('maxAttempts'))
         elif event.state == ConnectionState.DISCONNECTED:
             logging.error("Modem disconnected for good (%s), stopping the daemon", event.details.get('reason'))
             # Jeedom relancera le démon (gestion automatique)
             _stopEvent.set()
+    elif isinstance(event, SignalChanged):
+        logging.info("Signal : %s", event.value)
+    elif isinstance(event, NetworkChanged):
+        logging.info("Network : %s, operator : %s", event.registration, event.operator)
 
 
 def readSocket(raw):

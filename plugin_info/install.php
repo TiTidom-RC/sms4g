@@ -83,7 +83,7 @@ function sms4g_install() {
 	try {
 		sms4g::manageModemEquipment();
 	} catch (\Throwable $e) {
-		log::add('sms4g', 'error', '[Modem] Création de l\'équipement virtuel Modem impossible : ' . $e->getMessage());
+		log::add('sms4g', 'error', '[MODEM] Création de l\'équipement virtuel Modem impossible : ' . $e->getMessage());
 	}
 
 	$dependencyInfo = sms4g::dependancy_info();
@@ -166,7 +166,7 @@ function sms4g_update() {
 	try {
 		sms4g::manageModemEquipment();
 	} catch (\Throwable $e) {
-		log::add('sms4g', 'error', '[Modem] Création de l\'équipement virtuel Modem impossible : ' . $e->getMessage());
+		log::add('sms4g', 'error', '[MODEM] Création de l\'équipement virtuel Modem impossible : ' . $e->getMessage());
 	}
 
 	$dependencyInfo = sms4g::dependancy_info();

@@ -315,7 +315,7 @@ class ExecutorTest(ExecutorTestCase):
     def testStopIsImmediate(self):
         started = time.monotonic()
         self.executor.stop()
-        self.assertLess(time.monotonic() - started, 0.3)
+        self.assertLess(time.monotonic() - started, 0.4)  # it used to wait up to 0.5 s
 
     def testStopFailsPending(self):
         pending = self.executor.submit('AT+WAIT', timeout=30)

@@ -379,7 +379,7 @@ class sms4g extends eqLogic {
 			$cmd->setLogicalId('operator');
 			$cmd->setType('info');
 			$cmd->setSubType('string');
-			$cmd->setIsVisible(1);
+			$cmd->setIsVisible(0);
 			$cmd->setTemplate('dashboard', 'core::line');
 			$cmd->setTemplate('mobile', 'core::line');
 			$cmd->setDisplay('forceReturnLineBefore', 1);
@@ -399,7 +399,7 @@ class sms4g extends eqLogic {
 			$cmd->setLogicalId('connection');
 			$cmd->setType('info');
 			$cmd->setSubType('string');
-			$cmd->setIsVisible(0);
+			$cmd->setIsVisible(1);
 			$cmd->setTemplate('dashboard', 'core::line');
 			$cmd->setTemplate('mobile', 'core::line');
 			$cmd->setDisplay('forceReturnLineBefore', 1);
@@ -440,7 +440,7 @@ class sms4g extends eqLogic {
 			$cmd->setLogicalId('online');
 			$cmd->setType('info');
 			$cmd->setSubType('binary');
-			$cmd->setIsVisible(0);
+			$cmd->setIsVisible(1);
 			$cmd->setIsHistorized(1);
 			$cmd->setConfiguration('repeatEventManagement', 'always');
 			$cmd->setOrder($orderCmd++);

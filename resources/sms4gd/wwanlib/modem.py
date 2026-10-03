@@ -176,10 +176,10 @@ class Modem:
         if not pinChecked:
             self._unlockSim(run)
 
-        manufacturer = run('AT+CGMI')[0]
-        model = run('AT+CGMM')[0]
+        manufacturer = self._identity(run('AT+CGMI')[0])
+        model = self._identity(run('AT+CGMM')[0])
         try:
-            revision: str | None = run('AT+CGMR')[0]
+            revision: str | None = self._identity(run('AT+CGMR')[0])
         except CommandError:
             revision = None
         session.profile = detectProfile(manufacturer)
@@ -199,6 +199,11 @@ class Modem:
                 log.info('LTE-only network mode forced (AT+CNMP=38)')
             except WwanException as e:
                 log.error('Failed to force the LTE-only network mode (AT+CNMP=38): %s', e)
+
+    @staticmethod
+    def _identity(line: str) -> str:
+        """ Some firmwares (SimCom) prefix the identification with the command name, e.g. '+CGMR: LE20B04SIM7600G22' """
+        return re.sub(r'^\+CGM[IMR]:\s*', '', line)
 
     def _unlockSim(self, run: Callable[..., list[str]]) -> None:
         """ Enters the PIN if the SIM asks for it """

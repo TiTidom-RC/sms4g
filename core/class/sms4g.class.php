@@ -352,6 +352,24 @@ class sms4g extends eqLogic {
 
 		$orderCmd = 1;
 
+		// online (info/binary) : 1 seulement quand le modem est connecté et enregistré sur le réseau
+		$cmd = $modem->getCmd(null, 'online');
+		if (!is_object($cmd)) {
+			$cmd = new sms4gCmd();
+			$cmd->setName(__('En Ligne', __FILE__));
+			$cmd->setEqLogic_id($modem->getId());
+			$cmd->setLogicalId('online');
+			$cmd->setType('info');
+			$cmd->setSubType('binary');
+			$cmd->setIsVisible(1);
+			$cmd->setIsHistorized(1);
+			$cmd->setConfiguration('repeatEventManagement', 'always');
+			$cmd->setOrder($orderCmd++);
+			$cmd->save();
+		} else {
+			$orderCmd++;
+		}
+
 		// signal (info/numeric)
 		$cmd = $modem->getCmd(null, 'signal');
 		if (!is_object($cmd)) {
@@ -364,26 +382,6 @@ class sms4g extends eqLogic {
 			$cmd->setIsVisible(1);
 			$cmd->setTemplate('dashboard', 'core::tile');
 			$cmd->setTemplate('mobile', 'core::tile');
-			$cmd->setOrder($orderCmd++);
-			$cmd->save();
-		} else {
-			$orderCmd++;
-		}
-
-		// operator (info/string)
-		$cmd = $modem->getCmd(null, 'operator');
-		if (!is_object($cmd)) {
-			$cmd = new sms4gCmd();
-			$cmd->setName(__('Opérateur', __FILE__));
-			$cmd->setEqLogic_id($modem->getId());
-			$cmd->setLogicalId('operator');
-			$cmd->setType('info');
-			$cmd->setSubType('string');
-			$cmd->setIsVisible(0);
-			$cmd->setTemplate('dashboard', 'core::line');
-			$cmd->setTemplate('mobile', 'core::line');
-			$cmd->setDisplay('forceReturnLineBefore', 1);
-			$cmd->setDisplay('forceReturnLineAfter', 1);
 			$cmd->setOrder($orderCmd++);
 			$cmd->save();
 		} else {
@@ -410,6 +408,26 @@ class sms4g extends eqLogic {
 			$orderCmd++;
 		}
 
+		// operator (info/string)
+		$cmd = $modem->getCmd(null, 'operator');
+		if (!is_object($cmd)) {
+			$cmd = new sms4gCmd();
+			$cmd->setName(__('Opérateur', __FILE__));
+			$cmd->setEqLogic_id($modem->getId());
+			$cmd->setLogicalId('operator');
+			$cmd->setType('info');
+			$cmd->setSubType('string');
+			$cmd->setIsVisible(0);
+			$cmd->setTemplate('dashboard', 'core::line');
+			$cmd->setTemplate('mobile', 'core::line');
+			$cmd->setDisplay('forceReturnLineBefore', 1);
+			$cmd->setDisplay('forceReturnLineAfter', 1);
+			$cmd->setOrder($orderCmd++);
+			$cmd->save();
+		} else {
+			$orderCmd++;
+		}
+
 		// connection_state (info/numeric) : 0 déconnecté, 1 reconnexion, 2 recherche opérateur, 3 connexion, 4 connecté
 		$cmd = $modem->getCmd(null, 'connection_state');
 		if (!is_object($cmd)) {
@@ -425,24 +443,6 @@ class sms4g extends eqLogic {
 			$cmd->setConfiguration('repeatEventManagement', 'always');
 			$cmd->setTemplate('dashboard', 'core::tile');
 			$cmd->setTemplate('mobile', 'core::tile');
-			$cmd->setOrder($orderCmd++);
-			$cmd->save();
-		} else {
-			$orderCmd++;
-		}
-
-		// online (info/binary) : 1 seulement quand le modem est connecté et enregistré sur le réseau
-		$cmd = $modem->getCmd(null, 'online');
-		if (!is_object($cmd)) {
-			$cmd = new sms4gCmd();
-			$cmd->setName(__('En Ligne', __FILE__));
-			$cmd->setEqLogic_id($modem->getId());
-			$cmd->setLogicalId('online');
-			$cmd->setType('info');
-			$cmd->setSubType('binary');
-			$cmd->setIsVisible(1);
-			$cmd->setIsHistorized(1);
-			$cmd->setConfiguration('repeatEventManagement', 'always');
 			$cmd->setOrder($orderCmd++);
 			$cmd->save();
 		} else {

@@ -30,8 +30,44 @@ if (!is_array($result)) {
 	die();
 }
 
-// Protocole v2 : {"messages": [{id, type, time, ...}, ...]} (état de connexion, signal, réseau, réponse AT)
+// Protocole v2 : {"messages": [{id, type, time, ...}, ...]} (état de connexion, signal, réseau, réponse AT).
+// Un message déjà traité (même id : renvoi après une réponse perdue) est ignoré.
 if (isset($result['messages']) && is_array($result['messages'])) {
-	sms4g::onMessages($result['messages']);
+	$modem = sms4g::byLogicalId('modem', 'sms4g');
+	if (!is_object($modem)) {
+		log::add('sms4g', 'debug', '[CALLBACK] Équipement virtuel Modem non trouvé');
+		die();
+	}
+	foreach ($result['messages'] as $message) {
+		if (!is_array($message) || !isset($message['type'])) {
+			log::add('sms4g', 'warning', '[CALLBACK] Message du démon sans type, ignoré');
+			continue;
+		}
+		if (isset($message['id']) && sms4g::isDuplicateMessage($message['id'])) {
+			log::add('sms4g', 'debug', '[CALLBACK] Message déjà traité, ignoré : ' . secureXSS($message['type']));
+			continue;
+		}
+		$time = isset($message['time']) ? date('Y-m-d H:i:s', (int) $message['time']) : null;
+		try {
+			switch ($message['type']) {
+				case 'modemState':
+					sms4g::onModemState($modem, $message, $time);
+					break;
+				case 'signal':
+					sms4g::onSignal($modem, $message, $time);
+					break;
+				case 'network':
+					sms4g::onNetwork($modem, $message, $time);
+					break;
+				case 'atResponse':
+					sms4g::onAtResponse($modem, $message, $time);
+					break;
+				default:
+					log::add('sms4g', 'warning', '[CALLBACK] Type de message inconnu : ' . secureXSS($message['type']));
+			}
+		} catch (\Throwable $e) {
+			log::add('sms4g', 'error', '[CALLBACK] Message ' . secureXSS($message['type']) . ' : ' . $e->getMessage() . ' — ' . $e->getFile() . ':' . $e->getLine());
+		}
+	}
 	die();
 }

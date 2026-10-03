@@ -98,7 +98,7 @@ if (!isConnect('admin')) {
             <div class="form-group">
                 <label class="col-lg-3 control-label">{{Cycle (s)}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
-                    <sup><i class="fas fa-question-circle tooltips" title="{{Cycle de scrutation du démon pour l'envoi et la réception des SMS. Un chiffre trop bas peut amener à une certaine instabilité.}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Intervalle entre deux relevés du signal et de l'enregistrement sur le réseau mobile (5 secondes au minimum). Un chiffre trop bas peut amener à une certaine instabilité.}}"></i></sup>
                 </label>
                 <div class="col-lg-1">
                     <input class="configKey form-control" data-l1key="cycle" />
@@ -262,6 +262,18 @@ if (!isConnect('admin')) {
                 </label>
                 <div class="col-lg-1">
                     <input class="configKey form-control" data-l1key="reconnectMaxAttempts" />
+                </div>
+            </div>
+        </div>
+        <div>
+            <legend><i class="fas fa-stethoscope"></i> {{Diagnostic}}</legend>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Mode diagnostic (commandes AT)}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Autorise l'envoi de commandes AT au modem depuis Jeedom, avec la commande « Commande AT » de l'équipement Modem (la réponse arrive dans « Réponse AT »). Les commandes dangereuses sont refusées par le démon. A activer le temps d'un diagnostic.}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input type="checkbox" class="configKey" data-l1key="diagMode" />
                 </div>
             </div>
         </div>

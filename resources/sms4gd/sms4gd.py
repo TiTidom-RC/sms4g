@@ -110,8 +110,7 @@ def onModemEvent(event):
             runDiagnostic()
         elif event.state == ConnectionState.SEARCHING:
             logging.warning("Modem not registered on the mobile network, searching")
-        elif event.state == ConnectionState.RECONNECTING:
-            logging.warning("Modem reconnecting %s/%s", event.details.get('attempt'), event.details.get('maxAttempts'))
+
         elif event.state == ConnectionState.DISCONNECTED:
             logging.error("Modem disconnected for good (%s), stopping the daemon", event.details.get('reason'))
             # Jeedom relancera le démon (gestion automatique)

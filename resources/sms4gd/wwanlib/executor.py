@@ -123,11 +123,15 @@ class Executor:
 
         :raise TimeoutException: if the modem did not answer within ``timeout`` seconds
         :raise NotConnectedError: if stopped meanwhile """
-        deadline = time.monotonic() + timeout
+        started = time.monotonic()
+        deadline = started + timeout
+        probes = 0
         self._active = 'AT'
         try:
             while True:
                 self._discardStale()
+                probes += 1
+                log.debug('write: AT (waiting for the modem, probe %d)', probes)
                 self._write(('AT' + TERMINATOR).encode())
                 try:
                     attemptEnd = min(deadline, time.monotonic() + self.READY_INTERVAL)
@@ -137,6 +141,7 @@ class Executor:
                 except _Deadline:
                     if time.monotonic() >= deadline:
                         raise TimeoutException() from None
+            log.debug('The modem answers AT after %.1fs (%d probe(s))', time.monotonic() - started, probes)
             self._stopEvent.wait(self.READY_SETTLE)
             self._discardStale()
         finally:

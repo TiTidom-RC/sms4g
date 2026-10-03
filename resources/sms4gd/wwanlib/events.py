@@ -32,7 +32,8 @@ class Registration:
 @dataclass(frozen=True)
 class StateChanged:
     """ The connection state changed. ``details`` depends on the state:
-    reconnecting -> attempt, maxAttempts ; disconnected -> reason, fatal, errorType (class name of the cause) """
+    reconnecting -> attempt, maxAttempts, and retryIn (seconds) while waiting for the attempt to start ;
+    disconnected -> reason, fatal, errorType (class name of the cause) """
 
     state: str
     details: dict[str, Any] = field(default_factory=dict)

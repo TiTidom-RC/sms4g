@@ -406,6 +406,10 @@ class ModemTest(unittest.TestCase):
     def eventsOf(self, kind) -> list:
         return [event for event in self.events if isinstance(event, kind)]
 
+    def waitForStateEvent(self, state: str, timeout: float = 5.0) -> bool:
+        """ The state of the modem is updated before its event is delivered: wait for the event itself """
+        return waitFor(lambda: self.states()[-1:] == [state], timeout)
+
     def testMonitoringPublishesSignalAndNetwork(self):
         modem = self.makeModem(monitorInterval=0.1)
         modem.start()
@@ -438,7 +442,7 @@ class ModemTest(unittest.TestCase):
         self.assertEqual(self.eventsOf(NetworkChanged)[-1], NetworkChanged(Registration.SEARCHING, None))
         self.assertEqual(modem.command('AT+CSQ').result(2), ['+CSQ: 20,99', 'OK'])  # the modem still answers
         registration.update(creg='+CREG: 0,5', cereg='+CEREG: 0,0')  # roaming on CS is enough
-        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        self.assertTrue(waitFor(lambda: self.states()[-2:] == ['searching', 'connected']))
         self.assertEqual(self.states(), ['connecting', 'connected', 'searching', 'connected'])
 
     def testRegistrationDenied(self):
@@ -496,7 +500,7 @@ class ModemTest(unittest.TestCase):
         FakeSerial.behavior = answer(simcomTable(**{'AT': lambda fake: fake.feedLater(0.25, b'OK\r\n')}))
         modem = self.makeModem()
         modem.start()
-        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        self.assertTrue(self.waitForStateEvent(ConnectionState.CONNECTED))
         self.assertEqual(self.states(), ['connecting', 'connected'])  # no answer shifted: SIM seen as READY
         self.assertEqual(self.eventsOf(ModemIdentified)[0].model, 'SIMCOM_SIM7600G-H')
 
@@ -527,7 +531,7 @@ class ModemTest(unittest.TestCase):
         FakeSerial.behavior = answer(simcomTable(**{'AT+CPIN?': '+CPIN: SIM PIN\r\nOK\r\n'}))
         modem = self.makeModem()
         modem.start()
-        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.DISCONNECTED))
+        self.assertTrue(self.waitForStateEvent(ConnectionState.DISCONNECTED))
         self.assertEqual(len(FakeSerial.instances), 1)  # no new attempt
         last = [event for event in self.events if isinstance(event, StateChanged)][-1]
         self.assertTrue(last.details['fatal'])
@@ -539,9 +543,11 @@ class ModemTest(unittest.TestCase):
         self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
         FakeSerial.instances[0].unplug()
         self.assertTrue(waitFor(lambda: len(FakeSerial.instances) == 2 and self.states()[-1] == ConnectionState.CONNECTED))
-        self.assertEqual(self.states(), ['connecting', 'connected', 'reconnecting', 'connected'])
+        # Two reconnecting states per attempt: the announcement with the delay, then the attempt itself
+        self.assertEqual(self.states(), ['connecting', 'connected', 'reconnecting', 'reconnecting', 'connected'])
         reconnecting = [event for event in self.events if isinstance(event, StateChanged) and event.state == 'reconnecting']
-        self.assertEqual(reconnecting[0].details, {'attempt': 1, 'maxAttempts': 3})
+        self.assertEqual(reconnecting[0].details, {'attempt': 1, 'maxAttempts': 3, 'retryIn': 0.05})
+        self.assertEqual(reconnecting[1].details, {'attempt': 1, 'maxAttempts': 3})
         self.assertEqual(modem.command('AT+CSQ').result(2), ['+CSQ: 20,99', 'OK'])
 
     def testGivesUpAfterMaxAttempts(self):
@@ -551,8 +557,8 @@ class ModemTest(unittest.TestCase):
         with mock.patch('wwanlib.transport.serial.Serial', opener):
             modem = self.makeModem()
             modem.start()
-            self.assertTrue(waitFor(lambda: modem.state == ConnectionState.DISCONNECTED))
-        self.assertEqual(self.states(), ['connecting', 'reconnecting', 'reconnecting', 'reconnecting', 'disconnected'])
+            self.assertTrue(self.waitForStateEvent(ConnectionState.DISCONNECTED))
+        self.assertEqual(self.states(), ['connecting'] + ['reconnecting'] * 6 + ['disconnected'])
 
     def testStopClosesPort(self):
         modem = self.makeModem()

@@ -135,11 +135,14 @@ class Supervisor:
         for attempt in range(1, self._maxAttempts + 1):
             if error is not None and self._isFatal(error):
                 break
-            self._setState(ConnectionState.RECONNECTING, attempt=attempt, maxAttempts=self._maxAttempts)
             delay = self.backoffDelay(attempt)
-            log.warning('Attempting reconnection %d/%d in %.0fs', attempt, self._maxAttempts, delay)
+            # Two states per attempt: the announcement (retryIn), then the attempt itself once the delay elapsed
+            self._setState(ConnectionState.RECONNECTING, attempt=attempt, maxAttempts=self._maxAttempts, retryIn=delay)
+            log.warning('Reconnection attempt %d/%d in %.0fs', attempt, self._maxAttempts, delay)
             if self._stop.wait(delay):
                 return False
+            self._setState(ConnectionState.RECONNECTING, attempt=attempt, maxAttempts=self._maxAttempts)
+            log.info('Reconnection attempt %d/%d', attempt, self._maxAttempts)
             error = self._connectOnce()
             if error is None:
                 log.info('Reconnected after %d attempt(s)', attempt)

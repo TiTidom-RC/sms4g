@@ -512,52 +512,72 @@ class sms4g extends eqLogic {
 	 * sur le réseau et qualité du signal, à partir des commandes de l'équipement virtuel Modem (tenues à jour par le
 	 * démon : pas d'interrogation du modem).
 	 *
-	 * @return array{level: string, message: string} niveau d'alerte Jeedom (info, warning, danger) et message
+	 * @return array{level: string, message: string, network: array, signal: array} niveau d'alerte Jeedom (info,
+	 *         warning, danger), message, et un indicateur (status ok / warn / ko / unknown, label) pour le réseau
+	 *         et pour le signal
 	 */
 	public static function getModemStatus() {
+		$network = array('status' => 'unknown', 'label' => __('Réseau', __FILE__));
+		$signal = array('status' => 'unknown', 'label' => __('Signal', __FILE__));
 		$deamonInfo = self::deamon_info();
 		if ($deamonInfo['state'] != 'ok') {
-			return array('level' => 'danger', 'message' => __('Le démon n\'est pas démarré', __FILE__));
+			$message = __('Le démon n\'est pas démarré', __FILE__);
+			return array('level' => 'danger', 'message' => $message, 'network' => array('status' => 'ko', 'label' => $message), 'signal' => $signal);
 		}
 		$modem = self::byLogicalId('modem', 'sms4g');
 		if (!is_object($modem)) {
-			return array('level' => 'danger', 'message' => __('Équipement Modem introuvable : relancez le démon', __FILE__));
+			$message = __('Équipement Modem introuvable : relancez le démon', __FILE__);
+			return array('level' => 'danger', 'message' => $message, 'network' => array('status' => 'ko', 'label' => $message), 'signal' => $signal);
 		}
+		// Ces valeurs viennent du modem et de l'opérateur : elles sont affichées en HTML par la page
+		$flags = ENT_QUOTES | ENT_SUBSTITUTE;
 		$state = (int) $modem->getCmd(null, 'connection_state')->execCmd();
-		$connection = (string) $modem->getCmd(null, 'connection')->execCmd();
-		$operator = (string) $modem->getCmd(null, 'operator')->execCmd();
-		$signal = (int) $modem->getCmd(null, 'signal')->execCmd();
+		$connection = htmlspecialchars((string) $modem->getCmd(null, 'connection')->execCmd(), $flags, 'UTF-8');
+		$operator = htmlspecialchars((string) $modem->getCmd(null, 'operator')->execCmd(), $flags, 'UTF-8');
+		$csq = (int) $modem->getCmd(null, 'signal')->execCmd();
 
 		// connection_state : 0 déconnecté, 1 reconnexion, 2 recherche d'un opérateur, 3 connexion, 4 connecté
 		if ($state == 0) {
-			return array('level' => 'danger', 'message' => __('Modem déconnecté', __FILE__));
+			$message = __('Modem déconnecté', __FILE__);
+			return array('level' => 'danger', 'message' => $message, 'network' => array('status' => 'ko', 'label' => $message), 'signal' => $signal);
 		}
 		if ($state == 1 || $state == 3) {
-			return array('level' => 'warning', 'message' => __('Modem non disponible pour le moment', __FILE__) . ' : ' . $connection);
+			$message = __('Modem non disponible pour le moment', __FILE__) . ' : ' . $connection;
+			return array('level' => 'warning', 'message' => $message, 'network' => array('status' => 'warn', 'label' => $connection), 'signal' => $signal);
+		}
+		// Signal : CSQ de 0 à 31, -113 dBm + 2 dBm par point (norme GSM) ; seuils usuels des fabricants de modems
+		$level = 'info';
+		if ($csq < 0 || $csq > 31) {
+			$signal = array('status' => 'warn', 'label' => __('Signal inconnu', __FILE__));
+			$signalMessage = $signal['label'];
+			$level = 'warning';
+		} else {
+			if ($csq >= 20) {
+				$quality = __('excellent', __FILE__);
+			} elseif ($csq >= 15) {
+				$quality = __('bon', __FILE__);
+			} elseif ($csq >= 10) {
+				$quality = __('moyen', __FILE__);
+			} else {
+				$quality = __('faible', __FILE__);
+			}
+			$signalMessage = __('Signal', __FILE__) . ' : ' . $csq . '/31 (' . (-113 + 2 * $csq) . ' dBm, ' . $quality . ')';
+			$signal = array('status' => ($csq >= 10) ? 'ok' : 'warn', 'label' => $csq . '/31 (' . $quality . ')');
+			if ($csq < 10) {
+				$level = 'warning';
+			}
 		}
 		if ($state == 2) {
-			return array('level' => 'warning', 'message' => __('Modem connecté mais non enregistré sur le réseau mobile (recherche d\'un opérateur)', __FILE__));
+			$message = __('Modem connecté mais non enregistré sur le réseau mobile (recherche d\'un opérateur)', __FILE__);
+			return array('level' => 'warning', 'message' => $message . '. ' . $signalMessage, 'network' => array('status' => 'warn', 'label' => __('Recherche d\'un opérateur', __FILE__)), 'signal' => $signal);
 		}
 		$message = __('Modem connecté et enregistré sur le réseau mobile', __FILE__);
+		$label = __('Enregistré sur le réseau', __FILE__);
 		if ($operator != '') {
 			$message .= ' (' . $operator . ')';
+			$label .= ' (' . $operator . ')';
 		}
-		if ($signal < 0 || $signal > 31) {
-			return array('level' => 'warning', 'message' => $message . '. ' . __('Signal inconnu', __FILE__));
-		}
-		// CSQ de 0 à 31 : -113 dBm + 2 dBm par point (norme GSM) ; seuils usuels des fabricants de modems
-		$dbm = -113 + 2 * $signal;
-		if ($signal >= 20) {
-			$quality = __('excellent', __FILE__);
-		} elseif ($signal >= 15) {
-			$quality = __('bon', __FILE__);
-		} elseif ($signal >= 10) {
-			$quality = __('moyen', __FILE__);
-		} else {
-			$quality = __('faible', __FILE__);
-		}
-		$message .= '. ' . __('Signal', __FILE__) . ' : ' . $signal . '/31 (' . $dbm . ' dBm, ' . $quality . ')';
-		return array('level' => ($signal >= 10) ? 'info' : 'warning', 'message' => $message);
+		return array('level' => $level, 'message' => $message . '. ' . $signalMessage, 'network' => array('status' => 'ok', 'label' => $label), 'signal' => $signal);
 	}
 	/**
 	 * Envoie un message au démon par sa socket (protocole : apikey + cmd + paramètres).

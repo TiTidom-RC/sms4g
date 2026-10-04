@@ -129,10 +129,12 @@ if (!isConnect('admin')) {
                 <label class="col-lg-3 control-label">{{État du modem}}
                     <sup><i class="fas fa-question-circle tooltips" title="{{Affiche la connexion du modem, son enregistrement sur le réseau mobile et la qualité du signal (valeurs de l'équipement Modem)}}"></i></sup>
                 </label>
-                <div class="col-lg-9" style="padding-top:4px;">
+                <div class="col-lg-9" style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding-top:4px;">
                     <button type="button" id="btn_checkModem" class="btn btn-sm btn-info">
                         <i class="fas fa-stethoscope"></i> {{Vérifier}}
                     </button>
+                    <span id="modemCheck_network"><i class="fas fa-question-circle" style="color:var(--al-default-color,#95a5a6)"></i> {{Réseau}}</span>
+                    <span id="modemCheck_signal"><i class="fas fa-question-circle" style="color:var(--al-default-color,#95a5a6)"></i> {{Signal}}</span>
                 </div>
             </div>
             <div class="form-group">
@@ -311,6 +313,19 @@ if (!isConnect('admin')) {
         refreshModemManagerStatus(() => { btn.disabled = false })
     })
 
+    // Indicateur d'une ligne de résultat : ok / warn / ko, ou inconnu (icône « ? »)
+    const modemIndicator = (item, fallback) => {
+        if (!item || item.status === 'unknown') {
+            return unknownHtml + ((item && item.label) || fallback)
+        }
+        return indicator(item.status === 'ok', item.label, item.status === 'warn')
+    }
+
+    const showModemStatus = (result) => {
+        document.getElementById('modemCheck_network').innerHTML = modemIndicator(result && result.network, '{{Réseau}}')
+        document.getElementById('modemCheck_signal').innerHTML = modemIndicator(result && result.signal, '{{Signal}}')
+    }
+
     document.getElementById('btn_checkModem')?.addEventListener('click', (event) => {
         const btn = event.currentTarget
         btn.disabled = true
@@ -319,13 +334,15 @@ if (!isConnect('admin')) {
             url: AJAX_URL,
             data: { action: 'getModemStatus' },
             dataType: 'json',
-            error: (request, status, error) => { handleAjaxError(request, status, error); btn.disabled = false },
+            error: (request, status, error) => { handleAjaxError(request, status, error); showModemStatus(null); btn.disabled = false },
             success: (data) => {
                 btn.disabled = false
                 if (data.state !== 'ok') {
                     jeedomUtils.showAlert({ message: data.result, level: 'danger' })
+                    showModemStatus(null)
                 } else {
                     jeedomUtils.showAlert({ message: data.result.message, level: data.result.level })
+                    showModemStatus(data.result)
                 }
             }
         })

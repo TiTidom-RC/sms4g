@@ -17,8 +17,9 @@
 #
 #   Jeedom (PHP) --socket--> Dispatcher --> wwanlib.Modem --events--> jeedom_publisher --HTTP--> jeesms4g.php
 #
-# Milestone J2: connection state, signal and network are published to Jeedom, and the AT commands sent from Jeedom
-# are run in diagnostic mode. Sending, receiving and the delivery reports come back with J3 to J5.
+# Milestone J3: connection state, signal and network are published to Jeedom, the AT commands sent from Jeedom are
+# run in diagnostic mode, and the SMS are sent (queue, retries and expiry are in the library; Jeedom learns what became
+# of each one from a `smsStatus` message). Receiving and the delivery reports come back with J4 and J5.
 
 import logging
 import os
@@ -29,7 +30,7 @@ import threading
 import traceback
 from typing import Optional
 
-from dispatcher import Dispatcher
+from dispatcher import Dispatcher, smsStatusMessage
 from utils import Config
 from wwanlib import (ConnectionState, Modem, ModemIdentified, ModemOptions, NetworkChanged, Registration, SignalChanged,
                      StateChanged, WwanException)
@@ -131,6 +132,10 @@ def onModemEvent(event):
         logging.info("Network : %s, operator : %s", event.registration, event.operator)
         if publisher:
             publisher.state('network', {'type': 'network', 'registration': event.registration, 'operator': event.operator})
+    else:
+        smsStatus = smsStatusMessage(event)
+        if smsStatus is not None and publisher:
+            publisher.event(smsStatus)
 
 
 def handler(signum=None, frame=None):
@@ -199,6 +204,7 @@ def main():
     logging.info('Reconnect max delay : %s', config.reconnectMaxDelay)
     logging.info('Reconnect max attempts : %s', config.reconnectMaxAttempts)
     logging.info('Concat parts TTL : %s (not used yet)', config.concatPartsTtl)
+    logging.info('SMS lifetime in the queue : %s s', config.smsTtl)
     logging.info('Diagnostic mode (AT commands from Jeedom) : %s', config.diagnostic)
 
     if config.device is None:
@@ -230,6 +236,7 @@ def main():
                 reconnectMaxDelay=config.reconnectMaxDelay,
                 reconnectMaxAttempts=config.reconnectMaxAttempts,
                 monitorInterval=config.cycle,
+                smsTtl=config.smsTtl,
             ),
         )
         dispatcher = Dispatcher(JEEDOM_SOCKET_MESSAGE, modem, publisher, config.apikey, config.diagnostic)

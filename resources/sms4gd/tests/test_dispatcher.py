@@ -7,18 +7,27 @@ import time
 import unittest
 from concurrent.futures import Future
 
-from dispatcher import MAX_RESPONSE_CHARS, Dispatcher
-from wwanlib import CmeError, NotConnectedError, TimeoutException
+from dispatcher import MAX_RESPONSE_CHARS, Dispatcher, smsStatusMessage
+from wwanlib import (CmeError, NotConnectedError, SignalChanged, SmsExpired, SmsFailed, SmsQueued, SmsQueueFullError, SmsSent,
+                    TimeoutException)
 
 
 class FakeModem:
     def __init__(self):
         self.calls: list[tuple] = []
         self.future: Future = Future()
+        self.sms: list[tuple] = []
+        self.smsError: Exception | None = None
 
     def command(self, command, timeout=10.0, parseError=True):
         self.calls.append((command, timeout, parseError))
         return self.future
+
+    def sendSms(self, number, text, ref=None, maxPartsPerGroup=0):
+        if self.smsError is not None:
+            raise self.smsError
+        self.sms.append((number, text, ref, maxPartsPerGroup))
+        return 'sms1'
 
 
 class FakeOut:
@@ -71,12 +80,72 @@ class DispatcherTest(unittest.TestCase):
             self.assertIn('Unknown command', logs.output[0])
         self.assertEqual(self.out.events, [])
 
-    def testSendSmsIsNotAvailableYet(self):
-        with self.assertLogs('dispatcher', level='WARNING') as logs:
-            self.dispatch(cmd='sendSms', number='+33600000000', message='hello')
-        self.assertIn('not available yet', logs.output[0])
-        self.assertEqual(self.modem.calls, [])
+    # ---- SMS --------------------------------------------------------------------------------------
 
+    def testSendSmsIsQueuedInTheLibrary(self):
+        self.dispatch(cmd='sendSms', number='+33600000000', message='hello', ref='42', maxPartsPerGroup=3)
+        self.assertEqual(self.modem.sms, [('+33600000000', 'hello', '42', 3)])
+        self.assertEqual(self.out.events, [])  # the result comes later, from the events of the library
+
+    def testSendSmsWithoutReferenceNorLimit(self):
+        self.dispatch(cmd='sendSms', number='+33600000000', message='hello')
+        self.assertEqual(self.modem.sms, [('+33600000000', 'hello', None, 0)])
+
+    def testSendSmsNeverLogsTheNumberNorTheText(self):
+        with self.assertLogs('dispatcher', level='INFO') as logs:
+            self.dispatch(cmd='sendSms', number='+33600000012', message='secret text', ref='1')
+        text = ' '.join(logs.output)
+        self.assertIn('accepted', text)
+        self.assertIn('+336XXXXXX12', text)
+        self.assertNotIn('+33600000012', text)
+        self.assertNotIn('secret', text)
+
+    def testSendSmsReferenceMustBeAText(self):
+        with self.assertLogs('dispatcher', level='ERROR'):
+            self.dispatch(cmd='sendSms', number='+33600000000', message='hello', ref=42)
+        self.assertEqual(self.modem.sms, [])
+        self.assertEqual(self.out.events, [])
+
+    def testSendSmsWithoutTextNumberOrMessageIsReported(self):
+        with self.assertLogs('dispatcher', level='WARNING'):
+            self.dispatch(cmd='sendSms', number=None, message='hello', ref='1')
+            self.dispatch(cmd='sendSms', number='+33600000000', message=None, ref='2')
+        self.assertEqual(self.modem.sms, [])
+        self.assertEqual(self.out.events, [
+            {'type': 'smsStatus', 'ref': '1', 'number': '', 'status': 'failed', 'reason': 'invalid number', 'parts': 0, 'sentParts': 0},
+            {'type': 'smsStatus', 'ref': '2', 'number': '+33600000000', 'status': 'failed', 'reason': 'empty message', 'parts': 0, 'sentParts': 0}])
+
+    def testSendSmsLimitOfPartsIsNeverNegativeNorGarbage(self):
+        for value in ('x', -3, None, []):
+            self.dispatch(cmd='sendSms', number='+33600000000', message='hello', maxPartsPerGroup=value)
+        self.assertEqual([call[3] for call in self.modem.sms], [0, 0, 0, 0])
+
+    def testSendSmsRefusedWhenTheQueueIsFull(self):
+        self.modem.smsError = SmsQueueFullError('full')
+        with self.assertLogs('dispatcher', level='WARNING'):
+            self.dispatch(cmd='sendSms', number='+33600000000', message='hello', ref='7')
+        self.assertEqual(self.out.events, [{'type': 'smsStatus', 'ref': '7', 'number': '+33600000000', 'status': 'failed',
+                                            'reason': 'queue full', 'parts': 0, 'sentParts': 0}])
+
+    def testSendSmsRefusedWhenTheModemIsDisconnected(self):
+        self.modem.smsError = NotConnectedError('Modem disconnected')
+        with self.assertLogs('dispatcher', level='WARNING'):
+            self.dispatch(cmd='sendSms', number='+33600000000', message='hello', ref='7')
+        self.assertEqual(self.out.events[0]['reason'], 'modem disconnected')
+
+    def testSmsStatusMessages(self):
+        self.assertEqual(smsStatusMessage(SmsQueued('id1', '42', '+33600000000', 'modem not connected')), {
+            'type': 'smsStatus', 'smsId': 'id1', 'ref': '42', 'number': '+33600000000', 'status': 'queued', 'reason': 'modem not connected'})
+        self.assertEqual(smsStatusMessage(SmsSent('id1', '42', '+33600000000', 3, (5, 6, None))), {
+            'type': 'smsStatus', 'smsId': 'id1', 'ref': '42', 'number': '+33600000000', 'status': 'sent', 'parts': 3,
+            'references': [5, 6, None]})
+        self.assertEqual(smsStatusMessage(SmsFailed('id1', None, '+33600000000', '+CMS ERROR: 330', 2, 1)), {
+            'type': 'smsStatus', 'smsId': 'id1', 'ref': None, 'number': '+33600000000', 'status': 'failed',
+            'reason': '+CMS ERROR: 330', 'parts': 2, 'sentParts': 1})
+        self.assertEqual(smsStatusMessage(SmsExpired('id1', '42', '+33600000000', '')), {
+            'type': 'smsStatus', 'smsId': 'id1', 'ref': '42', 'number': '+33600000000', 'status': 'expired', 'reason': ''})
+        self.assertIsNone(smsStatusMessage(SignalChanged(20)))
+        self.assertIsNone(smsStatusMessage('anything'))
     # ---- AT command: refusals ---------------------------------------------------------------------
 
     def testAtCommandWithoutIdIsIgnored(self):

@@ -5,6 +5,7 @@ Public API (everything else is internal):
 * ``Modem`` / ``ModemOptions`` (``modem.py``): ``start()`` (non blocking), ``command()``, ``stop()``,
   ``onEvent()``, ``state``, ``profile``.
 * ``Modem.sendSms()``: queues an SMS (``outbox.py``, ``sms.py``); the result comes as an event.
+  ``maskNumber()``: a phone number as it may appear in a log.
 * Events (``events.py``): ``StateChanged``, ``ModemIdentified``, ``SignalChanged``, ``NetworkChanged``,
   ``UnsolicitedNotification``, ``SmsQueued``, ``SmsSent``, ``SmsFailed``, ``SmsExpired``; connection states in ``ConnectionState``, network registration in ``Registration``.
 * Exceptions (``exceptions.py``): ``WwanException`` is the base class.
@@ -23,11 +24,12 @@ from .exceptions import (CmeError, CmsError, CommandError, EncodingError, Incorr
                          SmsQueueFullError, TimeoutException, WwanException)
 from .modem import Modem, ModemOptions
 from .profiles import Profile
+from .sms import maskNumber
 
 __all__ = [
     'Modem', 'ModemOptions', 'Profile', 'ConnectionState', 'Registration', 'StateChanged', 'ModemIdentified',
     'SignalChanged', 'NetworkChanged', 'UnsolicitedNotification',
     'WwanException', 'CommandError', 'CmeError', 'CmsError', 'TimeoutException', 'NotConnectedError',
     'PinRequiredError', 'IncorrectPinError', 'PukRequiredError', 'SmscNumberUnknownError', 'EncodingError',
-    'PduModeNotSupportedError', 'SmsQueueFullError', 'SmsQueued', 'SmsSent', 'SmsFailed', 'SmsExpired',
+    'maskNumber', 'PduModeNotSupportedError', 'SmsQueueFullError', 'SmsQueued', 'SmsSent', 'SmsFailed', 'SmsExpired',
 ]

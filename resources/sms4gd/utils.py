@@ -39,6 +39,7 @@ class Config:
     reconnectMaxDelay: float = 300.0
     reconnectMaxAttempts: int = 10
     concatPartsTtl: float = 300.0
+    smsTtl: float = 3600.0  # seconds an SMS waits in the queue before it expires
     diagnostic: bool = False  # AT commands from Jeedom allowed (diagnostic mode)
     pidFile: str = '/tmp/sms4gd.pid'
 
@@ -60,6 +61,7 @@ class Config:
         parser.add_argument("--reconnectmaxdelay", help="Max delay (s) between reconnect attempts", type=str)
         parser.add_argument("--reconnectmaxattempts", help="Max number of reconnect attempts before giving up", type=str)
         parser.add_argument("--concatpartsttl", help="Max age (s) of incomplete concatenated SMS parts before they are discarded", type=str)
+        parser.add_argument("--smsttl", help="Seconds an SMS waits in the queue before it expires", type=str)
         parser.add_argument("--diagnostic", help="Allow the AT commands sent from Jeedom (yes / no)", type=str)
         parser.add_argument("--pid", help="Pid file", type=str)
         args = parser.parse_args(argv)
@@ -95,6 +97,8 @@ class Config:
             config.reconnectMaxAttempts = int(args.reconnectmaxattempts)
         if args.concatpartsttl:
             config.concatPartsTtl = float(args.concatpartsttl)
+        if args.smsttl:
+            config.smsTtl = float(args.smsttl)
         if args.diagnostic:
             config.diagnostic = args.diagnostic == 'yes'
         if args.pid:

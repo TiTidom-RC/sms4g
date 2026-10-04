@@ -26,7 +26,8 @@ from concurrent.futures import Future
 from typing import Any, Protocol
 
 from atfilter import checkAtCommand
-from wwanlib import NotConnectedError, TimeoutException
+from wwanlib import (NotConnectedError, SmsExpired, SmsFailed, SmsQueued, SmsQueueFullError, SmsSent,
+                     TimeoutException, maskNumber)
 
 log = logging.getLogger(__name__)
 
@@ -39,9 +40,30 @@ MAX_RESPONSE_CHARS = 4000
 class ModemLike(Protocol):
     def command(self, command: str, timeout: float = ..., parseError: bool = ...) -> Future: ...
 
+    def sendSms(self, number: str, text: str, ref: str | None = ..., maxPartsPerGroup: int = ...) -> str: ...
+
 
 class OutLike(Protocol):
     def event(self, payload: dict[str, Any]) -> None: ...
+
+
+def smsStatusMessage(event: Any) -> dict[str, Any] | None:
+    """ The `smsStatus` message that tells Jeedom what became of an SMS, from an event of the library (None for any
+    other event). It is an event for Jeedom (never merged with another one): `status` is `queued` (could not leave at
+    once, it will be tried again), `sent` (every part accepted by the SMS center), `failed` or `expired`.
+    `ref` is the one given with the request, `smsId` the one of the library. """
+    if not isinstance(event, (SmsQueued, SmsSent, SmsFailed, SmsExpired)):
+        return None
+    payload: dict[str, Any] = {'type': 'smsStatus', 'smsId': event.smsId, 'ref': event.ref, 'number': event.number}
+    if isinstance(event, SmsQueued):
+        payload.update(status='queued', reason=event.reason)
+    elif isinstance(event, SmsSent):
+        payload.update(status='sent', parts=event.parts, references=list(event.references))
+    elif isinstance(event, SmsFailed):
+        payload.update(status='failed', reason=event.reason, parts=event.parts, sentParts=event.sentParts)
+    else:
+        payload.update(status='expired', reason=event.reason)
+    return payload
 
 
 class Dispatcher:
@@ -101,8 +123,39 @@ class Dispatcher:
     # ---- handlers ---------------------------------------------------------------------------------
 
     def _sendSms(self, message: dict[str, Any]) -> None:
-        log.warning('Request from Jeedom ignored: sending SMS is not available yet in this version of the daemon (rewrite in progress)')
+        """ Queues an SMS in the library. The result comes later as an event (``smsStatus``, see ``smsStatusMessage``),
+        except when the request is refused here: it is then reported at once. ``ref`` is Jeedom's own reference
+        (the command), given back untouched. """
+        ref = message.get('ref')
+        if ref is not None and not isinstance(ref, str):
+            log.error('SMS ignored: the reference must be a text')
+            return
+        number = message.get('number')
+        text = message.get('message')
+        if not isinstance(number, str):
+            self._rejectSms(ref, '', 'invalid number')
+            return
+        if not isinstance(text, str):
+            self._rejectSms(ref, number, 'empty message')
+            return
+        try:
+            maxPartsPerGroup = max(0, int(message.get('maxPartsPerGroup') or 0))
+        except (TypeError, ValueError):
+            maxPartsPerGroup = 0
+        try:
+            smsId = self._modem.sendSms(number, text, ref, maxPartsPerGroup)
+        except SmsQueueFullError:
+            self._rejectSms(ref, number, 'queue full')
+        except NotConnectedError:
+            self._rejectSms(ref, number, 'modem disconnected')
+        else:
+            # Never the text of the message in the logs
+            log.info('SMS %s accepted for %s (%d characters)', smsId, maskNumber(number), len(text))
 
+    def _rejectSms(self, ref: str | None, number: str, reason: str) -> None:
+        log.warning('SMS to %s refused (%s)', maskNumber(number), reason)
+        self._out.event({'type': 'smsStatus', 'ref': ref, 'number': number, 'status': 'failed', 'reason': reason,
+                         'parts': 0, 'sentParts': 0})
     def _atCommand(self, message: dict[str, Any]) -> None:
         requestId = message.get('id')
         command = message.get('command')

@@ -185,6 +185,7 @@ class Outbox:
                 return  # stop() already reported it
             if outcome.status == 'retry' and (self._stopped or self._abandon is not None):
                 outcome = SendOutcome('failed', 'daemon stopped' if self._stopped else str(self._abandon))
+                log.warning('SMS to %s failed (%s)', entry.shown, outcome.reason)
             if outcome.status == 'sent':
                 self._entries.remove(entry)
                 log.info('SMS to %s sent (%d part(s))', entry.shown, outcome.parts)
@@ -218,6 +219,7 @@ class Outbox:
 
     @staticmethod
     def _failed(entry: _Entry, reason: str) -> SmsFailed:
+        log.warning('SMS to %s failed (%s)', entry.shown, reason)
         return SmsFailed(entry.smsId, entry.ref, entry.number, reason)
 
     @staticmethod

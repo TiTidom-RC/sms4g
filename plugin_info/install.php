@@ -57,6 +57,9 @@ function sms4g_install() {
 	if (config::byKey('concatPartsTtl', 'sms4g') == '') {
 		config::save('concatPartsTtl', '300', 'sms4g');
 	}
+	if (config::byKey('smsMaxAge', 'sms4g') == '') {
+		config::save('smsMaxAge', '10', 'sms4g');
+	}
 	if (config::byKey('reconnectBaseDelay', 'sms4g') == '') {
 		config::save('reconnectBaseDelay', '5', 'sms4g');
 	}
@@ -143,6 +146,9 @@ function sms4g_update() {
 	if (config::byKey('concatPartsTtl', 'sms4g') == '') {
 		config::save('concatPartsTtl', '300', 'sms4g');
 	}
+	if (config::byKey('smsMaxAge', 'sms4g') == '') {
+		config::save('smsMaxAge', '10', 'sms4g');
+	}
 	if (config::byKey('reconnectBaseDelay', 'sms4g') == '') {
 		config::save('reconnectBaseDelay', '5', 'sms4g');
 	}
@@ -202,6 +208,10 @@ function sms4g_update() {
 			if ($cmd->getSubType() == 'message' && (!is_object($eqLogic->getCmd(null, 'delivery_status_' . $cmd->getId())) || !is_object($eqLogic->getCmd(null, 'delivery_success_' . $cmd->getId())))) {
 				$cmd->save();
 			}
+		}
+		// Commande « Reçu le » (date du dernier message reçu) : créée par l'enregistrement de l'équipement
+		if (!is_object($eqLogic->getCmd(null, 'received'))) {
+			$eqLogic->save();
 		}
 	}
 	$paths = array(

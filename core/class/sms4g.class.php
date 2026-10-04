@@ -875,7 +875,9 @@ class sms4g extends eqLogic {
 	 * parmi les numéros des commandes des équipements SMS (comparaison de numéros exacts, après normalisation).
 	 * Expéditeur connu : réponse à une question en attente (askResponse), sinon interaction, puis mise à jour des
 	 * commandes « Message » et « Expéditeur ». Expéditeur inconnu : refusé, sauf si l'équipement autorise les numéros
-	 * inconnus (avec ou sans création automatique de la commande).
+	 * inconnus (avec ou sans création automatique de la commande). Un SMS plus vieux que le réglage smsMaxAge (reçu
+	 * avec du retard : démon arrêté, modem débranché) n'est plus une commande : ni askResponse ni interaction, mais
+	 * « Message » et « Expéditeur » sont mis à jour, pour que l'on voie qu'il est bien arrivé.
 	 *
 	 * @param array $_message number (expéditeur), message (texte complet), parts, sent
 	 * @param string|null $_time
@@ -903,6 +905,10 @@ class sms4g extends eqLogic {
 		log::add('sms4g', 'info', '[SMS] Message reçu de ' . $shown . ' : ' . secureXSS($message));
 
 		$sender = self::normalizePhoneNumber($number);
+		$tooOld = self::isTooOld($_message);
+		if ($tooOld !== false) {
+			log::add('sms4g', 'warning', '[SMS] Message de ' . $shown . ' reçu avec ' . $tooOld . ' de retard : ni interaction ni réponse à une question, seulement enregistré');
+		}
 		$known = false;
 		foreach ($eqLogics as $eqLogic) {
 			$cmd = self::findCommandByNumber($eqLogic, $sender);
@@ -910,10 +916,10 @@ class sms4g extends eqLogic {
 				continue;
 			}
 			$known = true;
-			if ($cmd->askResponse($message)) {
+			if ($tooOld === false && $cmd->askResponse($message)) {
 				return;
 			}
-			self::handleReceivedMessage($cmd, $number, $message);
+			self::handleReceivedMessage($cmd, $number, $message, $_message, $tooOld !== false);
 		}
 		if ($known) {
 			return;
@@ -933,11 +939,10 @@ class sms4g extends eqLogic {
 				$newCmd->setName($number);
 				$newCmd->setConfiguration('phonenumber', $number);
 				$newCmd->save();
-				self::handleReceivedMessage($newCmd, $number, $message);
+				self::handleReceivedMessage($newCmd, $number, $message, $_message, $tooOld !== false);
 			} else {
 				log::add('sms4g', 'info', '[SMS] Numéro inconnu ' . $shown . ' mais les numéros inconnus sont autorisés');
-				$eqLogic->checkAndUpdateCmd('sms', $message);
-				$eqLogic->checkAndUpdateCmd('sender', $number);
+				self::updateReceivedCommands($eqLogic, $message, $number, $_message);
 			}
 		}
 		if (!$allowed) {
@@ -958,6 +963,30 @@ class sms4g extends eqLogic {
 		log::add('sms4g', 'error', '[SMS] SMS incomplet de ' . secureXSS(self::maskNumber($number)) . ' : '
 			. (isset($_message['received']) ? (int) $_message['received'] : 0) . ' partie(s) sur '
 			. (isset($_message['expected']) ? (int) $_message['expected'] : 0) . ' reçue(s), abandonné (' . $reason . ')');
+	}
+
+	/**
+	 * Dit si un SMS reçu est trop ancien pour qu'on agisse dessus (réglage smsMaxAge, en minutes, 10 par défaut,
+	 * 0 pour ne jamais ignorer). L'âge est celui de la date du centre SMS (`sent`, secondes depuis 1970) : sans date
+	 * lisible, ou dans le futur (horloge de Jeedom en retard), le SMS n'est pas considéré comme ancien.
+	 *
+	 * @param array $_message message `smsReceived` du démon
+	 * @return string|false false si le SMS n'est pas trop ancien, sinon son âge lisible (« 12 min », « 3 h »…)
+	 */
+	private static function isTooOld($_message) {
+		$maxAge = config::byKey('smsMaxAge', 'sms4g', 10);
+		$maxAge = is_numeric($maxAge) ? max(0, (int) $maxAge) * 60 : 600;
+		if ($maxAge == 0 || !isset($_message['sent']) || !is_numeric($_message['sent'])) {
+			return false;
+		}
+		$age = time() - (int) $_message['sent'];
+		if ($age <= $maxAge) {
+			return false;
+		}
+		if ($age < 7200) {
+			return round($age / 60) . ' min';
+		}
+		return ($age < 172800) ? round($age / 3600) . ' h' : round($age / 86400) . ' j';
 	}
 
 	/**
@@ -1009,10 +1038,14 @@ class sms4g extends eqLogic {
 	 * @param sms4gCmd $_cmd commande de l'expéditeur
 	 * @param string $_number numéro tel que reçu (celui auquel on répond)
 	 * @param string $_message
+	 * @param array $_received message smsReceived du démon (pour la date)
+	 * @param bool $_tooOld SMS reçu avec trop de retard : pas d'interaction
 	 */
-	private static function handleReceivedMessage($_cmd, $_number, $_message) {
+	private static function handleReceivedMessage($_cmd, $_number, $_message, $_received, $_tooOld = false) {
 		$eqLogic = $_cmd->getEqLogic();
-		if ($eqLogic->getConfiguration('disableInteract', '0') == '0') {
+		if ($_tooOld) {
+			log::add('sms4g', 'debug', '[SMS] Message trop ancien : interaction ignorée');
+		} elseif ($eqLogic->getConfiguration('disableInteract', '0') == '0') {
 			$params = array('plugin' => 'sms4g', 'reply_cmd' => $_cmd);
 			if ($_cmd->getConfiguration('user') != '') {
 				$user = user::byId($_cmd->getConfiguration('user'));
@@ -1028,8 +1061,23 @@ class sms4g extends eqLogic {
 		} else {
 			log::add('sms4g', 'debug', '[SMS] Interaction désactivée');
 		}
-		$eqLogic->checkAndUpdateCmd('sms', $_message);
-		$eqLogic->checkAndUpdateCmd('sender', $_cmd->getName());
+		self::updateReceivedCommands($eqLogic, $_message, $_cmd->getName(), $_received);
+	}
+
+	/**
+	 * Met à jour « Reçu le » (date donnée par le centre SMS, ou maintenant si elle est illisible), puis « Message » et
+	 * « Expéditeur » : dans cet ordre, pour qu'un scénario déclenché par « Message » lise déjà la bonne date.
+	 *
+	 * @param sms4g $_eqLogic
+	 * @param string $_message
+	 * @param string $_sender ce qu'affiche « Expéditeur » (nom de la commande, ou numéro d'un inconnu)
+	 * @param array $_received message smsReceived du démon (sent : secondes depuis 1970)
+	 */
+	private static function updateReceivedCommands($_eqLogic, $_message, $_sender, $_received) {
+		$sent = (isset($_received['sent']) && is_numeric($_received['sent'])) ? (int) $_received['sent'] : time();
+		$_eqLogic->checkAndUpdateCmd('received', date('d/m/Y H:i:s', $sent));
+		$_eqLogic->checkAndUpdateCmd('sms', $_message);
+		$_eqLogic->checkAndUpdateCmd('sender', $_sender);
 	}
 	/**
 	 * Masque un numéro de téléphone pour les logs (même règle que le démon : 4 premiers et 2 derniers caractères).
@@ -1074,6 +1122,22 @@ class sms4g extends eqLogic {
 		$sms->setType('info');
 		$sms->setSubType('string');
 		$sms->save();
+
+		$received = $this->getCmd(null, 'received');
+		if (!is_object($received)) {
+			$received = new sms4gCmd();
+			$received->setEqLogic_id($this->getId());
+			$received->setLogicalId('received');
+			$received->setIsVisible(0);
+			$received->setName(__('Reçu le', __FILE__));
+			$received->setTemplate('dashboard', 'core::line');
+			$received->setTemplate('mobile', 'core::line');
+			$received->setDisplay('forceReturnLineBefore', 1);
+			$received->setDisplay('forceReturnLineAfter', 1);
+		}
+		$received->setType('info');
+		$received->setSubType('string');
+		$received->save();
 
 		$sender = $this->getCmd(null, 'sender');
 		if (!is_object($sender)) {

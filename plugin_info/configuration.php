@@ -233,6 +233,14 @@ if (!isConnect('admin')) {
                     <input class="configKey form-control" data-l1key="concatPartsTtl" />
                 </div>
             </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Interactions : ignorer les SMS de plus de (minutes)}}
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Un SMS reçu avec plus de retard que ce délai (modem débranché, démon arrêté...) n'est plus exécuté comme une commande : il n'y a ni interaction ni réponse à une question en attente, pour éviter d'exécuter un ordre périmé. Les commandes « Message » et « Expéditeur » sont quand même mises à jour (un scénario déclenché par ces commandes doit donc tenir compte de l'âge du message) et le SMS est écrit dans le log. 0 : jamais ignoré. Par défaut : 10 minutes. L'âge est calculé avec la date du centre SMS : l'horloge de Jeedom doit être à l'heure.}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="smsMaxAge" />
+                </div>
+            </div>
         </div>
         <div>
             <legend><i class="fas fa-sync-alt"></i> {{Reconnexion automatique}}</legend>

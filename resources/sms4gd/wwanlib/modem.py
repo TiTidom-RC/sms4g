@@ -1,6 +1,7 @@
 """ The Modem class: public facade of wwanlib, and the initialization sequence run at each connection """
 
 import logging
+import os
 import re
 import threading
 from collections.abc import Callable
@@ -17,6 +18,7 @@ from .inbox import Inbox, Reassembler
 from .outbox import Outbox
 from .profiles import GENERIC, Profile, detectProfile
 from .receipts import ReceiptTracker
+from .selftest import SelfTest
 from .sms import SmsSender, normalizeNumber
 from .supervisor import Supervisor
 from .transport import Transport
@@ -38,10 +40,14 @@ class ModemOptions:
     smsTtl: float = 3600.0  # seconds an SMS waits in the queue before it expires
     smsQueueSize: int = 50  # SMS waiting at most: a new one is refused beyond
     segmentPause: float = 0.5  # seconds between two parts of an SMS
+    messagePause: float = 0.0  # seconds between the end of an SMS and the start of the next one (0: none)
     aging: float = 30.0  # seconds after which a waiting transaction rises by one rank (0 = off), see Executor
     concatPartsTtl: float = 300.0  # seconds the parts of a long SMS are waited for before the message is given up
     maxIncompleteSms: int = 50  # long SMS waiting for their last parts at most: beyond, the oldest is given up
     receiptMaxAge: float = 25 * 3600.0  # seconds an SMS waits for its final delivery report before it is reported unknown
+    selfTestInterval: float = 0.0  # seconds between two self-tests, the modem sending an SMS to its own SIM (0: none)
+    ownNumber: str | None = None  # number of the SIM, for the self-test
+    selfTestRestart: bool = False  # restart the modem when the self-test fails (once an hour at most)
 
 
 class _Session:
@@ -52,6 +58,10 @@ class _Session:
         self.executor: Executor
         self.profile: Profile = GENERIC
         self.smsReady = False  # the SMS memory is selected and the notifications are set: received SMS can be read
+        self.lock = threading.Lock()
+        self.smsDone = 0  # number of "SMS DONE" received: the SMS service of the modem is (again) ready
+        self.initialized = False  # the initialization sequence is over
+        self.reinitializing = False  # the SMS settings are being applied again after an "SMS DONE"
 
     def run(self, command: str, timeout: float = 10.0, parseError: bool = True, maxHold: float = 180.0) -> list[str]:
         """ Runs an initialization command (highest priority) and waits for its result """
@@ -76,6 +86,8 @@ class Modem:
     """
 
     MIN_MONITOR_INTERVAL = 5.0  # seconds
+    RESTART_COMMANDS = ('AT+CRESET', 'AT+CFUN=1,1')  # the first one the modem accepts is used
+    RESTART_TIMEOUT = 60.0  # seconds after which a modem that is still connected is taken for not restarted
 
     def __init__(self, port: str, baudrate: int = 115200, pin: str | None = None, options: ModemOptions | None = None):
         self.port = port
@@ -89,18 +101,33 @@ class Modem:
         self._lastSignal: int | None = None
         self._lastNetwork: tuple[str, str | None] | None = None
         self._smsStop = threading.Event()
+        self._selfTest: SelfTest | None = None
         # The delivery reports are followed only when they are asked for
-        self._receipts = ReceiptTracker(self._dispatcher.post, self.options.receiptMaxAge) if self.options.deliveryReport else None
+        self._receipts = ReceiptTracker(self._publish, self.options.receiptMaxAge) if self.options.deliveryReport else None
         self._sender = SmsSender(self._submitTransaction, self.options.deliveryReport, self.options.segmentPause, self._smsStop)
-        self._outbox = Outbox(self._sender.send, self._dispatcher.post, self.options.smsTtl, self.options.smsQueueSize,
-                              stopEvent=self._smsStop, tracker=self._receipts)
-        self._inbox = Inbox(self._submitTransaction, self._dispatcher.post, self._readMemory,
+        self._outbox = Outbox(self._sender.send, self._publish, self.options.smsTtl, self.options.smsQueueSize,
+                              stopEvent=self._smsStop, tracker=self._receipts, messagePause=self.options.messagePause)
+        self._inbox = Inbox(self._submitTransaction, self._publish, self._readMemory,
                             Reassembler(self.options.concatPartsTtl, self.options.maxIncompleteSms), self._receipts)
         self._supervisor = Supervisor(
             connect=self._connect, disconnect=self._disconnect, publish=self._publishState, isFatal=self._isFatal,
             baseDelay=self.options.reconnectBaseDelay, maxDelay=self.options.reconnectMaxDelay,
             maxAttempts=self.options.reconnectMaxAttempts, monitor=self._monitor,
-            monitorInterval=max(self.MIN_MONITOR_INTERVAL, self.options.monitorInterval))
+            monitorInterval=max(self.MIN_MONITOR_INTERVAL, self.options.monitorInterval),
+            portPresent=(lambda: os.path.exists(self.port)) if os.path.isabs(self.port) else None)
+        ownNumber = normalizeNumber(self.options.ownNumber)
+        if self.options.selfTestInterval > 0 and ownNumber is None:
+            log.error('Self-test disabled: the number of the SIM is missing or is not a phone number')
+        self._selfTest = SelfTest(
+            self._outbox.submit, self._dispatcher.post, lambda: self._state == ConnectionState.CONNECTED,
+            lambda: self.restart('selfTest'), ownNumber, self._receipts is not None,
+            interval=self.options.selfTestInterval if ownNumber else 0.0, autoRestart=self.options.selfTestRestart)
+
+    def _publish(self, event: Any) -> None:
+        """ Publishes an SMS event, unless it belongs to the self-test """
+        selfTest = self._selfTest
+        if selfTest is None or not selfTest.intercept(event):
+            self._dispatcher.post(event)
 
     # ---- public API -------------------------------------------------------------------------------
 
@@ -126,10 +153,14 @@ class Modem:
         self._dispatcher.start()
         self._outbox.start()
         self._supervisor.start()
+        if self._selfTest is not None:
+            self._selfTest.start()
 
     def stop(self) -> None:
         """ Stops the threads and closes the port """
         self._smsStop.set()  # ends the pauses between the parts of an SMS
+        if self._selfTest is not None:
+            self._selfTest.stop()
         self._supervisor.requestStop()
         self._disconnect()  # fails the transaction in progress: the SMS being sent returns at once
         self._supervisor.join()
@@ -146,6 +177,60 @@ class Modem:
             failed.set_exception(NotConnectedError(f'Modem not connected (state: {self._state})'))
             return failed
         return session.executor.submit(command, timeout, Priority.CONSOLE, parseError)
+
+    def restart(self, reason: str = 'requested') -> Future:
+        """ Restarts the modem (``AT+CRESET``, ``AT+CFUN=1,1`` if refused): the connection is lost on purpose, the state is
+        ``restarting`` meanwhile and the library connects again by itself when the port comes back. The SMS waiting in
+        the queue are kept; one whose parts are partly sent fails. Does not block.
+        :param reason: published with the state (``requested``, ``auto``...)
+        :raise NotConnectedError: the modem is not connected, or is already restarting
+        :return: a Future that resolves once the modem accepted the command, or fails with ``CommandError`` """
+        session = self._session
+        if self._state not in (ConnectionState.CONNECTED, ConnectionState.SEARCHING) or session is None:
+            raise NotConnectedError(f'Modem not connected (state: {self._state})')
+        if not self._supervisor.beginRestart(reason, self.RESTART_TIMEOUT):
+            raise NotConnectedError('The modem is already restarting')
+        result: Future = Future()
+        threading.Thread(target=self._runRestart, args=(session, reason, result), name='wwanlib-restart', daemon=True).start()
+        return result
+
+    def _runRestart(self, session: _Session, reason: str, result: Future) -> None:
+        log.warning('Restarting the modem (%s)', reason)
+        error: Exception | None = None
+        for command in self.RESTART_COMMANDS:
+            try:
+                session.executor.submit(command, 5.0, Priority.CONTROL).result()
+                error = None
+                break
+            except (TimeoutException, NotConnectedError):
+                error = None  # no answer, or the port already gone: the modem is most probably restarting
+                break
+            except CommandError as e:
+                error = e
+                log.warning('%s refused by the modem (%s)', command, e)
+            except Exception as e:
+                error = e
+                break
+        if error is not None:
+            self._supervisor.cancelRestart()
+            result.set_exception(error)
+        else:
+            result.set_result(None)
+
+    def selfTest(self) -> Future:
+        """ Runs the self-test now: the modem sends an SMS to its own SIM (``ownNumber``) and waits for it and for its
+        delivery report. Does not block: the Future resolves, within two minutes, to a ``SelfTestResult`` (also published
+        as an event). A modem that is not connected, or without ``ownNumber``, gives a ``skipped`` result. """
+        result: Future = Future()
+
+        def run() -> None:
+            try:
+                result.set_result(self._selfTest.execute() if self._selfTest is not None else None)
+            except Exception as e:
+                result.set_exception(e)
+
+        threading.Thread(target=run, name='wwanlib-selftest-now', daemon=True).start()
+        return result
 
     def sendSms(self, number: str, text: str, ref: str | None = None, maxPartsPerGroup: int = 0) -> str:
         """ Queues an SMS. Does not block: the result comes as an event, ``SmsSent`` or ``SmsFailed`` or ``SmsExpired``
@@ -187,7 +272,8 @@ class Modem:
                 self._inbox.catchUp()  # the SMS received while nobody was listening
         elif state == ConnectionState.DISCONNECTED:
             self._outbox.failAll('modem disconnected')  # the connection is given up: nobody will send them
-        if state in (ConnectionState.CONNECTING, ConnectionState.RECONNECTING, ConnectionState.DISCONNECTED):
+        if state in (ConnectionState.CONNECTING, ConnectionState.RECONNECTING, ConnectionState.RESTARTING,
+                     ConnectionState.DISCONNECTED):
             self._publishSignal(-1)
             self._publishNetwork(Registration.UNKNOWN, None)
 
@@ -291,6 +377,8 @@ class Modem:
         """ Called by the Reader thread: it must never block nor fail """
         self._dispatcher.post(UnsolicitedNotification(lines))
         session = self._session
+        if session is not None and any(line.strip() == 'SMS DONE' for line in lines):
+            self._onSmsDone(session)
         if session is not None and session.smsReady:
             try:
                 self._inbox.onNotification(lines)
@@ -361,17 +449,74 @@ class Modem:
         self._dispatcher.post(ModemIdentified(session.profile.name, manufacturer, model, revision))
 
         run('AT+COPS=3,0', parseError=False)  # long alphanumeric operator name
-        self._setupSmsFormat(run)
-        self._setupSmsCenter(run)
-        if self._selectSmsMemory(run):
-            self._setupNotifications(run, session.profile)
-            session.smsReady = True
+        with session.lock:
+            seen = session.smsDone
+        self._setupSms(session)
         if self.options.force4g and session.profile.supportsForce4g:
             try:
                 run('AT+CNMP=38')
                 log.info('LTE-only network mode forced (AT+CNMP=38)')
             except WwanException as e:
                 log.error('Failed to force the LTE-only network mode (AT+CNMP=38): %s', e)
+        # An "SMS DONE" received while the sequence ran may have wiped the SMS settings: they are applied again
+        for _ in range(3):
+            with session.lock:
+                if session.smsDone == seen:
+                    session.initialized = True
+                    return
+                seen = session.smsDone
+            self._setupSms(session)
+        with session.lock:
+            session.initialized = True
+
+    def _setupSms(self, session: _Session) -> None:
+        """ Everything the modem needs to send and receive SMS (the settings are lost when its SMS service restarts) """
+        run = session.run
+        self._setupSmsFormat(run)
+        self._setupSmsCenter(run)
+        session.smsReady = False
+        if self._selectSmsMemory(run):
+            self._setupNotifications(run, session.profile)
+            session.smsReady = True
+
+    def _onSmsDone(self, session: _Session) -> None:
+        """ Called by the Reader thread. ``SMS DONE`` says that the SMS service of the modem is ready: it started, or
+        it was restarted (AT+CFUN, reset, power loss) and then it forgot its settings, the notifications of the received
+        SMS included, while AT+CNMI? still shows the old values. """
+        with session.lock:
+            session.smsDone += 1
+            if session.reinitializing or not session.initialized:
+                return  # the loop in progress (or the end of the initialization) looks at the counter again
+            session.reinitializing = True
+        threading.Thread(target=self._reinitializeSms, args=(session,), name='wwanlib-sms-reinit', daemon=True).start()
+
+    def _reinitializeSms(self, session: _Session) -> None:
+        try:
+            while True:
+                with session.lock:
+                    seen = session.smsDone
+                if self._session is not session:
+                    break
+                log.info('The SMS service of the modem is ready (SMS DONE): the SMS settings are applied again')
+                wasReady = session.smsReady
+                try:
+                    self._setupSms(session)
+                    self._inbox.reset()
+                    if session.smsReady:
+                        self._inbox.catchUp()
+                except NotConnectedError:
+                    break
+                except WwanException as e:
+                    session.smsReady = wasReady
+                    log.error('The SMS settings could not be applied again (%s)', e)
+                with session.lock:
+                    if session.smsDone == seen:
+                        break
+        except Exception:
+            log.exception('Error while applying the SMS settings again')
+        finally:
+            with session.lock:
+                session.reinitializing = False
 
     @staticmethod
     def _setupSmsFormat(run: Callable[..., list[str]]) -> None:

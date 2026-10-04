@@ -279,7 +279,6 @@ class sms4g extends eqLogic {
 		$cmd .= ' --socketport ' . config::byKey('socketport', 'sms4g');
 		$cmd .= ' --serialrate ' . config::byKey('serialRate', 'sms4g');
 		$cmd .= ' --pin ' . config::byKey('pin', 'sms4g', 'None');
-		$cmd .= ' --textmode ' . ((config::byKey('textMode', 'sms4g') == 1) ? 'yes' : 'no');
 		$cmd .= ' --smsc ' . config::byKey('smsc', 'sms4g', 'None');
 		$cmd .= ' --force4g ' . ((config::byKey('force4gOnly', 'sms4g') == 1) ? 'yes' : 'no');
 		$cmd .= ' --diagnostic ' . ((config::byKey('diagMode', 'sms4g', 0) == 1) ? 'yes' : 'no');
@@ -544,9 +543,6 @@ class sms4g extends eqLogic {
 	 */
 	public static function sendSms($_phonenumbers, $_message) {
 		$message = trim($_message);
-		if (config::byKey('textMode', 'sms4g') == 1) {
-			$message = sms4gCmd::cleanSMS($message);
-		}
 		$phonenumbers = array_filter(array_map('trim', $_phonenumbers), 'strlen');
 		if (count($phonenumbers) == 0 || $message == '') {
 			log::add('sms4g', 'warning', '[SMS] Envoi ignoré : numéro ou message vide');
@@ -685,9 +681,9 @@ class sms4g extends eqLogic {
 		if ($state == 'disconnected' && !empty($_message['fatal'])) {
 			$reason = isset($_message['reason']) ? secureXSS($_message['reason']) : '';
 			message::add('sms4g', __('Erreur du modem', __FILE__) . ' : ' . $reason, '', 'sms4gcmderror');
-			// Un nouveau démarrage ne corrigerait pas ces erreurs, et un PIN incorrect répété bloque la SIM
-			if (isset($_message['errorType']) && in_array($_message['errorType'], array('PinRequiredError', 'IncorrectPinError', 'PukRequiredError'))) {
-				log::add('sms4g', 'error', '[MODEM] Code PIN absent ou incorrect : redémarrage automatique du démon désactivé');
+			// Un nouveau démarrage ne corrigerait pas ces erreurs (un PIN incorrect répété bloque même la SIM)
+			if (isset($_message['errorType']) && in_array($_message['errorType'], array('PinRequiredError', 'IncorrectPinError', 'PukRequiredError', 'PduModeNotSupportedError'))) {
+				log::add('sms4g', 'error', '[MODEM] Erreur définitive (code PIN, mode PDU) : redémarrage automatique du démon désactivé');
 				config::save('deamonAutoMode', 0, 'sms4g');
 			}
 		}
@@ -801,22 +797,6 @@ class sms4gCmd extends cmd {
 	/*     * *************************Attributs****************************** */
 
 	/*     * ***********************Méthode static*************************** */
-
-	public static function cleanSMS(string $_message) {
-		$characterMap = array(
-			'À' => 'a', 'Á' => 'a', 'Â' => 'a', 'Ä' => 'a', 'à' => 'a', 'á' => 'a', 'â' => 'a', 'ä' => 'a', '@' => 'a',
-			'Ç' => 'c', 'ç' => 'c',
-			'È' => 'e', 'É' => 'e', 'Ê' => 'e', 'Ë' => 'e', 'è' => 'e', 'é' => 'e', 'ê' => 'e', 'ë' => 'e', '€' => 'e',
-			'Ì' => 'i', 'Í' => 'i', 'Î' => 'i', 'Ï' => 'i', 'ì' => 'i', 'í' => 'i', 'î' => 'i', 'ï' => 'i',
-			'Ñ' => 'n', 'ñ' => 'n',
-			'Ò' => 'o', 'Ó' => 'o', 'Ô' => 'o', 'Ö' => 'o', 'ò' => 'o', 'ó' => 'o', 'ô' => 'o', 'ö' => 'o',
-			'Ù' => 'u', 'Ú' => 'u', 'Û' => 'u', 'Ü' => 'u', 'ù' => 'u', 'ú' => 'u', 'û' => 'u', 'ü' => 'u', 'µ' => 'u',
-			'Ý' => 'y', 'ý' => 'y', 'Ÿ' => 'y', 'ÿ' => 'y',
-			'Œ' => 'oe', 'œ' => 'oe',
-			'$' => 's'
-		);
-		return preg_replace('#[^A-Za-z0-9 \n\.\'=\*:]+#', '', strtr($_message, $characterMap));
-	}
 
 	/*     * *********************Méthode d'instance************************* */
 

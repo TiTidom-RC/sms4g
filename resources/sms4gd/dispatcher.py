@@ -26,8 +26,8 @@ from concurrent.futures import Future
 from typing import Any, Protocol
 
 from atfilter import checkAtCommand
-from wwanlib import (NotConnectedError, SmsExpired, SmsFailed, SmsQueued, SmsQueueFullError, SmsSent,
-                     TimeoutException, maskNumber)
+from wwanlib import (NotConnectedError, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError, SmsReceived,
+                     SmsSent, TimeoutException, maskNumber)
 
 log = logging.getLogger(__name__)
 
@@ -64,6 +64,21 @@ def smsStatusMessage(event: Any) -> dict[str, Any] | None:
     else:
         payload.update(status='expired', reason=event.reason)
     return payload
+
+
+def smsInboxMessage(event: Any) -> dict[str, Any] | None:
+    """ The message that hands Jeedom what the modem received, from an event of the library (None for any other
+    event). Events for Jeedom, never merged with another one.
+    `smsReceived`: `number` (the sender, as the network gives it), `message` (the whole text, a long SMS is already put
+    back together), `parts`, `sent` (date of the SMS center, seconds since 1970 UTC, null if unreadable).
+    `smsIncomplete`: a long SMS was given up, its last parts never came (`received` / `expected` parts, `reason`
+    `timeout` or `overflow`); the text is not sent, a text with a hole would mislead. """
+    if isinstance(event, SmsReceived):
+        return {'type': 'smsReceived', 'number': event.number, 'message': event.text, 'parts': event.parts, 'sent': event.sent}
+    if isinstance(event, SmsIncomplete):
+        return {'type': 'smsIncomplete', 'number': event.number, 'received': event.received, 'expected': event.expected,
+                'reason': event.reason}
+    return None
 
 
 class Dispatcher:

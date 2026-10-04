@@ -871,6 +871,167 @@ class sms4g extends eqLogic {
 	}
 
 	/**
+	 * Un SMS reçu (message `smsReceived` du démon, un SMS long arrive déjà réassemblé) : l'expéditeur est cherché
+	 * parmi les numéros des commandes des équipements SMS (comparaison de numéros exacts, après normalisation).
+	 * Expéditeur connu : réponse à une question en attente (askResponse), sinon interaction, puis mise à jour des
+	 * commandes « Message » et « Expéditeur ». Expéditeur inconnu : refusé, sauf si l'équipement autorise les numéros
+	 * inconnus (avec ou sans création automatique de la commande).
+	 *
+	 * @param array $_message number (expéditeur), message (texte complet), parts, sent
+	 * @param string|null $_time
+	 */
+	public static function onSmsReceived($_message, $_time) {
+		$number = isset($_message['number']) ? trim((string) $_message['number']) : '';
+		$message = isset($_message['message']) ? trim((string) $_message['message']) : '';
+		if ($number == '' || $message == '') {
+			log::add('sms4g', 'debug', '[SMS] Message reçu sans expéditeur ou sans texte : ignoré');
+			return;
+		}
+		// L'équipement virtuel Modem n'a pas de contact : il ne reçoit jamais de message
+		$eqLogics = array();
+		foreach (eqLogic::byType('sms4g', true) as $eqLogic) {
+			if ($eqLogic->getLogicalId() != 'modem') {
+				$eqLogics[] = $eqLogic;
+			}
+		}
+		$shown = secureXSS(self::maskNumber($number));
+		if (count($eqLogics) == 0) {
+			log::add('sms4g', 'debug', '[SMS] Message reçu de ' . $shown . ' : aucun équipement SMS activé');
+			return;
+		}
+		// Le texte est dans le log (info) : si quelque chose se passe mal ensuite, on peut toujours le retrouver
+		log::add('sms4g', 'info', '[SMS] Message reçu de ' . $shown . ' : ' . secureXSS($message));
+
+		$sender = self::normalizePhoneNumber($number);
+		$known = false;
+		foreach ($eqLogics as $eqLogic) {
+			$cmd = self::findCommandByNumber($eqLogic, $sender);
+			if (!is_object($cmd)) {
+				continue;
+			}
+			$known = true;
+			if ($cmd->askResponse($message)) {
+				return;
+			}
+			self::handleReceivedMessage($cmd, $number, $message);
+		}
+		if ($known) {
+			return;
+		}
+		$allowed = false;
+		foreach ($eqLogics as $eqLogic) {
+			if ($eqLogic->getConfiguration('allowUnknownOrigin', 0) != 1) {
+				continue;
+			}
+			$allowed = true;
+			if ($eqLogic->getConfiguration('autoAddNewNumber', 0) == 1) {
+				log::add('sms4g', 'info', '[SMS] Numéro inconnu ' . $shown . ' : création de la commande');
+				$newCmd = new sms4gCmd();
+				$newCmd->setType('action');
+				$newCmd->setSubType('message');
+				$newCmd->setEqLogic_id($eqLogic->getId());
+				$newCmd->setName($number);
+				$newCmd->setConfiguration('phonenumber', $number);
+				$newCmd->save();
+				self::handleReceivedMessage($newCmd, $number, $message);
+			} else {
+				log::add('sms4g', 'info', '[SMS] Numéro inconnu ' . $shown . ' mais les numéros inconnus sont autorisés');
+				$eqLogic->checkAndUpdateCmd('sms', $message);
+				$eqLogic->checkAndUpdateCmd('sender', $number);
+			}
+		}
+		if (!$allowed) {
+			log::add('sms4g', 'info', '[SMS] Message d\'un numéro non autorisé : ' . $shown);
+		}
+	}
+
+	/**
+	 * Un SMS long abandonné avant d'être complet (message `smsIncomplete` du démon). Le texte n'est pas transmis : un
+	 * texte à trous tromperait. Le log d'erreur est aussi remonté par Jeedom dans le centre de messages.
+	 *
+	 * @param array $_message number, received (parties reçues), expected (parties attendues), reason (timeout ou overflow)
+	 * @param string|null $_time
+	 */
+	public static function onSmsIncomplete($_message, $_time) {
+		$number = isset($_message['number']) ? (string) $_message['number'] : '';
+		$reason = (isset($_message['reason']) && $_message['reason'] == 'overflow') ? 'trop de messages incomplets en attente' : 'délai dépassé';
+		log::add('sms4g', 'error', '[SMS] SMS incomplet de ' . secureXSS(self::maskNumber($number)) . ' : '
+			. (isset($_message['received']) ? (int) $_message['received'] : 0) . ' partie(s) sur '
+			. (isset($_message['expected']) ? (int) $_message['expected'] : 0) . ' reçue(s), abandonné (' . $reason . ')');
+	}
+
+	/**
+	 * Numéro de téléphone sous une forme comparable : séparateurs saisis à la main retirés ; un numéro français
+	 * (+33, 0033, 33 ou 0 national suivi de 9 chiffres) devient +33 suivi de 9 chiffres. Tout autre numéro (étranger,
+	 * numéro court, nom d'expéditeur alphanumérique) est renvoyé tel quel : il n'a pas de forme alternative, et on
+	 * évite ainsi toute conversion hasardeuse.
+	 *
+	 * @param string $_number
+	 * @return string
+	 */
+	public static function normalizePhoneNumber($_number) {
+		$number = preg_replace('/[\s.\-()]/', '', (string) $_number);
+		if (preg_match('/^(?:\+|00)?33([0-9]{9})$/', $number, $matches) === 1) {
+			return '+33' . $matches[1];
+		}
+		if (preg_match('/^0([0-9]{9})$/', $number, $matches) === 1) {
+			return '+33' . $matches[1];
+		}
+		return $number;
+	}
+
+	/**
+	 * Première commande d'envoi de l'équipement dont un des numéros (séparés par ;) est l'expéditeur. La comparaison
+	 * est exacte : un numéro partiel ou plus court ne correspond jamais.
+	 *
+	 * @param sms4g $_eqLogic
+	 * @param string $_sender numéro de l'expéditeur, déjà normalisé
+	 * @return sms4gCmd|null
+	 */
+	private static function findCommandByNumber($_eqLogic, $_sender) {
+		foreach ($_eqLogic->getCmd('action') as $cmd) {
+			if ($cmd->getSubType() != 'message') {
+				continue;
+			}
+			foreach (explode(';', (string) $cmd->getConfiguration('phonenumber')) as $phonenumber) {
+				if (trim($phonenumber) != '' && self::normalizePhoneNumber($phonenumber) === $_sender) {
+					return $cmd;
+				}
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Traite un message d'un expéditeur reconnu (ou créé) : interaction (sauf si désactivée sur l'équipement), réponse
+	 * envoyée à l'expéditeur, puis commandes « Message » et « Expéditeur » de l'équipement.
+	 *
+	 * @param sms4gCmd $_cmd commande de l'expéditeur
+	 * @param string $_number numéro tel que reçu (celui auquel on répond)
+	 * @param string $_message
+	 */
+	private static function handleReceivedMessage($_cmd, $_number, $_message) {
+		$eqLogic = $_cmd->getEqLogic();
+		if ($eqLogic->getConfiguration('disableInteract', '0') == '0') {
+			$params = array('plugin' => 'sms4g', 'reply_cmd' => $_cmd);
+			if ($_cmd->getConfiguration('user') != '') {
+				$user = user::byId($_cmd->getConfiguration('user'));
+				if (is_object($user)) {
+					$params['profile'] = $user->getLogin();
+				}
+			}
+			$reply = interactQuery::tryToReply($_message, $params);
+			if (is_array($reply) && isset($reply['reply']) && trim($reply['reply']) != '') {
+				log::add('sms4g', 'info', '[SMS] Réponse à ' . secureXSS(self::maskNumber($_number)) . ' : ' . secureXSS($reply['reply']));
+				$_cmd->execute(array('title' => $reply['reply'], 'message' => '', 'number' => $_number));
+			}
+		} else {
+			log::add('sms4g', 'debug', '[SMS] Interaction désactivée');
+		}
+		$eqLogic->checkAndUpdateCmd('sms', $_message);
+		$eqLogic->checkAndUpdateCmd('sender', $_cmd->getName());
+	}
+	/**
 	 * Masque un numéro de téléphone pour les logs (même règle que le démon : 4 premiers et 2 derniers caractères).
 	 */
 	private static function maskNumber($_number) {

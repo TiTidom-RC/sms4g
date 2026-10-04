@@ -7,9 +7,9 @@ import time
 import unittest
 from concurrent.futures import Future
 
-from dispatcher import MAX_RESPONSE_CHARS, Dispatcher, smsStatusMessage
-from wwanlib import (CmeError, NotConnectedError, SignalChanged, SmsExpired, SmsFailed, SmsQueued, SmsQueueFullError, SmsSent,
-                    TimeoutException)
+from dispatcher import MAX_RESPONSE_CHARS, Dispatcher, smsInboxMessage, smsStatusMessage
+from wwanlib import (CmeError, NotConnectedError, SignalChanged, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError,
+                    SmsReceived, SmsSent, TimeoutException)
 
 
 class FakeModem:
@@ -146,6 +146,17 @@ class DispatcherTest(unittest.TestCase):
             'type': 'smsStatus', 'smsId': 'id1', 'ref': '42', 'number': '+33600000000', 'status': 'expired', 'reason': ''})
         self.assertIsNone(smsStatusMessage(SignalChanged(20)))
         self.assertIsNone(smsStatusMessage('anything'))
+        self.assertIsNone(smsStatusMessage(SmsReceived('+33600000000', 'Hello', None, 1)))
+
+    def testSmsInboxMessages(self):
+        self.assertEqual(smsInboxMessage(SmsReceived('+33600000000', 'Allume le salon', 1791109480.0, 1)), {
+            'type': 'smsReceived', 'number': '+33600000000', 'message': 'Allume le salon', 'parts': 1, 'sent': 1791109480.0})
+        self.assertEqual(smsInboxMessage(SmsReceived('Free', 'x' * 400, None, 3)), {
+            'type': 'smsReceived', 'number': 'Free', 'message': 'x' * 400, 'parts': 3, 'sent': None})
+        self.assertEqual(smsInboxMessage(SmsIncomplete('+33600000000', 2, 3, 'timeout')), {
+            'type': 'smsIncomplete', 'number': '+33600000000', 'received': 2, 'expected': 3, 'reason': 'timeout'})
+        self.assertIsNone(smsInboxMessage(SignalChanged(20)))
+        self.assertIsNone(smsInboxMessage(SmsSent('id1', None, '+33600000000', 1, (5,))))
     # ---- AT command: refusals ---------------------------------------------------------------------
 
     def testAtCommandWithoutIdIsIgnored(self):

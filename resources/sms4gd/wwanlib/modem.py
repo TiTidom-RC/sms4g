@@ -13,6 +13,7 @@ from .events import (ConnectionState, EventDispatcher, ModemIdentified, NetworkC
 from .exceptions import (CommandError, IncorrectPinError, NotConnectedError, PduModeNotSupportedError, PinRequiredError,
                          PukRequiredError, SmscNumberUnknownError, TimeoutException, WwanException)
 from .executor import Executor, Priority, Transaction
+from .inbox import Inbox, Reassembler
 from .outbox import Outbox
 from .profiles import GENERIC, Profile, detectProfile
 from .sms import SmsSender
@@ -37,6 +38,8 @@ class ModemOptions:
     smsQueueSize: int = 50  # SMS waiting at most: a new one is refused beyond
     segmentPause: float = 0.5  # seconds between two parts of an SMS
     aging: float = 30.0  # seconds after which a waiting transaction rises by one rank (0 = off), see Executor
+    concatPartsTtl: float = 300.0  # seconds the parts of a long SMS are waited for before the message is given up
+    maxIncompleteSms: int = 50  # long SMS waiting for their last parts at most: beyond, the oldest is given up
 
 
 class _Session:
@@ -46,6 +49,7 @@ class _Session:
         self.transport: Transport
         self.executor: Executor
         self.profile: Profile = GENERIC
+        self.smsReady = False  # the SMS memory is selected and the notifications are set: received SMS can be read
 
     def run(self, command: str, timeout: float = 10.0, parseError: bool = True, maxHold: float = 180.0) -> list[str]:
         """ Runs an initialization command (highest priority) and waits for its result """
@@ -59,7 +63,7 @@ class Modem:
 
         modem = Modem('/dev/ttyUSB2', 115200, pin=None, options=ModemOptions(deliveryReport=True))
         modem.onEvent(callback)   # StateChanged, ModemIdentified, SignalChanged, NetworkChanged, UnsolicitedNotification,
-                                  # SmsQueued, SmsSent, SmsFailed, SmsExpired
+                                  # SmsQueued, SmsSent, SmsFailed, SmsExpired, SmsReceived, SmsIncomplete
         modem.start()             # does not block: the Supervisor connects (and reconnects) in the background
         lines = modem.command('AT+CSQ', timeout=10).result()
         smsId = modem.sendSms('+33612345678', 'Hello', ref='42')   # queued, SmsSent / SmsFailed / SmsExpired follow
@@ -86,6 +90,8 @@ class Modem:
         self._sender = SmsSender(self._submitTransaction, self.options.deliveryReport, self.options.segmentPause, self._smsStop)
         self._outbox = Outbox(self._sender.send, self._dispatcher.post, self.options.smsTtl, self.options.smsQueueSize,
                               stopEvent=self._smsStop)
+        self._inbox = Inbox(self._submitTransaction, self._dispatcher.post, self._readMemory,
+                            Reassembler(self.options.concatPartsTtl, self.options.maxIncompleteSms))
         self._supervisor = Supervisor(
             connect=self._connect, disconnect=self._disconnect, publish=self._publishState, isFatal=self._isFatal,
             baseDelay=self.options.reconnectBaseDelay, maxDelay=self.options.reconnectMaxDelay,
@@ -172,6 +178,9 @@ class Modem:
         self._dispatcher.post(StateChanged(state, dict(details)))
         if state == ConnectionState.CONNECTED:
             self._outbox.retryNow()  # the SMS that wait are tried at once, not at the end of their delay
+            session = self._session
+            if session is not None and session.smsReady:
+                self._inbox.catchUp()  # the SMS received while nobody was listening
         elif state == ConnectionState.DISCONNECTED:
             self._outbox.failAll('modem disconnected')  # the connection is given up: nobody will send them
         if state in (ConnectionState.CONNECTING, ConnectionState.RECONNECTING, ConnectionState.DISCONNECTED):
@@ -206,7 +215,21 @@ class Modem:
             self._publishSignal(signal)
         if registration is not None:
             self._publishNetwork(registration, operator)
+        self._monitorInbox(session)
         return registration
+
+    def _monitorInbox(self, session: _Session) -> None:
+        """ Gives up the long SMS that stay incomplete, and checks that the memory holds nothing readable: a
+        notification may have been lost (the port was resynchronized...) """
+        self._inbox.sweep()
+        if not session.smsReady:
+            return
+        try:
+            if self._inbox.checkMemory(self._query(session, 'AT+CPMS?')):
+                log.info('An SMS is waiting in the memory without notification, reading it')
+                self._inbox.catchUp()
+        except WwanException as e:
+            log.debug('SMS memory check failed: %s', e)
 
     def _query(self, session: _Session, command: str) -> list[str]:
         """ Monitoring command (lowest priority). Gives up as soon as the connection failed, so that a lost port
@@ -252,15 +275,32 @@ class Modem:
             return None
         return match.group(1) if match else None
 
+    def _readMemory(self) -> str | None:
+        """ The memory selected for reading and deleting SMS, as the Executor knows it from the commands that succeeded """
+        session = self._session
+        memories = session.executor.cache.get('smsMemories') if session is not None else None
+        return memories[0] if memories else None
+
+    def _onNotification(self, lines: list[str]) -> None:
+        """ Called by the Reader thread: it must never block nor fail """
+        self._dispatcher.post(UnsolicitedNotification(lines))
+        session = self._session
+        if session is not None and session.smsReady:
+            try:
+                self._inbox.onNotification(lines)
+            except Exception:
+                log.exception('Error while handling a notification')
+
     def _connect(self, token: object) -> None:
         session = _Session()
         self._session = session
+        self._inbox.reset()
         session.executor = Executor(
             write=lambda data: session.transport.write(data),
             onStuck=lambda reason: self._supervisor.reportFailure(token, reason), aging=self.options.aging)
         session.transport = Transport(
             self.port, self.baudrate, getContext=session.executor.context, onResponse=session.executor.onResponseLine,
-            onNotification=lambda lines: self._dispatcher.post(UnsolicitedNotification(lines)),
+            onNotification=self._onNotification,
             onLost=lambda error: self._supervisor.reportFailure(token, str(error)))
         session.transport.open()
         session.executor.waitReady(self.options.readyTimeout)
@@ -319,6 +359,7 @@ class Modem:
         self._setupSmsCenter(run)
         if self._selectSmsMemory(run):
             self._setupNotifications(run, session.profile)
+            session.smsReady = True
         if self.options.force4g and session.profile.supportsForce4g:
             try:
                 run('AT+CNMP=38')

@@ -66,6 +66,12 @@ if (isset($result['messages']) && is_array($result['messages'])) {
 				case 'smsStatus':
 					sms4g::onSmsStatus($message, $time);
 					break;
+				case 'smsReceived':
+					sms4g::onSmsReceived($message, $time);
+					break;
+				case 'smsIncomplete':
+					sms4g::onSmsIncomplete($message, $time);
+					break;
 				default:
 					log::add('sms4g', 'warning', '[CALLBACK] Type de message inconnu : ' . secureXSS($message['type']));
 			}

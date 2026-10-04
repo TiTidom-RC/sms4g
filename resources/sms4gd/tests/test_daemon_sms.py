@@ -13,8 +13,9 @@ from unittest import mock
 
 import serial
 
-from dispatcher import Dispatcher, smsStatusMessage
+from dispatcher import Dispatcher, smsInboxMessage, smsStatusMessage
 from jeedom.jeedom import jeedom_publisher
+from tests.test_inbox import FakeSim, NUMBER as SENDER, SENT, deliverPdus, simBehavior
 from tests.test_outbox import smsBehavior
 from tests.test_publisher import Receiver
 from tests.test_wwanlib import FakeSerial, waitFor
@@ -24,10 +25,22 @@ from wwanlib.executor import Executor
 NUMBER = '+33612345678'
 
 
+def receptionBehavior(sim: FakeSim):
+    """ Fake modem that sends SMS (as ``smsBehavior``) and holds the SMS memory of ``sim`` """
+    sending, memory = smsBehavior(), simBehavior(sim)
+
+    def behavior(fake, data):
+        command = data.decode().rstrip('\r')
+        (memory if command.startswith(('AT+CMGR=', 'AT+CMGD=', 'AT+CMGL=', 'AT+CPMS?')) else sending)(fake, data)
+
+    return behavior
+
+
 class DaemonSmsTest(unittest.TestCase):
     def setUp(self):
         FakeSerial.instances.clear()
-        FakeSerial.behavior = smsBehavior()
+        self.sim = FakeSim()
+        FakeSerial.behavior = receptionBehavior(self.sim)
         self.blocked = threading.Event()  # while set, the port cannot be opened
 
         def opener(**kwargs):
@@ -49,16 +62,17 @@ class DaemonSmsTest(unittest.TestCase):
         self.publisher.start()
         self.addCleanup(self.publisher.stop)
         self.modem = Modem('fake', 115200, options=ModemOptions(
-            reconnectBaseDelay=0.05, reconnectMaxDelay=0.1, reconnectMaxAttempts=100, segmentPause=0.0, smsQueueSize=2))
+            reconnectBaseDelay=0.05, reconnectMaxDelay=0.1, reconnectMaxAttempts=100, segmentPause=0.0, smsQueueSize=2,
+            monitorInterval=0.1, concatPartsTtl=0.5))
         self.modem.onEvent(self.onEvent)
         self.addCleanup(self.modem.stop)
         self.dispatcher = Dispatcher(queue.Queue(), self.modem, self.publisher, 'KEY', diagnostic=False)
 
     def onEvent(self, event):
         """ What sms4gd.py does with the events of the library, as far as the SMS are concerned """
-        status = smsStatusMessage(event)
-        if status is not None:
-            self.publisher.event(status)
+        message = smsStatusMessage(event) or smsInboxMessage(event)
+        if message is not None:
+            self.publisher.event(message)
 
     def request(self, **fields):
         self.dispatcher.handle(json.dumps({'apikey': 'KEY', 'cmd': 'sendSms', **fields}).encode())
@@ -98,6 +112,41 @@ class DaemonSmsTest(unittest.TestCase):
         self.blocked.clear()
         self.assertTrue(waitFor(lambda: [s['status'] for s in self.statuses()] == ['queued', 'sent']))
         self.assertEqual([s['ref'] for s in self.statuses()], ['r', 'r'])
+
+    def received(self, kind: str) -> list[dict]:
+        return [message for message in self.receiver.received if message.get('type') == kind]
+
+    def testAnSmsReceivedReachesJeedom(self):
+        self.startConnected()
+        self.sim.add(0, deliverPdus(SENDER, 'Allume le salon')[0])
+        FakeSerial.instances[0].feed(b'\r\n+CMTI: "SM",0\r\n')
+        self.assertTrue(waitFor(lambda: self.received('smsReceived')))
+        message = self.received('smsReceived')[0]
+        self.assertEqual({key: message[key] for key in ('type', 'number', 'message', 'parts', 'sent')}, {
+            'type': 'smsReceived', 'number': SENDER, 'message': 'Allume le salon', 'parts': 1, 'sent': SENT})
+        self.assertRegex(message['id'], r'^[0-9a-f]{32}$')
+        self.assertEqual(self.sim.store, {})
+
+    def testALongSmsReceivedIsOneMessageForJeedom(self):
+        self.startConnected()
+        text = ' '.join(f'{index:02d}-abcdefghij' for index in range(1, 29))
+        for index, pdu in enumerate(deliverPdus(SENDER, text)):
+            self.sim.add(index, pdu)
+            FakeSerial.instances[0].feed(f'\r\n+CMTI: "SM",{index}\r\n'.encode())
+        self.assertTrue(waitFor(lambda: self.received('smsReceived')))
+        self.assertEqual((len(self.received('smsReceived')), self.received('smsReceived')[0]['message'], self.received('smsReceived')[0]['parts']),
+                         (1, text, 3))
+
+    def testAnIncompleteSmsIsReportedWithoutItsText(self):
+        self.startConnected()
+        self.sim.add(0, deliverPdus(SENDER, 'secret ' * 60)[0])
+        FakeSerial.instances[0].feed(b'\r\n+CMTI: "SM",0\r\n')
+        self.assertTrue(waitFor(lambda: self.received('smsIncomplete')))
+        message = self.received('smsIncomplete')[0]
+        self.assertEqual({key: message[key] for key in ('number', 'received', 'expected', 'reason')},
+                         {'number': SENDER, 'received': 1, 'expected': 3, 'reason': 'timeout'})
+        self.assertNotIn('secret', json.dumps(message))
+        self.assertEqual(self.received('smsReceived'), [])
 
     def testFullQueueAndStopAreReported(self):
         self.blocked.set()

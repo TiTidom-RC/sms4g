@@ -75,6 +75,9 @@ class Transaction:
     committed: bool = False
     # When the transaction was submitted (time.monotonic()): the priority rises while it waits, see ``Executor``
     queuedAt: float = 0.0
+    # The lines of each step run so far, in order (the Future only gives the last step): a transaction that reads
+    # something and then acts on it (read + delete of an SMS) needs the first answer
+    responses: list[list[str]] = field(default_factory=list)
 
 
 class _Deadline(Exception):
@@ -318,10 +321,12 @@ class Executor:
     def _runSteps(self, transaction: Transaction) -> tuple[list[str], int]:
         """ :return: the lines of the last step run, and its index. Stops at the first step that ends with an error. """
         lines: list[str] = []
+        transaction.responses = []
         for index, step in enumerate(transaction.steps):
             if step.commit:
                 transaction.committed = True
             lines = self._runStep(step)
+            transaction.responses.append(lines)
             if index < len(transaction.steps) - 1 and not self._ok(lines):
                 return lines, index
             self._inPrompt = step.expectPrompt and lines[-1].startswith('>')

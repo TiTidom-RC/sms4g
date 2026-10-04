@@ -225,9 +225,9 @@ if (!isConnect('admin')) {
                 </div>
             </div>
             <div class="form-group">
-                <label class="col-lg-3 control-label">{{Expiration des fragments incomplets (s)}}
+                <label class="col-lg-3 control-label">{{Attente des parties d'un SMS long (s)}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
-                    <sup><i class="fas fa-question-circle tooltips" title="{{Si un SMS multi-parties (message long) n'est jamais reçu en entier, les fragments déjà reçus sont délivrés tels quels après ce délai, avec un marqueur aux emplacements manquants}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Durée pendant laquelle le plugin attend les parties manquantes d'un SMS long. Passé ce délai, le message est abandonné (il n'est pas transmis à moitié) et un message d'erreur apparaît dans Jeedom. Par défaut : 300 secondes.}}"></i></sup>
                 </label>
                 <div class="col-lg-1">
                     <input class="configKey form-control" data-l1key="concatPartsTtl" />

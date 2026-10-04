@@ -117,6 +117,30 @@ class SmsExpired:
     reason: str
 
 
+@dataclass(frozen=True)
+class SmsReceived:
+    """ An SMS was received (a long one is reassembled from its parts: ``parts``). ``number`` is the sender as the
+    network gives it (+33..., a short number, or a name such as "Free"). ``sent`` is the date the SMS center put on it
+    (seconds since 1970, UTC), None when unreadable. """
+
+    number: str
+    text: str
+    sent: float | None
+    parts: int
+
+
+@dataclass(frozen=True)
+class SmsIncomplete:
+    """ A long SMS was given up before its last parts arrived (the text is never shown, a text with a hole is
+    misleading). ``reason``: ``timeout`` (the parts did not all arrive in time) or ``overflow`` (too many incomplete
+    messages at once, this was the oldest). """
+
+    number: str
+    received: int
+    expected: int
+    reason: str
+
+
 class EventDispatcher:
     """ Delivers events to the subscribers from a dedicated thread, so that a slow callback
     (e.g. an HTTP call to Jeedom) never blocks the Reader, the Executor or the Supervisor """

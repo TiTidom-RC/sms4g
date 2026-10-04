@@ -216,6 +216,15 @@ if (!isConnect('admin')) {
                 </div>
             </div>
             <div class="form-group">
+                <label class="col-lg-3 control-label">{{Pause entre deux SMS (s)}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Délai laissé au modem entre la fin de l'envoi d'un SMS et le début du suivant. 0 : aucune pause (par défaut).}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="messagePause" />
+                </div>
+            </div>
+            <div class="form-group">
                 <label class="col-lg-3 control-label">{{Durée de vie des SMS en attente (minutes)}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
                     <sup><i class="fas fa-question-circle tooltips" title="{{Durée pendant laquelle le plugin retente l'envoi d'un SMS qui n'a pas pu partir (modem déconnecté, absence de réseau...). Passé ce délai, l'envoi est abandonné et le statut passe à « Expiré ». Minimum : 1 minute. Par défaut : 60 minutes.}}"></i></sup>
@@ -269,6 +278,41 @@ if (!isConnect('admin')) {
                 </label>
                 <div class="col-lg-1">
                     <input class="configKey form-control" data-l1key="reconnectMaxAttempts" />
+                </div>
+            </div>
+        </div>
+        <div>
+            <legend><i class="fas fa-heartbeat"></i> {{Supervision}}</legend>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Numéro de la SIM}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Utilisé seulement par l'auto-test. « Détecter » le lit sur la SIM si elle le connaît, sinon saisissez-le (+33...).}}"></i></sup>
+                </label>
+                <div class="col-lg-2">
+                    <input class="configKey form-control" data-l1key="ownNumber" />
+                </div>
+                <div class="col-lg-2">
+                    <button type="button" id="btn_detectOwnNumber" class="btn btn-sm btn-info">
+                        <i class="fas fa-search"></i> {{Détecter}}
+                    </button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Auto-test des SMS (heures)}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{0 : désactivé (par défaut). Le modem s'envoie un SMS pour vérifier la réception des SMS et des accusés. Un SMS consommé par test. Minimum : 1 heure.}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="selfTestHours" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Redémarrer le modem si l'auto-test échoue}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Redémarre le modem (environ 30 secondes sans service), une fois par heure au plus. Sans cette option, l'échec est seulement signalé.}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input type="checkbox" class="configKey" data-l1key="selfTestRestart" />
                 </div>
             </div>
         </div>
@@ -392,6 +436,72 @@ if (!isConnect('admin')) {
                     }
                 }
             })
+        })
+    })
+
+    // Numéro de la SIM : le démon répond plus tard, Jeedom pousse la réponse à la page (événement sms4g::ownNumber)
+    const detectButton = document.getElementById('btn_detectOwnNumber')
+    const ownNumberInput = document.querySelector('.configKey[data-l1key="ownNumber"]')
+    let ownNumberTimeout = null
+
+    // Le Core envoie les événements des plugins avec jQuery quand il est chargé (4.6.1 : toujours). Depuis 4.6.2 la liste
+    // jeedom.vanillaEvents les envoie en CustomEvent : on y inscrit l'événement. Sinon, le pont jQuery → CustomEvent de TVRemote,
+    // seul endroit du plugin où jQuery intervient.
+    if (typeof jeedom !== 'undefined' && Array.isArray(jeedom.vanillaEvents)) {
+        if (!jeedom.vanillaEvents.includes('sms4g::ownNumber')) {
+            jeedom.vanillaEvents.push('sms4g::ownNumber')
+        }
+    } else if (typeof jQuery !== 'undefined' && !window.sms4gBridgeAttached) {
+        window.sms4gBridgeAttached = true
+        $('body').on('sms4g::ownNumber', function (event, data) {
+            if (event.originalEvent && event.originalEvent.__bridged) {
+                return
+            }
+            const customEvent = new CustomEvent('sms4g::ownNumber', { detail: data })
+            customEvent.__bridged = true
+            document.body.dispatchEvent(customEvent)
+        })
+    }
+
+    if (window.sms4gOwnNumberHandler) {
+        document.body.removeEventListener('sms4g::ownNumber', window.sms4gOwnNumberHandler)
+    }
+    window.sms4gOwnNumberHandler = (event) => {
+        clearTimeout(ownNumberTimeout)
+        if (detectButton) {
+            detectButton.disabled = false
+        }
+        const data = event.detail || {}
+        if (data.number && ownNumberInput) {
+            ownNumberInput.value = data.number
+            ownNumberInput.dispatchEvent(new Event('change', { bubbles: true }))
+            jeedomUtils.showAlert({ message: '{{Numéro de la SIM détecté}} : ' + data.number, level: 'success' })
+        } else {
+            jeedomUtils.showAlert({ message: '{{La carte SIM ne connaît pas son numéro : saisissez-le à la main}}', level: 'warning' })
+        }
+    }
+    document.body.addEventListener('sms4g::ownNumber', window.sms4gOwnNumberHandler)
+
+    detectButton?.addEventListener('click', (event) => {
+        const btn = event.currentTarget
+        btn.disabled = true
+        domUtils.ajax({
+            type: 'POST',
+            url: AJAX_URL,
+            data: { action: 'detectOwnNumber' },
+            dataType: 'json',
+            error: (request, status, error) => { handleAjaxError(request, status, error); btn.disabled = false },
+            success: (data) => {
+                if (data.state !== 'ok') {
+                    jeedomUtils.showAlert({ message: data.result, level: 'danger' })
+                    btn.disabled = false
+                    return
+                }
+                ownNumberTimeout = setTimeout(() => {
+                    btn.disabled = false
+                    jeedomUtils.showAlert({ message: '{{Pas de réponse du démon}}', level: 'warning' })
+                }, 15000)
+            }
         })
     })
 })()

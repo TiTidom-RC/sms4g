@@ -27,6 +27,10 @@ SUBMIT_TIMEOUT = 35.0  # text or PDU + Ctrl-Z until +CMGS (the network may be sl
 # Errors worth another try: the message may leave later (3GPP TS 27.005 and SimCom). Any other error is final.
 TEMPORARY_CMS_ERRORS = frozenset({300, 314, 322, 331, 332, 500})  # ME failure, SIM busy, memory full, no network service, network timeout, unknown
 TEMPORARY_CME_ERRORS = frozenset({14, 30, 31, 515})  # SIM busy, no network service, network timeout, please wait
+# An error that says nothing (500, unknown) is retried only a few times: a destination the network never accepts (a
+# landline, an invalid number) gets it every time, and must not keep the SMS waiting for an hour
+LIMITED_RETRY_CMS_ERRORS = frozenset({500})
+MAX_LIMITED_RETRIES = 3
 
 NUMBER = re.compile(r'^\+?\d{2,20}$')
 NUMBER_SEPARATORS = re.compile(r'[ .\-()]')
@@ -50,6 +54,7 @@ class SendOutcome:
     reason: str = ''
     parts: int = 0
     references: list[int | None] = field(default_factory=list)
+    limited: bool = False  # `retry` only a few times (`MAX_LIMITED_RETRIES`): the cause may be permanent
 
     @property
     def sentParts(self) -> int:
@@ -201,6 +206,7 @@ class SmsSender:
             log.info('SMS to %s not sent (%s), to be tried again', shown, reason)
             outcome.status = 'retry'
             outcome.reason = reason
+            outcome.limited = isinstance(error, CmsError) and error.code in LIMITED_RETRY_CMS_ERRORS
             return outcome
         if index > 0:
             log.error('SMS to %s: part %d/%d failed (%s), the previous parts have been sent', shown, index + 1, outcome.parts, reason)

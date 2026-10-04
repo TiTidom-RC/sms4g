@@ -22,7 +22,7 @@ from typing import Any
 from .events import SmsExpired, SmsFailed, SmsQueued, SmsSent
 from .exceptions import NotConnectedError, SmsQueueFullError
 from .receipts import ReceiptTracker
-from .sms import SendOutcome, maskNumber, normalizeNumber
+from .sms import MAX_LIMITED_RETRIES, SendOutcome, maskNumber, normalizeNumber
 
 log = logging.getLogger(__name__)
 
@@ -203,7 +203,7 @@ class Outbox:
                 self._entries.remove(entry)
                 events.append(SmsFailed(entry.smsId, entry.ref, entry.number, outcome.reason, outcome.parts, outcome.sentParts))
             else:
-                self._schedule(entry, outcome.reason, events)
+                self._schedule(entry, outcome.reason, events, outcome.limited)
             self._cond.notify_all()
         self._emit(events)
         if self._tracker is not None:
@@ -213,10 +213,16 @@ class Outbox:
             elif outcome.status == 'failed' and outcome.sentParts > 0:
                 self._tracker.abandon(entry.smsId)
 
-    def _schedule(self, entry: _Entry, reason: str, events: list[Any]) -> None:
+    def _schedule(self, entry: _Entry, reason: str, events: list[Any], limited: bool = False) -> None:
         now = time.monotonic()
         entry.attempts += 1
         entry.reason = reason
+        if limited and entry.attempts > MAX_LIMITED_RETRIES:
+            # The same error that says nothing again and again: the SMS will not leave, Jeedom is told now
+            self._entries.remove(entry)
+            log.error('SMS to %s failed after %d attempts (%s)', entry.shown, entry.attempts, reason)
+            events.append(SmsFailed(entry.smsId, entry.ref, entry.number, reason))
+            return
         if now >= entry.expiresAt:
             self._entries.remove(entry)
             events.append(self._expired(entry))

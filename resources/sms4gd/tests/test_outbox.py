@@ -306,6 +306,35 @@ class OutboxTest(OutboxTestCase):
         self.assertTrue(waitFor(lambda: len(calls) == 2))
 
 
+class LimitedRetriesTest(OutboxTestCase):
+    def testAnErrorThatSaysNothingFailsAfterThreeRetries(self):
+        limited = SendOutcome('retry', '+CMS ERROR: 500', limited=True)
+        script = Script(limited, limited, limited, limited)
+        self.make(script, delays=(0.02, 0.02, 0.02, 0.02))
+        self.outbox.submit(NUMBER, 'Hello', '42')
+        self.assertTrue(self.waitEvents(SmsFailed))
+        failed = self.of(SmsFailed)[0]
+        self.assertEqual((failed.ref, failed.reason, failed.sentParts), ('42', '+CMS ERROR: 500', 0))
+        self.assertEqual(len(script.calls), 4)  # the first attempt and three retries
+        self.assertEqual(len(self.of(SmsQueued)), 1)  # told once that it waits, then that it failed
+        self.assertEqual(len(self.outbox), 0)
+
+    def testOtherTemporaryErrorsAreRetriedUntilTheLifetimeEnds(self):
+        script = Script(*[SendOutcome('retry', '+CMS ERROR: 331')] * 6)
+        self.make(script, delays=(0.02,), steadyDelay=0.02)
+        self.outbox.submit(NUMBER, 'Hello', '42')
+        self.assertTrue(waitFor(lambda: len(script.calls) >= 6))
+        self.assertFalse(self.of(SmsFailed))
+
+    def testASuccessAfterTwoRefusalsIsSent(self):
+        limited = SendOutcome('retry', '+CMS ERROR: 500', limited=True)
+        script = Script(limited, limited)
+        self.make(script, delays=(0.02, 0.02, 0.02))
+        self.outbox.submit(NUMBER, 'Hello', '42')
+        self.assertTrue(self.waitEvents(SmsSent))
+        self.assertFalse(self.of(SmsFailed))
+
+
 class FakeTracker:
     """ Stands for the ReceiptTracker: records what the outbox tells it """
 

@@ -207,6 +207,12 @@ class DecisionTest(unittest.TestCase):
         sender.send(NUMBER, 'two')
         self.assertEqual(seen[1], str(encodeSmsSubmitPdu(NUMBER, 'two', reference=0, requestStatusReport=False)[0]))
 
+    def testOnlyTheErrorThatSaysNothingHasLimitedRetries(self):
+        outcome, _ = self.send(CmsError('AT+CMGS=22', 331))
+        self.assertEqual((outcome.status, outcome.limited), ('retry', False))
+        outcome, _ = self.send(CmsError('AT+CMGS=22', 500))
+        self.assertEqual((outcome.status, outcome.limited), ('retry', True))
+
     def testTheFirstTpMrIsRandomUnlessGiven(self):
         starts = {SmsSender(FakeExecutor().submit)._reference for _ in range(40)}
         self.assertTrue(all(0 <= start < 256 for start in starts))
@@ -360,6 +366,7 @@ class SendingOnAFakePortTest(ExecutorTestCase):
         FakeSerial.behavior = modemBehavior(refusals={1: '\r\n+CMS ERROR: 500\r\n'})
         outcome = self.sender().send(NUMBER, 'Hello')
         self.assertEqual((outcome.status, outcome.reason), ('retry', '+CMS ERROR: 500'))
+        self.assertTrue(outcome.limited)  # an error that says nothing is retried only a few times
 
     def testFinalRefusalDoesNotLeakTheMessage(self):
         FakeSerial.behavior = modemBehavior(refusals={1: '\r\nERROR\r\n'})

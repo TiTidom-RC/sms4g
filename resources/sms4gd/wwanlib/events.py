@@ -17,6 +17,7 @@ class ConnectionState:
     CONNECTED = 'connected'
     SEARCHING = 'searching'  # connected to the modem, but not registered on the mobile network
     RECONNECTING = 'reconnecting'
+    RESTARTING = 'restarting'  # the modem is being restarted on purpose (``Modem.restart``)
     DISCONNECTED = 'disconnected'
 
 
@@ -33,6 +34,7 @@ class Registration:
 class StateChanged:
     """ The connection state changed. ``details`` depends on the state:
     reconnecting -> attempt, maxAttempts, and retryIn (seconds) while waiting for the attempt to start ;
+    restarting -> reason (why the modem is restarted: ``requested``, ``auto``...) ;
     disconnected -> reason, fatal, errorType (class name of the cause) """
 
     state: str
@@ -131,6 +133,18 @@ class SmsDelivery:
     reason: str
     parts: int
     deliveredParts: int
+
+
+@dataclass(frozen=True)
+class SelfTestResult:
+    """ Result of the self-test (the modem sends an SMS to its own SIM): ``ok``, ``noReception`` (the SMS did not come
+    back), ``noReceipt`` (it came back, its delivery report did not) or ``skipped`` (not run: ``reason`` says why).
+    ``duration`` in seconds; ``restarted``: the modem was restarted because of the failure. """
+
+    status: str
+    reason: str
+    duration: float
+    restarted: bool = False
 
 
 @dataclass(frozen=True)

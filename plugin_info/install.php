@@ -51,6 +51,9 @@ function sms4g_install() {
 	if (config::byKey('maxSmsPartsPerGroup', 'sms4g') == '') {
 		config::save('maxSmsPartsPerGroup', '0', 'sms4g');
 	}
+	if (config::byKey('smsTtl', 'sms4g') == '') {
+		config::save('smsTtl', '60', 'sms4g');
+	}
 	if (config::byKey('concatPartsTtl', 'sms4g') == '') {
 		config::save('concatPartsTtl', '300', 'sms4g');
 	}
@@ -133,6 +136,9 @@ function sms4g_update() {
 	}
 	if (config::byKey('maxSmsPartsPerGroup', 'sms4g') == '') {
 		config::save('maxSmsPartsPerGroup', '0', 'sms4g');
+	}
+	if (config::byKey('smsTtl', 'sms4g') == '') {
+		config::save('smsTtl', '60', 'sms4g');
 	}
 	if (config::byKey('concatPartsTtl', 'sms4g') == '') {
 		config::save('concatPartsTtl', '300', 'sms4g');

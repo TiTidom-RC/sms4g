@@ -198,6 +198,15 @@ if (!isConnect('admin')) {
                 </div>
             </div>
             <div class="form-group">
+                <label class="col-lg-3 control-label">{{Durée de vie des SMS en attente (minutes)}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Un SMS qui ne peut pas partir tout de suite (modem déconnecté, pas de réseau...) est réessayé pendant cette durée, puis abandonné (statut Expiré). 1 minute au minimum, 60 par défaut}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="smsTtl" />
+                </div>
+            </div>
+            <div class="form-group">
                 <label class="col-lg-3 control-label">{{Passerelle SMS (SMSC)}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
                     <sup><i class="fas fa-question-circle tooltips" title="{{A renseigner en cas d'erreur CMS 330 (SMSC number not set). Utiliser le code #*#*4636#*#* sur un mobile pour trouver le SMSC de votre opérateur}}"></i></sup>

@@ -288,6 +288,8 @@ class sms4g extends eqLogic {
 		$cmd .= ' --reconnectmaxdelay ' . config::byKey('reconnectMaxDelay', 'sms4g', 300);
 		$cmd .= ' --reconnectmaxattempts ' . config::byKey('reconnectMaxAttempts', 'sms4g', 10);
 		$cmd .= ' --concatpartsttl ' . config::byKey('concatPartsTtl', 'sms4g', 300);
+		// Durée de vie d'un SMS en file : réglée en minutes (1 au minimum), donnée au démon en secondes
+		$cmd .= ' --smsttl ' . (max(1, (int) config::byKey('smsTtl', 'sms4g', 60)) * 60);
 		$cmd .= ' --callback ' . network::getNetworkAccess('internal', 'http:127.0.0.1:port:comp') . '/plugins/sms4g/core/php/jeesms4g.php';
 		$cmd .= ' --apikey ' . jeedom::getApiKey('sms4g');
 		$cmd .= ' --pid ' . jeedom::getTmpFolder('sms4g') . '/deamon.pid';
@@ -605,15 +607,18 @@ class sms4g extends eqLogic {
 	}
 
 	/**
-	 * Envoie un SMS à chaque numéro. Le découpage en parties/groupes SMS (encodage GSM-7 ou UCS-2, limite de parties
-	 * liées) est entièrement géré côté démon Python, seul à connaître l'encodage réel du message : on lui transmet
-	 * juste le texte complet.
+	 * Envoie un SMS à chaque numéro. Le démon met chaque SMS en file puis renvoie ce qu'il est devenu (`smsStatus`,
+	 * voir onSmsStatus). Le découpage en parties/groupes SMS (encodage GSM-7 ou UCS-2, limite de parties liées) est
+	 * entièrement géré côté démon Python, seul à connaître l'encodage réel du message : on lui transmet juste le
+	 * texte complet.
 	 *
 	 * @param string[] $_phonenumbers
 	 * @param string $_message
+	 * @param int|string|null $_ref identifiant de la commande Jeedom, renvoyé tel quel par le démon : il permet de
+	 *        mettre à jour ses commandes « Statut » et « Remis »
 	 * @return bool false si un envoi au démon a échoué
 	 */
-	public static function sendSms($_phonenumbers, $_message) {
+	public static function sendSms($_phonenumbers, $_message, $_ref = null) {
 		$message = trim($_message);
 		$phonenumbers = array_filter(array_map('trim', $_phonenumbers), 'strlen');
 		if (count($phonenumbers) == 0 || $message == '') {
@@ -622,13 +627,67 @@ class sms4g extends eqLogic {
 		}
 		$maxPartsPerGroup = (int) config::byKey('maxSmsPartsPerGroup', 'sms4g');
 		foreach ($phonenumbers as $phonenumber) {
-			if (!self::sendToDaemon(array('cmd' => 'sendSms', 'number' => $phonenumber, 'message' => $message, 'maxPartsPerGroup' => $maxPartsPerGroup))) {
+			$payload = array('cmd' => 'sendSms', 'number' => $phonenumber, 'message' => $message, 'maxPartsPerGroup' => $maxPartsPerGroup);
+			if ($_ref !== null) {
+				$payload['ref'] = (string) $_ref;
+			}
+			if (!self::sendToDaemon($payload)) {
+				self::setSmsStatus($_ref, $phonenumber, 'failed', 'daemon not reachable');
 				return false;
 			}
 		}
 		return true;
 	}
 
+	/**
+	 * Écrit ce qu'est devenu un SMS dans les commandes « Statut » (texte) et « Remis » de la commande qui l'a envoyé.
+	 * « Remis » n'est mis à 0 que pour un échec ou une expiration : à « Envoyé » il ne change pas, il vaudra 1 quand
+	 * les accusés de réception seront suivis (« Livré »). Un échec ou une expiration est un log d'erreur, que Jeedom
+	 * fait aussi remonter dans le centre de messages.
+	 *
+	 * @param int|string|null $_ref identifiant de la commande qui a envoyé le SMS
+	 * @param string $_number numéro tel qu'il a été envoyé
+	 * @param string $_status queued (en file, nouvel essai plus tard), sent, failed ou expired
+	 * @param string $_reason raison technique courte (jamais le texte du SMS)
+	 * @param string|null $_time date du fait, Y-m-d H:i:s (maintenant par défaut)
+	 */
+	public static function setSmsStatus($_ref, $_number, $_status, $_reason = '', $_time = null) {
+		$labels = array(
+			'queued' => __('En attente d\'envoi', __FILE__),
+			'sent' => __('Envoyé', __FILE__),
+			'failed' => __('Échec d\'envoi', __FILE__),
+			'expired' => __('Expiré', __FILE__),
+		);
+		if (!isset($labels[$_status])) {
+			log::add('sms4g', 'warning', '[SMS] Statut inconnu : ' . secureXSS($_status));
+			return;
+		}
+		$timestamp = ($_time !== null) ? strtotime($_time) : false;
+		$date = date('d/m/Y H:i:s', ($timestamp !== false) ? $timestamp : time());
+		// Le numéro est celui saisi par l'utilisateur, la raison vient du démon : affichés en HTML par les widgets
+		$flags = ENT_QUOTES | ENT_SUBSTITUTE;
+		$number = htmlspecialchars((string) $_number, $flags, 'UTF-8');
+		$reason = htmlspecialchars((string) $_reason, $flags, 'UTF-8');
+		$text = $labels[$_status] . ' : ' . $number . (($reason != '') ? ' - ' . $reason : '') . ' (' . $date . ')';
+
+		$levels = array('queued' => 'warning', 'sent' => 'info', 'failed' => 'error', 'expired' => 'error');
+		log::add('sms4g', $levels[$_status], '[SMS] ' . $labels[$_status] . ' : ' . secureXSS(self::maskNumber($_number)) . (($reason != '') ? ' - ' . $reason : ''));
+
+		if ($_ref === null || !ctype_digit((string) $_ref)) {
+			log::add('sms4g', 'debug', '[SMS] Statut sans référence de commande : non rattaché');
+			return;
+		}
+		$cmd = cmd::byId((int) $_ref);
+		if (!is_object($cmd) || $cmd->getEqType() != 'sms4g') {
+			log::add('sms4g', 'debug', '[SMS] Commande ' . (int) $_ref . ' introuvable (supprimée ?) : statut non rattaché');
+			return;
+		}
+		$eqLogic = $cmd->getEqLogic();
+		$eqLogic->checkAndUpdateCmd('delivery_status_' . $cmd->getId(), $text, $_time);
+		if ($_status == 'failed' || $_status == 'expired') {
+			$eqLogic->checkAndUpdateCmd('delivery_success_' . $cmd->getId(), 0, $_time);
+		}
+	}
 	/**
 	 * Commande AT du mode diagnostic. Rend la main aussitôt : le résultat arrive plus tard dans les commandes
 	 * « Statut AT » et « Réponse AT » (onAtResponse). Ici seul le mode diagnostic est contrôlé : le format et le
@@ -795,6 +854,29 @@ class sms4g extends eqLogic {
 		self::setAtResult($_modem, $command, $status, $detail, $response, $_time);
 	}
 
+	/**
+	 * Ce qu'est devenu un SMS envoyé (message `smsStatus` du démon, voir setSmsStatus).
+	 *
+	 * @param array $_message ref (identifiant de la commande), number, status, reason
+	 * @param string|null $_time
+	 */
+	public static function onSmsStatus($_message, $_time) {
+		self::setSmsStatus(
+			isset($_message['ref']) ? $_message['ref'] : null,
+			isset($_message['number']) ? $_message['number'] : '',
+			isset($_message['status']) ? (string) $_message['status'] : '',
+			isset($_message['reason']) ? $_message['reason'] : '',
+			$_time
+		);
+	}
+
+	/**
+	 * Masque un numéro de téléphone pour les logs (même règle que le démon : 4 premiers et 2 derniers caractères).
+	 */
+	private static function maskNumber($_number) {
+		$number = (string) $_number;
+		return (strlen($number) > 6) ? substr($number, 0, 4) . str_repeat('X', strlen($number) - 6) . substr($number, -2) : $number;
+	}
 	/**
 	 * Masque les numéros de téléphone d'un texte de log (même règle que le démon : 4 premiers et 2 derniers caractères).
 	 */
@@ -981,6 +1063,6 @@ class sms4gCmd extends cmd {
 		if ($message == '' && !$isCustomNumber) {
 			$message = trim($title);
 		}
-		return sms4g::sendSms($phonenumbers, $message);
+		return sms4g::sendSms($phonenumbers, $message, $this->getId());
 	}
 }

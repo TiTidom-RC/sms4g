@@ -2,8 +2,9 @@
 
 The modem tells what happened to a part with an SMS-STATUS-REPORT (``+CDS`` straight from the network, or
 ``+CDSI`` when it is kept in the SR memory). The report carries the TP-MR the modem gave to the part (the value
-``+CMGS`` returned), the recipient, the time the SMS center got the message and a status (TP-ST, 3GPP TS 23.040
-9.2.3.15):
+``+CMGS`` returned), the recipient, two time stamps (the time the SMS center got the message, and the time of the
+delivery: the standard puts the first one first, **Free sends them the other way round**, so none is assumed) and a
+status (TP-ST, 3GPP TS 23.040 9.2.3.15):
 
 * 0x00 - 0x1F  delivered (or forwarded, or replaced): final
 * 0x20 - 0x3F  temporary error, the SMS center tries again: **not final**, another report comes for the same TP-MR
@@ -15,8 +16,9 @@ state. Nothing is published before the SMS itself is announced as sent (``close`
 next part is still being sent.
 
 A report is matched to a part by its TP-MR, checked against the recipient (last digits, so that ``06...`` and
-``+33 6...`` meet without any rule of a country) and the time (a late report of a message sent before a restart of
-the daemon must not be taken for the one of a new message that has the same TP-MR). A report that matches nothing
+``+33 6...`` meet without any rule of a country) and the time (one of the two time stamps of the report is close to
+the time the part was sent: a late report of a message sent before a restart of the daemon must not be taken for the
+one of a new message that has the same TP-MR; the delivery itself may come hours after the sending). A report that matches nothing
 yet waits ``orphanTtl`` seconds (the part may still be registering), then is dropped.
 
 Everything is in memory: after a restart the reports of the earlier messages are dropped. A message without a final
@@ -128,7 +130,7 @@ class _Orphan:
     arrivedAt: float
     reference: int
     number: str
-    reportTime: float | None
+    reportTimes: tuple[float, ...]
     status: int
 
 
@@ -191,15 +193,18 @@ class ReceiptTracker:
 
     # ---- what the network tells ------------------------------------------------------------------
 
-    def onReport(self, reference: int, number: str, reportTime: float | None, status: int) -> None:
-        """ A status report: ``reference`` is the TP-MR, ``number`` the recipient, ``reportTime`` the time the SMS
-        center received our message (seconds since 1970, None when unreadable) """
+    def onReport(self, reference: int, number: str, reportTime: float | None, status: int,
+                 otherTime: float | None = None) -> None:
+        """ A status report: ``reference`` is the TP-MR, ``number`` the recipient, ``reportTime`` and ``otherTime`` the
+        two time stamps of the report (seconds since 1970, None when unreadable): the time the SMS center received
+        our message is one of them, which one depends on the network """
+        times = tuple(value for value in (reportTime, otherTime) if value is not None)
         with self._lock:
             now = self._clock()
-            found = self._find(reference, number, reportTime)
+            found = self._find(reference, number, times)
             if found is None:
-                self._orphans.append(_Orphan(now, reference, number, reportTime, status))
-                gap = self._timeGap(reference, number, reportTime)
+                self._orphans.append(_Orphan(now, reference, number, times, status))
+                gap = self._timeGap(reference, number, times)
                 if gap is not None:
                     log.warning('Delivery report for TP-MR %d (%s): same TP-MR and recipient as an SMS sent, but %d s apart: the ' 
                                 'clock of this machine must be right (the reports are matched by time too)', reference, maskNumber(number), gap)
@@ -230,9 +235,9 @@ class ReceiptTracker:
 
     # ---- inside (the lock is held) ---------------------------------------------------------------
 
-    def _find(self, reference: int, number: str, reportTime: float | None) -> tuple[_Sms, _Part] | None:
-        """ The part a report is about: same TP-MR, same recipient, sent at the time the report says. When several
-        parts match (the TP-MR counter went round), the one still waiting for a report, then the latest. """
+    def _find(self, reference: int, number: str, times: tuple[float, ...]) -> tuple[_Sms, _Part] | None:
+        """ The part a report is about: same TP-MR, same recipient, sent at one of the times the report says. When
+        several parts match (the TP-MR counter went round), the one still waiting for a report, then the latest. """
         candidates = []
         for sms in self._sms.values():
             if _digits(sms.number) != _digits(number):
@@ -240,25 +245,25 @@ class ReceiptTracker:
             for part in sms.entries.values():
                 if part.reference != reference:
                     continue
-                if reportTime is not None and abs(reportTime - part.sentAt) > self._timeWindow:
+                if times and min(abs(value - part.sentAt) for value in times) > self._timeWindow:
                     continue
                 candidates.append((sms, part))
         if not candidates:
             return None
         return max(candidates, key=lambda item: (item[1].state in (WAITING, PENDING), item[1].sentAt))
 
-    def _timeGap(self, reference: int, number: str, reportTime: float | None) -> int | None:
+    def _timeGap(self, reference: int, number: str, times: tuple[float, ...]) -> int | None:
         """ When a report has the TP-MR and the recipient of a part but not its time: the gap in seconds (the clock is wrong) """
-        if reportTime is None:
+        if not times:
             return None
-        gaps = [abs(reportTime - part.sentAt) for sms in self._sms.values() if _digits(sms.number) == _digits(number)
-                for part in sms.entries.values() if part.reference == reference]
+        gaps = [min(abs(value - part.sentAt) for value in times) for sms in self._sms.values()
+                if _digits(sms.number) == _digits(number) for part in sms.entries.values() if part.reference == reference]
         return int(min(gaps)) if gaps else None
 
     def _rematch(self, sms: _Sms) -> None:
         """ A part was just registered: the reports that came before it are applied now """
         for orphan in list(self._orphans):
-            found = self._find(orphan.reference, orphan.number, orphan.reportTime)
+            found = self._find(orphan.reference, orphan.number, orphan.reportTimes)
             if found is not None and found[0] is sms:
                 self._orphans.remove(orphan)
                 self._apply(found[0], found[1], orphan.status)

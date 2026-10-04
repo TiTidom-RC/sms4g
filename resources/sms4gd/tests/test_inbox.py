@@ -41,11 +41,15 @@ def deliverPdus(number: str, text: str, reference: int = 0x42) -> list[str]:
     return result
 
 
-def statusReportPdu(reference: int, number: str, status: int = 0, when: datetime | None = None) -> str:
-    """ The SMS-STATUS-REPORT PDU of a network about the message sent to ``number`` with this TP-MR (the SMS center
-    puts the time it received the message, ``when``: now by default) """
-    stamp = bytes(_encodeTimestamp(when or datetime.now(timezone.utc).replace(microsecond=0)))
-    return (b'\x00\x06' + bytes([reference]) + bytes(_encodeAddressField(number)) + stamp + stamp + bytes([status])).hex().upper()
+def statusReportPdu(reference: int, number: str, status: int = 0, when: datetime | None = None,
+                    delivered: datetime | None = None) -> str:
+    """ The SMS-STATUS-REPORT PDU of a network about the message sent to ``number`` with this TP-MR: the time the SMS
+    center received the message (``when``, now by default) and the time of the delivery (``delivered``, the same
+    by default). When they differ, the delivery goes **first** as Free does (the standard puts the other first). """
+    sent = when or datetime.now(timezone.utc).replace(microsecond=0)
+    first = bytes(_encodeTimestamp(delivered or sent))
+    second = bytes(_encodeTimestamp(sent))
+    return (b'\x00\x06' + bytes([reference]) + bytes(_encodeAddressField(number)) + first + second + bytes([status])).hex().upper()
 
 
 def cmgrLines(stat: int, pdu: str) -> list[str]:
@@ -442,6 +446,13 @@ class DeliveryReportTest(unittest.TestCase):
         self.inbox.onNotification(['+CDS: 26', statusReportPdu(218, '+33662032692')])
         self.assertEqual([(event.smsId, event.status) for event in self.events], [('a', 'delivered')])
         self.assertEqual(self.sim.transactions, [])  # nothing is read: the report came with the notification
+
+    def testADeliveryHoursAfterTheSendingIsMatched(self):
+        # the report of a message delivered much later (the phone was off): the delivery time is first, far from the sending
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        pdu = statusReportPdu(218, '+33662032692', when=now, delivered=now + timedelta(hours=5))
+        self.inbox.onNotification(['+CDS: 26', pdu])
+        self.assertEqual([(event.smsId, event.status) for event in self.events], [('a', 'delivered')])
 
     def testTheStatusOfThePduIsUsed(self):
         self.inbox.onNotification(['+CDS: 26', statusReportPdu(218, '+33662032692', status=0x43)])

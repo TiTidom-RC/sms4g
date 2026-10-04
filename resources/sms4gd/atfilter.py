@@ -17,7 +17,7 @@ class AtVerdict(NamedTuple):
     command: str  # normalized command ('' when it could not be normalized)
 
 
-# Commands refused whatever their form (they send or delete SMS, lock the SIM, restart the modem)
+# Commands refused whatever their form (they send or delete SMS, lock the SIM)
 _FORBIDDEN_ANY = {
     'CMGS': 'sending SMS is not done from the console',
     'CMGW': 'writing SMS is not done from the console',
@@ -25,7 +25,6 @@ _FORBIDDEN_ANY = {
     'CMGD': 'deleting SMS is not done from the console',
     'CLCK': 'locking facilities (SIM, network) is forbidden',
     'CPWD': 'changing passwords is forbidden',
-    'CRESET': 'restarting the modem is not available from the console',
 }
 
 # Commands whose settings are managed by the library: reading is allowed, writing is not
@@ -59,11 +58,14 @@ _ALLOWED_WRITES = (
     re.compile(r'^AT\+CNMI=\d(,\d){0,4}$'),
     re.compile(r'^AT\+CSMS=[01]$'),
     re.compile(r'^AT\+CFUN=[14]$'),
+    # Restarting the modem (the USB port disappears and comes back: the daemon reconnects by itself). It is the only
+    # way out of some states of the modem (no delivery report anymore) that the radio alone does not clear.
+    re.compile(r'^AT\+CFUN=1,1$'),
+    re.compile(r'^AT\+CRESET$'),
 )
 
 _EXTENDED = re.compile(r'^AT\+([A-Z0-9]+)(\?|=\?|=(.*))?$')
 _VENDOR_READ = re.compile(r'^AT\^[A-Z0-9]+(\?|=\?)$')
-_CFUN_RESET = re.compile(r'^AT\+CFUN=\d,1$')
 
 
 def normalize(command: str) -> str | None:
@@ -86,8 +88,11 @@ def normalize(command: str) -> str | None:
     return None if inQuotes else ''.join(result)
 
 
-def checkAtCommand(command: object) -> AtVerdict:
-    """ Decides whether a command may be sent. :return: the verdict, with the normalized command to send """
+def checkAtCommand(command: object, pinConfigured: bool = True) -> AtVerdict:
+    """ Decides whether a command may be sent. :return: the verdict, with the normalized command to send
+    :param pinConfigured: whether the daemon has a PIN. `AT+CFUN=0` switches the SIM off, which then asks for its PIN
+        again; the daemon only enters it when it connects, so the command is refused when there is one (without a PIN
+        the SIM simply starts again with `AT+CFUN=1`) """
     if not isinstance(command, str) or not command.strip():
         return AtVerdict(False, 'empty or invalid command', '')
     if len(command) > MAX_LENGTH:
@@ -110,8 +115,6 @@ def checkAtCommand(command: object) -> AtVerdict:
         name, form, parameters = extended.group(1), extended.group(2), extended.group(3)
         if name in _FORBIDDEN_ANY:
             return refuse(_FORBIDDEN_ANY[name])
-        if name == 'CFUN' and _CFUN_RESET.match(normalized):
-            return refuse('restarting the modem is not available from the console')
         isRead = form in ('?', '=?')
         if parameters is not None and not isRead and name in _FORBIDDEN_WRITE:
             return refuse(_FORBIDDEN_WRITE[name])
@@ -123,5 +126,9 @@ def checkAtCommand(command: object) -> AtVerdict:
     if normalized in _INFORMATIVE or _INFORMATIVE_PATTERN.match(normalized):
         return AtVerdict(True, '', normalized)
     if any(pattern.match(normalized) for pattern in _ALLOWED_WRITES):
+        return AtVerdict(True, '', normalized)
+    if normalized == 'AT+CFUN=0':
+        if pinConfigured:
+            return refuse('switching the SIM off would lock it behind its PIN until the daemon restarts')
         return AtVerdict(True, '', normalized)
     return refuse('command not allowed in diagnostic mode')

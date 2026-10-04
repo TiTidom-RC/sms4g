@@ -179,6 +179,28 @@ class MatchingTest(TrackerTestCase):
         self.report(reference=10, when=self.wall.now - 3 * 3600)  # the report of the old one, its own time
         self.assertEqual([(event.smsId, event.status) for event in self.events], [('old', 'delivered')])
 
+    def testTheSendingTimeMayBeTheSecondTimeStampOfTheReport(self):
+        # Free puts the time of the delivery first and the time the SMS center got the message second, the standard
+        # the other way round: a delivery hours later must still be matched
+        self.send()
+        self.tracker.onReport(10, REPORT_NUMBER, self.wall.now + 5 * 3600, 0, self.wall.now + 1)
+        self.assertEqual(self.states(), ['delivered'])
+
+    def testTheSendingTimeMayBeTheFirstTimeStampOfTheReport(self):
+        self.send()
+        self.tracker.onReport(10, REPORT_NUMBER, self.wall.now + 1, 0, self.wall.now + 5 * 3600)
+        self.assertEqual(self.states(), ['delivered'])
+
+    def testAReportWhoseTwoTimeStampsAreFarFromTheSendingIsNotMatched(self):
+        self.send()
+        with self.assertLogs('wwanlib.receipts', level='WARNING'):
+            self.tracker.onReport(10, REPORT_NUMBER, self.wall.now + 7200, 0, self.wall.now + 9000)
+        self.assertEqual(self.events, [])
+
+    def testAnOrphanReportKeepsBothTimeStampsUntilThePartIsRegistered(self):
+        self.tracker.onReport(10, REPORT_NUMBER, self.wall.now + 5 * 3600, 0, self.wall.now)
+        self.send()
+        self.assertEqual(self.states(), ['delivered'])
     def testAReportWithTheRightTpMrButAnotherTimeSaysThatTheClockMayBeWrong(self):
         self.send()
         with self.assertLogs('wwanlib.receipts', level='WARNING') as logs:

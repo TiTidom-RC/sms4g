@@ -35,6 +35,9 @@ ALLOWED = [
     ('AT+CSMS=1', 'AT+CSMS=1'),
     ('AT+CFUN=1', 'AT+CFUN=1'),
     ('AT+CFUN=4', 'AT+CFUN=4'),
+    ('AT+CFUN=1,1', 'AT+CFUN=1,1'),
+    ('AT+CRESET', 'AT+CRESET'),
+    ('at+cfun=1,1', 'AT+CFUN=1,1'),
 ]
 
 REFUSED = [
@@ -61,9 +64,11 @@ REFUSED = [
     ('AT+CMGD=1,4', 'deleting'),
     ('AT+CLCK="SC",1,"1234"', 'locking'),
     ('AT+CPWD="SC","1","2"', 'passwords'),
-    ('AT+CRESET', 'restarting'),
-    ('AT+CFUN=1,1', 'restarting'),
-    ('AT+CFUN=0', 'not allowed'),
+    ('AT+CFUN=4,1', 'not allowed'),
+    ('AT+CFUN=0,1', 'not allowed'),
+    ('AT+CFUN=1,1,1', 'not allowed'),
+    ('AT+CRESET=1', 'not allowed'),
+    ('AT+CFUN=0', 'PIN'),
     ('AT+CFUN=7', 'not allowed'),
     ('AT+COPS=0', 'not allowed'),
     ('AT+COPS=2', 'not allowed'),
@@ -131,8 +136,17 @@ class AtFilterTest(unittest.TestCase):
             self.assertEqual(normalize(verdict.command), verdict.command)  # nothing changes a second time
             self.assertTrue(checkAtCommand(verdict.command).allowed)
 
+    def testSwitchingTheSimOffNeedsAnSimWithoutPin(self):
+        self.assertTrue(checkAtCommand('AT+CFUN=0', pinConfigured=False).allowed)
+        self.assertTrue(checkAtCommand('at+cfun = 0', pinConfigured=False).allowed)
+        verdict = checkAtCommand('AT+CFUN=0', pinConfigured=True)
+        self.assertFalse(verdict.allowed)
+        self.assertIn('PIN', verdict.reason)
+        self.assertFalse(checkAtCommand('AT+CFUN=0').allowed)  # a PIN is assumed by default
+        self.assertFalse(checkAtCommand('AT+CFUN=0,1', pinConfigured=False).allowed)  # no restart into the off state
+
     def testLowerCaseAndSpacesDoNotBypassTheForbiddenList(self):
-        for typed in ('at+cpin="1234"', 'AT + CPIN = "1234"', 'at+cmgs=5', 'AT+ CMGD =1,4', 'atz', 'ate0', 'AT+cfun=1,1'):
+        for typed in ('at+cpin="1234"', 'AT + CPIN = "1234"', 'at+cmgs=5', 'AT+ CMGD =1,4', 'atz', 'ate0', 'AT+cfun=4,1'):
             self.assertFalse(checkAtCommand(typed).allowed, typed)
 
     def testNormalizeKeepsQuotedText(self):

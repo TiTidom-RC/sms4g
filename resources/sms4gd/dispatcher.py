@@ -86,15 +86,18 @@ def smsInboxMessage(event: Any) -> dict[str, Any] | None:
 
 
 class Dispatcher:
-    def __init__(self, messages: 'queue.Queue[bytes | None]', modem: ModemLike, out: OutLike, apikey: str, diagnostic: bool):
+    def __init__(self, messages: 'queue.Queue[bytes | None]', modem: ModemLike, out: OutLike, apikey: str, diagnostic: bool,
+                 pinConfigured: bool = True):
         """ :param messages: the queue filled by the socket of Jeedom's daemon library (raw JSON lines)
         :param diagnostic: whether the AT commands sent from Jeedom are allowed (the daemon is the authority,
-            the PHP side only checks it too) """
+            the PHP side only checks it too)
+        :param pinConfigured: whether the SIM has a PIN (it then cannot be switched off from the console) """
         self._messages = messages
         self._modem = modem
         self._out = out
         self._apikey = apikey
         self._diagnostic = diagnostic
+        self._pinConfigured = pinConfigured
         self._thread: threading.Thread | None = None
         self._handlers = {'atCommand': self._atCommand, 'sendSms': self._sendSms}
 
@@ -186,7 +189,7 @@ class Dispatcher:
         if not self._diagnostic:
             self._refuse(requestId, shown, 'diagnostic mode is disabled')
             return
-        verdict = checkAtCommand(command)
+        verdict = checkAtCommand(command, self._pinConfigured)
         if not verdict.allowed:
             self._refuse(requestId, verdict.command or shown, verdict.reason)
             return

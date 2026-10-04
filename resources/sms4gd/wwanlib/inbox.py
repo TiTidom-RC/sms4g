@@ -337,11 +337,14 @@ class Inbox:
         if self._receipts is None:
             log.debug('Delivery report ignored: not asked')
             return
-        try:
-            reportTime: float | None = decoded['time'].timestamp()
-        except (KeyError, ValueError, OverflowError, OSError):
-            reportTime = None
-        self._receipts.onReport(int(decoded['reference']), str(decoded.get('number') or ''), reportTime, int(decoded['status']))
+        stamps: list[float | None] = []
+        for key in ('time', 'discharge'):  # the time the SMS center got the message, and the delivery: in either order
+            try:
+                stamps.append(decoded[key].timestamp())
+            except (KeyError, ValueError, OverflowError, OSError):
+                stamps.append(None)
+        self._receipts.onReport(int(decoded['reference']), str(decoded.get('number') or ''), stamps[0], int(decoded['status']),
+                                stamps[1])
 
     # ---- the SMS stored in the memory -------------------------------------------------------------
 

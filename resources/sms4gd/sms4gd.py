@@ -241,7 +241,7 @@ def main():
                 concatPartsTtl=config.concatPartsTtl,
             ),
         )
-        dispatcher = Dispatcher(JEEDOM_SOCKET_MESSAGE, modem, publisher, config.apikey, config.diagnostic)
+        dispatcher = Dispatcher(JEEDOM_SOCKET_MESSAGE, modem, publisher, config.apikey, config.diagnostic, config.pin is not None)
         dispatcher.start()
         modem.onEvent(onModemEvent)
         modem.start()

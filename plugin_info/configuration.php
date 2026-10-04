@@ -126,6 +126,16 @@ if (!isConnect('admin')) {
         <div>
             <legend><i class="fas fa-sim-card"></i> {{Modem}}</legend>
             <div class="form-group">
+                <label class="col-lg-3 control-label">{{État du modem}}
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Affiche la connexion du modem, son enregistrement sur le réseau mobile et la qualité du signal (valeurs de l'équipement Modem)}}"></i></sup>
+                </label>
+                <div class="col-lg-9" style="padding-top:4px;">
+                    <button type="button" id="btn_checkModem" class="btn btn-sm btn-info">
+                        <i class="fas fa-stethoscope"></i> {{Vérifier}}
+                    </button>
+                </div>
+            </div>
+            <div class="form-group">
                 <label class="col-lg-3 control-label">{{Port SMS}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
                     <sup><i class="fas fa-question-circle tooltips" title="{{Privilégiez un port /dev/serial/by-id/... (stable) plutôt qu'un /dev/ttyUSB* (numérotation pouvant changer après un redémarrage ou un rebranchement)}}"></i></sup>
@@ -295,13 +305,33 @@ if (!isConnect('admin')) {
         })
     }
 
-    document.getElementById('btn_checkModemManager').addEventListener('click', (event) => {
+    document.getElementById('btn_checkModemManager')?.addEventListener('click', (event) => {
         const btn = event.currentTarget
         btn.disabled = true
         refreshModemManagerStatus(() => { btn.disabled = false })
     })
 
-    document.getElementById('btn_disableModemManager').addEventListener('click', (event) => {
+    document.getElementById('btn_checkModem')?.addEventListener('click', (event) => {
+        const btn = event.currentTarget
+        btn.disabled = true
+        domUtils.ajax({
+            type: 'POST',
+            url: AJAX_URL,
+            data: { action: 'getModemStatus' },
+            dataType: 'json',
+            error: (request, status, error) => { handleAjaxError(request, status, error); btn.disabled = false },
+            success: (data) => {
+                btn.disabled = false
+                if (data.state !== 'ok') {
+                    jeedomUtils.showAlert({ message: data.result, level: 'danger' })
+                } else {
+                    jeedomUtils.showAlert({ message: data.result.message, level: data.result.level })
+                }
+            }
+        })
+    })
+
+    document.getElementById('btn_disableModemManager')?.addEventListener('click', (event) => {
         const btn = event.currentTarget
         jeeDialog.confirm({
             title: '{{Désactivation de}} ModemManager',

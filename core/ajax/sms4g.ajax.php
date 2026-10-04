@@ -33,6 +33,10 @@ try {
 		ajax::success($status);
 	}
 
+	if (init('action') == 'getModemStatus') {
+		ajax::success(sms4g::getModemStatus());
+	}
+
 	if (init('action') == 'disableModemManager') {
 		$success = sms4g::disableModemManager();
 		if (!$success) {

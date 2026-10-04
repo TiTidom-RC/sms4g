@@ -508,6 +508,58 @@ class sms4g extends eqLogic {
 	}
 
 	/**
+	 * Résumé de l'état du modem pour le bouton « Vérifier » de la page de configuration : connexion, enregistrement
+	 * sur le réseau et qualité du signal, à partir des commandes de l'équipement virtuel Modem (tenues à jour par le
+	 * démon : pas d'interrogation du modem).
+	 *
+	 * @return array{level: string, message: string} niveau d'alerte Jeedom (info, warning, danger) et message
+	 */
+	public static function getModemStatus() {
+		$deamonInfo = self::deamon_info();
+		if ($deamonInfo['state'] != 'ok') {
+			return array('level' => 'danger', 'message' => __('Le démon n\'est pas démarré', __FILE__));
+		}
+		$modem = self::byLogicalId('modem', 'sms4g');
+		if (!is_object($modem)) {
+			return array('level' => 'danger', 'message' => __('Équipement Modem introuvable : relancez le démon', __FILE__));
+		}
+		$state = (int) $modem->getCmd(null, 'connection_state')->execCmd();
+		$connection = (string) $modem->getCmd(null, 'connection')->execCmd();
+		$operator = (string) $modem->getCmd(null, 'operator')->execCmd();
+		$signal = (int) $modem->getCmd(null, 'signal')->execCmd();
+
+		// connection_state : 0 déconnecté, 1 reconnexion, 2 recherche d'un opérateur, 3 connexion, 4 connecté
+		if ($state == 0) {
+			return array('level' => 'danger', 'message' => __('Modem déconnecté', __FILE__));
+		}
+		if ($state == 1 || $state == 3) {
+			return array('level' => 'warning', 'message' => __('Modem non disponible pour le moment', __FILE__) . ' : ' . $connection);
+		}
+		if ($state == 2) {
+			return array('level' => 'warning', 'message' => __('Modem connecté mais non enregistré sur le réseau mobile (recherche d\'un opérateur)', __FILE__));
+		}
+		$message = __('Modem connecté et enregistré sur le réseau mobile', __FILE__);
+		if ($operator != '') {
+			$message .= ' (' . $operator . ')';
+		}
+		if ($signal < 0 || $signal > 31) {
+			return array('level' => 'warning', 'message' => $message . '. ' . __('Signal inconnu', __FILE__));
+		}
+		// CSQ de 0 à 31 : -113 dBm + 2 dBm par point (norme GSM) ; seuils usuels des fabricants de modems
+		$dbm = -113 + 2 * $signal;
+		if ($signal >= 20) {
+			$quality = __('excellent', __FILE__);
+		} elseif ($signal >= 15) {
+			$quality = __('bon', __FILE__);
+		} elseif ($signal >= 10) {
+			$quality = __('moyen', __FILE__);
+		} else {
+			$quality = __('faible', __FILE__);
+		}
+		$message .= '. ' . __('Signal', __FILE__) . ' : ' . $signal . '/31 (' . $dbm . ' dBm, ' . $quality . ')';
+		return array('level' => ($signal >= 10) ? 'info' : 'warning', 'message' => $message);
+	}
+	/**
 	 * Envoie un message au démon par sa socket (protocole : apikey + cmd + paramètres).
 	 *
 	 * @param array $_payload

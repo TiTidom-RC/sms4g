@@ -612,27 +612,44 @@ class sms4g extends eqLogic {
 	 * entièrement géré côté démon Python, seul à connaître l'encodage réel du message : on lui transmet juste le
 	 * texte complet.
 	 *
+	 * Chaque appel est un « lot » (`batch` dans le code) : le `ref` envoyé au démon est `<commande>:<lot>` et l'état de chaque numéro du lot
+	 * est gardé en cache (voir setSmsStatus) : une commande à plusieurs numéros a un statut qui les résume tous, et
+	 * deux envois successifs de la même commande ne se mélangent pas.
+	 *
 	 * @param string[] $_phonenumbers
 	 * @param string $_message
-	 * @param int|string|null $_ref identifiant de la commande Jeedom, renvoyé tel quel par le démon : il permet de
-	 *        mettre à jour ses commandes « Statut » et « Remis »
+	 * @param int|string|null $_ref identifiant de la commande Jeedom : il permet de mettre à jour ses commandes
+	 *        « Statut » et « Remis »
 	 * @return bool false si un envoi au démon a échoué
 	 */
 	public static function sendSms($_phonenumbers, $_message, $_ref = null) {
 		$message = trim($_message);
-		$phonenumbers = array_filter(array_map('trim', $_phonenumbers), 'strlen');
+		$phonenumbers = array_values(array_unique(array_filter(array_map('trim', $_phonenumbers), 'strlen')));
 		if (count($phonenumbers) == 0 || $message == '') {
 			log::add('sms4g', 'warning', '[SMS] Envoi ignoré : numéro ou message vide');
 			return false;
 		}
 		$maxPartsPerGroup = (int) config::byKey('maxSmsPartsPerGroup', 'sms4g');
-		foreach ($phonenumbers as $phonenumber) {
+		$ref = null;
+		if ($_ref !== null) {
+			$batch = bin2hex(random_bytes(4));
+			$ref = (string) $_ref . ':' . $batch;
+			$numbers = array();
+			foreach ($phonenumbers as $phonenumber) {
+				$numbers[$phonenumber] = array('state' => 'waiting', 'reason' => '');
+			}
+			self::saveBatch($batch, array('numbers' => $numbers, 'deliverySuccess' => null));
+		}
+		foreach ($phonenumbers as $index => $phonenumber) {
 			$payload = array('cmd' => 'sendSms', 'number' => $phonenumber, 'message' => $message, 'maxPartsPerGroup' => $maxPartsPerGroup);
-			if ($_ref !== null) {
-				$payload['ref'] = (string) $_ref;
+			if ($ref !== null) {
+				$payload['ref'] = $ref;
 			}
 			if (!self::sendToDaemon($payload)) {
-				self::setSmsStatus($_ref, $phonenumber, 'failed', 'daemon not reachable');
+				// Le démon ne répond pas : ce numéro et ceux qui suivent ne partiront pas
+				foreach (array_slice($phonenumbers, $index) as $failedNumber) {
+					self::setSmsStatus($ref, $failedNumber, 'failed', 'daemon not reachable');
+				}
 				return false;
 			}
 		}
@@ -641,23 +658,28 @@ class sms4g extends eqLogic {
 
 	/**
 	 * Écrit ce qu'est devenu un SMS dans les commandes « Statut » (texte) et « Remis » de la commande qui l'a envoyé.
-	 * « Remis » n'est mis à 0 que pour un échec ou une expiration : à « Envoyé » il ne change pas, il vaudra 1 quand
-	 * les accusés de réception seront suivis (« Livré »). Un échec ou une expiration est un log d'erreur, que Jeedom
-	 * fait aussi remonter dans le centre de messages.
 	 *
-	 * @param int|string|null $_ref identifiant de la commande qui a envoyé le SMS
+	 * « Statut » : un numéro seul, `<état> : <numéro> - <raison> (<date>)` ; plusieurs numéros, un résumé du lot,
+	 * `Livré 2/3 : <numéro> ✓, <numéro> ✓, <numéro> (envoyé) (<date>)`.
+	 *
+	 * « Remis » : 1 seulement quand **tous** les numéros ont reçu le SMS (« Livré ») ; 0 dès le premier échec
+	 * définitif d'un numéro (« Non remis », « Échec d'envoi », « Expiré »), pour que l'alerte parte tout de suite ;
+	 * inchangé tant que des accusés manquent (jamais de 0 pendant « Envoyé » ou « Retardé » : il déclencherait des
+	 * scénarios à tort). Un état n'est modifié que s'il avance (en attente, envoyé, retardé, puis un état final) : un
+	 * « Envoyé » tardif n'écrase jamais « Livré ».
+	 *
+	 * Un échec ou un « Non remis » est un log d'erreur, que Jeedom fait aussi remonter dans le centre de messages.
+	 *
+	 * @param int|string|null $_ref `<commande>:<lot>`, ou seulement l'identifiant de la commande (SMS envoyé avant
+	 *        l'arrivée des lots, ou lot disparu du cache : le statut ne résume alors que ce numéro)
 	 * @param string $_number numéro tel qu'il a été envoyé
-	 * @param string $_status queued (en file, nouvel essai plus tard), sent, failed ou expired
+	 * @param string $_status queued (en file, nouvel essai plus tard), sent, pending (retardé), delivered,
+	 *        undelivered (non remis), failed (échec d'envoi), expired ou unknown
 	 * @param string $_reason raison technique courte (jamais le texte du SMS)
 	 * @param string|null $_time date du fait, Y-m-d H:i:s (maintenant par défaut)
 	 */
 	public static function setSmsStatus($_ref, $_number, $_status, $_reason = '', $_time = null) {
-		$labels = array(
-			'queued' => __('En attente d\'envoi', __FILE__),
-			'sent' => __('Envoyé', __FILE__),
-			'failed' => __('Échec d\'envoi', __FILE__),
-			'expired' => __('Expiré', __FILE__),
-		);
+		$labels = self::smsStateLabels();
 		if (!isset($labels[$_status])) {
 			log::add('sms4g', 'warning', '[SMS] Statut inconnu : ' . secureXSS($_status));
 			return;
@@ -668,25 +690,140 @@ class sms4g extends eqLogic {
 		$flags = ENT_QUOTES | ENT_SUBSTITUTE;
 		$number = htmlspecialchars((string) $_number, $flags, 'UTF-8');
 		$reason = htmlspecialchars((string) $_reason, $flags, 'UTF-8');
-		$text = $labels[$_status] . ' : ' . $number . (($reason != '') ? ' - ' . $reason : '') . ' (' . $date . ')';
 
-		$levels = array('queued' => 'warning', 'sent' => 'info', 'failed' => 'error', 'expired' => 'error');
+		$levels = array('queued' => 'warning', 'sent' => 'info', 'pending' => 'warning', 'delivered' => 'info', 'undelivered' => 'error', 'failed' => 'error', 'expired' => 'error', 'unknown' => 'warning');
 		log::add('sms4g', $levels[$_status], '[SMS] ' . $labels[$_status] . ' : ' . secureXSS(self::maskNumber($_number)) . (($reason != '') ? ' - ' . $reason : ''));
 
-		if ($_ref === null || !ctype_digit((string) $_ref)) {
+		if ($_ref === null || preg_match('/^(\d+)(?::([0-9a-f]+))?$/', (string) $_ref, $matches) !== 1) {
 			log::add('sms4g', 'debug', '[SMS] Statut sans référence de commande : non rattaché');
 			return;
 		}
-		$cmd = cmd::byId((int) $_ref);
+		$cmd = cmd::byId((int) $matches[1]);
 		if (!is_object($cmd) || $cmd->getEqType() != 'sms4g') {
-			log::add('sms4g', 'debug', '[SMS] Commande ' . (int) $_ref . ' introuvable (supprimée ?) : statut non rattaché');
+			log::add('sms4g', 'debug', '[SMS] Commande ' . (int) $matches[1] . ' introuvable (supprimée ?) : statut non rattaché');
 			return;
 		}
 		$eqLogic = $cmd->getEqLogic();
-		$eqLogic->checkAndUpdateCmd('delivery_status_' . $cmd->getId(), $text, $_time);
-		if ($_status == 'failed' || $_status == 'expired') {
-			$eqLogic->checkAndUpdateCmd('delivery_success_' . $cmd->getId(), 0, $_time);
+		$text = $labels[$_status] . ' : ' . $number . (($reason != '') ? ' - ' . $reason : '') . ' (' . $date . ')';
+		$deliverySuccess = null;
+		if ($_status == 'delivered') {
+			$deliverySuccess = 1;
+		} elseif (in_array($_status, array('undelivered', 'failed', 'expired'))) {
+			$deliverySuccess = 0;
 		}
+
+		$batch = isset($matches[2]) ? self::getBatch($matches[2]) : null;
+		if ($batch !== null) {
+			$update = self::updateBatch($batch, (string) $_number, $_status, (string) $_reason);
+			if (!$update['applied']) {
+				// Un état qui ne fait pas avancer le SMS (un « Envoyé » tardif après « Livré »...) ne change rien
+				log::add('sms4g', 'debug', '[SMS] État ' . $_status . ' ignoré : le SMS est déjà passé à un état plus avancé');
+				return;
+			}
+			$batch = $update['batch'];
+			$states = array();
+			foreach ($batch['numbers'] as $item) {
+				$states[] = $item['state'];
+			}
+			// Un lot d'un seul numéro garde le texte de cet événement ; sinon, le résumé de tous les numéros
+			if (count($states) > 1) {
+				$text = self::batchSummary($batch, $labels, $date);
+			}
+			if (count(array_intersect($states, array('undelivered', 'failed', 'expired'))) > 0) {
+				$deliverySuccess = 0;
+			} elseif (count(array_diff($states, array('delivered'))) == 0) {
+				$deliverySuccess = 1;
+			} else {
+				$deliverySuccess = null;
+			}
+			// « Remis » n'est écrit que quand il change (il génère un événement à chaque écriture)
+			if ($deliverySuccess !== null && $batch['deliverySuccess'] === $deliverySuccess) {
+				$deliverySuccess = null;
+			} elseif ($deliverySuccess !== null) {
+				$batch['deliverySuccess'] = $deliverySuccess;
+			}
+			self::saveBatch($matches[2], $batch);
+		}
+		$eqLogic->checkAndUpdateCmd('delivery_status_' . $cmd->getId(), $text, $_time);
+		if ($deliverySuccess !== null) {
+			$eqLogic->checkAndUpdateCmd('delivery_success_' . $cmd->getId(), $deliverySuccess, $_time);
+		}
+	}
+
+	/**
+	 * Libellés des états d'un SMS (voir setSmsStatus) ; `waiting` n'existe que dans un lot, avant le premier événement.
+	 *
+	 * @return array
+	 */
+	private static function smsStateLabels() {
+		return array(
+			'waiting' => __('En attente', __FILE__),
+			'queued' => __('En attente d\'envoi', __FILE__),
+			'sent' => __('Envoyé', __FILE__),
+			'pending' => __('Retardé', __FILE__),
+			'delivered' => __('Livré', __FILE__),
+			'undelivered' => __('Non remis', __FILE__),
+			'failed' => __('Échec d\'envoi', __FILE__),
+			'expired' => __('Expiré', __FILE__),
+			'unknown' => __('Inconnu', __FILE__),
+		);
+	}
+
+	/**
+	 * Rang d'un état : un état n'en remplace un autre que s'il fait avancer le SMS, et un état final (livré, non
+	 * remis, échec d'envoi, expiré, inconnu) n'est jamais remplacé.
+	 */
+	private static function smsStateRank($_state) {
+		$ranks = array('waiting' => 0, 'queued' => 1, 'sent' => 2, 'pending' => 3);
+		return isset($ranks[$_state]) ? $ranks[$_state] : 4;
+	}
+
+	/**
+	 * Lot d'un envoi (états des numéros), gardé en cache 26 heures (24 h de validité demandée au centre SMS, plus une marge).
+	 *
+	 * @return array|null null si le lot n'existe plus
+	 */
+	private static function getBatch($_batch) {
+		$value = cache::byKey('sms4g::batch::' . $_batch)->getValue(null);
+		$batch = is_string($value) ? json_decode($value, true) : null;
+		return (is_array($batch) && isset($batch['numbers']) && is_array($batch['numbers'])) ? $batch : null;
+	}
+
+	private static function saveBatch($_batch, $_data) {
+		cache::set('sms4g::batch::' . $_batch, json_encode($_data), 26 * 3600);
+	}
+
+	/**
+	 * Applique un état au numéro du lot s'il fait avancer son SMS.
+	 *
+	 * @return array `batch` (le lot mis à jour) et `applied` (false si l'état ne fait pas avancer le SMS : rien n'a changé)
+	 */
+	private static function updateBatch($_batch, $_number, $_status, $_reason) {
+		$current = isset($_batch['numbers'][$_number]) ? $_batch['numbers'][$_number]['state'] : 'waiting';
+		$applied = self::smsStateRank($current) < 4 && self::smsStateRank($_status) >= self::smsStateRank($current);
+		if ($applied) {
+			$_batch['numbers'][$_number] = array('state' => $_status, 'reason' => $_reason);
+		}
+		return array('batch' => $_batch, 'applied' => $applied);
+	}
+
+	/**
+	 * Résumé d'un lot sur une ligne : `Livré 2/3 : <numéro> ✓, <numéro> ✓, <numéro> (envoyé) (<date>)`.
+	 */
+	private static function batchSummary($_batch, $_labels, $_date) {
+		$flags = ENT_QUOTES | ENT_SUBSTITUTE;
+		$delivered = 0;
+		$items = array();
+		foreach ($_batch['numbers'] as $number => $item) {
+			$shown = htmlspecialchars((string) $number, $flags, 'UTF-8');
+			if ($item['state'] == 'delivered') {
+				$delivered++;
+				$items[] = $shown . ' ✓';
+			} else {
+				$items[] = $shown . ' (' . mb_strtolower($_labels[$item['state']]) . ')';
+			}
+		}
+		return $_labels['delivered'] . ' ' . $delivered . '/' . count($_batch['numbers']) . ' : ' . implode(', ', $items) . ' (' . $_date . ')';
 	}
 	/**
 	 * Commande AT du mode diagnostic. Rend la main aussitôt : le résultat arrive plus tard dans les commandes

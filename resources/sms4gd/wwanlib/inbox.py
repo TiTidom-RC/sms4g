@@ -30,11 +30,14 @@ from .events import SmsIncomplete, SmsReceived
 from .exceptions import CmsError, NotConnectedError
 from .executor import Priority, Step, Transaction
 from .pdu import Concatenation, decodeSmsPdu
+from .receipts import ReceiptTracker
 from .sms import describe, maskNumber
 
 log = logging.getLogger(__name__)
 
 CMTI = re.compile(r'^\+CMTI:\s*"?(\w+)"?\s*,\s*(\d+)')
+CDSI = re.compile(r'^\+CDSI:\s*"?(\w+)"?\s*,\s*(\d+)')  # a delivery report kept in the SR memory
+CDS = re.compile(r'^\+CDS:\s*\d+$')  # a delivery report, its PDU is on the next line
 CMGL_HEADER = re.compile(r'^\+CMGL:\s*(\d+)\s*,\s*(\d+)')
 CMGR_HEADER = re.compile(r'^\+CMGR:')
 CPMS_USAGE = re.compile(r'^\+CPMS:\s*"?\w+"?\s*,\s*(\d+)\s*,\s*(\d+)')
@@ -156,12 +159,15 @@ class Reassembler:
 
 class Inbox:
     def __init__(self, submit: Callable[[Transaction], Future], publish: Callable[[Any], None],
-                 readMemory: Callable[[], str | None], reassembler: Reassembler | None = None):
+                 readMemory: Callable[[], str | None], reassembler: Reassembler | None = None,
+                 receipts: ReceiptTracker | None = None):
         """ :param submit: submits a transaction to the Executor of the current connection (a failed Future with
             ``NotConnectedError`` when there is none)
         :param publish: receives the events (``SmsReceived``, ``SmsIncomplete``)
         :param readMemory: name of the memory selected for reading and deleting (None if unknown): a notification
-            about another memory makes the transaction select it first """
+            about another memory makes the transaction select it first (and select the usual one back)
+        :param receipts: follows the delivery reports (None: they are not asked, a report that comes is ignored) """
+        self._receipts = receipts
         self._submit = submit
         self._publish = publish
         self._readMemory = readMemory
@@ -182,10 +188,12 @@ class Inbox:
 
     def onNotification(self, lines: list[str]) -> None:
         """ Called for every notification of the modem; does not block """
-        for line in lines:
-            match = CMTI.match(line)
+        for position, line in enumerate(lines):
+            match = CMTI.match(line) or CDSI.match(line)
             if match:
                 self.fetch(match.group(1), int(match.group(2)))
+            elif CDS.match(line) and position + 1 < len(lines) and HEX_LINE.match(lines[position + 1]):
+                self._handlePdu(lines[position + 1], None)
 
     def catchUp(self) -> None:
         """ Reads every SMS stored in the memory (received while nobody was listening, or whose notification was
@@ -228,10 +236,13 @@ class Inbox:
         """ Reads then deletes the SMS at ``index`` (in ``memory``, the selected one when None). Does not block. """
         steps: list[Step] = []
         current = self._readMemory()
-        if memory and current and memory.upper() != current.upper():
+        other = bool(memory and current and memory.upper() != current.upper())
+        if other:
             steps.append(Step(f'AT+CPMS="{memory}"'))
         position = len(steps)
         steps += [Step(f'AT+CMGR={index}', READ_TIMEOUT), Step(f'AT+CMGD={index}', DELETE_TIMEOUT)]
+        if other:
+            steps.append(Step(f'AT+CPMS="{current}"'))  # the next readings (the catch-up) expect the usual memory
         transaction = Transaction(steps, Priority.MEMORY_RELEASE)
         self._submit(transaction).add_done_callback(lambda future: self._fetched(future, transaction, index, position))
 
@@ -242,15 +253,21 @@ class Inbox:
                 error = future.exception()
             except CancelledError:
                 return
-            reading = transaction.responses[position] if len(transaction.responses) > position else []
-            if error is not None and not (reading and reading[-1] == 'OK'):
-                self._notRead(index, error)
+            responses = transaction.responses
+            reading = responses[position] if len(responses) > position else []
+            if not (reading and reading[-1] == 'OK'):
+                self._notRead(index, error if error is not None else RuntimeError('no answer'))
                 return
-            if error is not None:
+            deletion = responses[position + 1] if len(responses) > position + 1 else []
+            deleted = bool(deletion) and deletion[-1] == 'OK'
+            if not deleted:
                 with self._lock:
                     self._leftover.add(index)
-                log.warning('SMS at index %d read but not deleted (%s): it stays in the memory', index, describe(error))
-            self._received(index, reading, deleted=error is None)
+                log.warning('SMS at index %d read but not deleted (%s): it stays in the memory', index,
+                            describe(error) if error is not None else 'no answer')
+            elif error is not None:
+                log.warning('The SMS memory could not be selected back (%s)', describe(error))
+            self._received(index, reading, deleted=deleted)
         except Exception:
             log.exception('Error while processing the SMS at index %d', index)
 
@@ -280,13 +297,22 @@ class Inbox:
         else:
             with self._lock:
                 self._leftover.discard(index)
+        self._handlePdu(pdu, index, deleted)
+
+    def _handlePdu(self, pdu: str, index: int | None, deleted: bool = True) -> None:
+        """ A received SMS, or a delivery report, as a PDU: from a read memory (``index``) or straight from a ``+CDS`` """
+        where = f'SMS at index {index}' if index is not None else 'Delivery report'
         try:
             decoded = decodeSmsPdu(pdu)
         except Exception:
-            log.error('SMS at index %d unreadable (%d bytes), %s', index, len(pdu) // 2, 'deleted' if deleted else 'not deleted')
+            log.error('%s unreadable (%d bytes)%s', where, len(pdu) // 2,
+                      ', ' + ('deleted' if deleted else 'not deleted') if index is not None else '')
+            return
+        if decoded.get('type') == 'SMS-STATUS-REPORT':
+            self._report(decoded)
             return
         if decoded.get('type') != 'SMS-DELIVER':
-            log.warning('SMS at index %d is not a received SMS (%s), ignored', index, decoded.get('type'))
+            log.warning('%s is not a received SMS (%s), ignored', where, decoded.get('type'))
             return
         number = str(decoded.get('number') or 'unknown')
         text = str(decoded.get('text') or '')
@@ -305,6 +331,17 @@ class Inbox:
         for event in self.reassembler.add(number, concatenation.reference, concatenation.parts, concatenation.number,
                                           text, sent):
             self._publish(event)
+
+    def _report(self, decoded: dict) -> None:
+        """ A delivery report goes to the tracker (it was asked for only when there is one) """
+        if self._receipts is None:
+            log.debug('Delivery report ignored: not asked')
+            return
+        try:
+            reportTime: float | None = decoded['time'].timestamp()
+        except (KeyError, ValueError, OverflowError, OSError):
+            reportTime = None
+        self._receipts.onReport(int(decoded['reference']), str(decoded.get('number') or ''), reportTime, int(decoded['status']))
 
     # ---- the SMS stored in the memory -------------------------------------------------------------
 

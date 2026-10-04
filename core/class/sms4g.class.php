@@ -902,8 +902,8 @@ class sms4gCmd extends cmd {
 			// Réponse à une interaction : le numéro de l'expéditeur
 			$phonenumbers = array($_options['number']);
 		} elseif ($isCustomNumber) {
-			// "Envoyer message à" : le numéro est le titre, le texte est le message
-			$phonenumbers = array($title);
+			// "Envoyer message à" : le ou les numéros (séparés par ;) sont le titre, le texte est le message
+			$phonenumbers = explode(';', $title);
 		} else {
 			$phonenumbers = explode(';', $this->getConfiguration('phonenumber'));
 		}

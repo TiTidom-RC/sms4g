@@ -902,7 +902,7 @@ class sms4g extends eqLogic {
 			return;
 		}
 		// Le texte est dans le log (info) : si quelque chose se passe mal ensuite, on peut toujours le retrouver
-		log::add('sms4g', 'info', '[SMS] Message reçu de ' . $shown . ' : ' . secureXSS($message));
+		log::add('sms4g', 'info', '[SMS] Message reçu de ' . $shown . ' : ' . self::loggableText($message));
 
 		$sender = self::normalizePhoneNumber($number);
 		$tooOld = self::isTooOld($_message);
@@ -1055,7 +1055,7 @@ class sms4g extends eqLogic {
 			}
 			$reply = interactQuery::tryToReply($_message, $params);
 			if (is_array($reply) && isset($reply['reply']) && trim($reply['reply']) != '') {
-				log::add('sms4g', 'info', '[SMS] Réponse à ' . secureXSS(self::maskNumber($_number)) . ' : ' . secureXSS($reply['reply']));
+				log::add('sms4g', 'info', '[SMS] Réponse à ' . secureXSS(self::maskNumber($_number)) . ' : ' . self::loggableText($reply['reply']));
 				$_cmd->execute(array('title' => $reply['reply'], 'message' => '', 'number' => $_number));
 			}
 		} else {
@@ -1079,6 +1079,19 @@ class sms4g extends eqLogic {
 		$_eqLogic->checkAndUpdateCmd('sms', $_message);
 		$_eqLogic->checkAndUpdateCmd('sender', $_sender);
 	}
+	/**
+	 * Texte d'un SMS écrit dans un log : entre guillemets, une seule ligne (un retour à la ligne devient \n : un
+	 * expéditeur ne peut pas fabriquer de fausses lignes de log), sans autre transformation (accents, apostrophes, emoji
+	 * et balises restent tels quels : le visualiseur de logs du Core échappe lui-même le HTML). Comme epr dans le
+	 * log du démon. Ne pas utiliser pour une valeur affichée dans une page (widget, message) : secureXSS.
+	 *
+	 * @param string $_text
+	 * @return string
+	 */
+	private static function loggableText($_text) {
+		return json_encode((string) $_text, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+	}
+
 	/**
 	 * Masque un numéro de téléphone pour les logs (même règle que le démon : 4 premiers et 2 derniers caractères).
 	 */

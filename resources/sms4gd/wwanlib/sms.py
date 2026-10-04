@@ -139,18 +139,23 @@ def describe(error: BaseException) -> str:
 
 class SmsSender:
     def __init__(self, submit: Callable[[Transaction], Future], requestStatusReport: bool = False,
-                 segmentPause: float = 0.5, stopEvent: threading.Event | None = None):
+                 segmentPause: float = 0.5, stopEvent: threading.Event | None = None, startReference: int | None = None):
         """ :param submit: submits a transaction to the Executor of the current connection. When the modem is not
             connected the Future must fail with ``NotConnectedError``.
         :param segmentPause: seconds between two parts of a message (the memory releases pass meanwhile)
-        :param stopEvent: set when the library stops, ends the pauses """
+        :param stopEvent: set when the library stops, ends the pauses
+        :param startReference: TP-MR of the first part sent, random by default: the reports of the messages sent before
+            a restart of the daemon, which may still arrive, then rarely carry the TP-MR of a new message """
         self._submit = submit
         self._requestStatusReport = requestStatusReport
         self._segmentPause = segmentPause
         self._stop = stopEvent or threading.Event()
-        self._reference = 0  # TP-MR of the next part: follows the one the modem returns (+1)
+        self._reference = random.randrange(256) if startReference is None else startReference % 256  # TP-MR of the next part: follows the one the modem returns (+1)
 
-    def send(self, number: str, text: str, maxPartsPerGroup: int = 0) -> SendOutcome:
+    def send(self, number: str, text: str, maxPartsPerGroup: int = 0,
+             onPart: Callable[[int, int, int | None], None] | None = None) -> SendOutcome:
+        """ :param onPart: called as soon as a part is accepted, with its position (from 1), the number of parts and
+            its TP-MR: the delivery report of a part may come while the next one is being sent """
         try:
             parts = buildParts(number, text, self._reference, random.randrange(256), self._requestStatusReport,
                                max(0, maxPartsPerGroup))
@@ -176,6 +181,8 @@ class SmsSender:
             else:
                 self._reference = (reference + 1) % 256
             outcome.references.append(reference)
+            if onPart is not None:
+                onPart(index + 1, len(parts), reference)
             log.debug('SMS to %s: part %d/%d accepted (TP-MR %s)', shown, index + 1, len(parts), reference)
         return outcome
 

@@ -485,6 +485,12 @@ class DeliveryReportTest(unittest.TestCase):
         self.assertEqual(self.sim.store, {})
         self.assertEqual([(event.smsId, event.status) for event in self.events], [('a', 'delivered')])
 
+    def testTheMemoryIsSelectedBackWhenTheReadFails(self):
+        # seen on a SIM7600: +CDSI announces an index that SR does not hold (+CMS ERROR: 321), the modem would stay on SR
+        self.inbox.onNotification(['+CDSI: "SR",27'])
+        self.assertEqual(self.sim.commands(), [['AT+CPMS="SR"', 'AT+CMGR=27', 'AT+CMGD=27', 'AT+CPMS="SM"'],
+                                               ['AT+CPMS="SM"']])
+
     def testTheMemoryIsSelectedBackEvenWhenTheDeletionFailed(self):
         self.sim.add(0, statusReportPdu(218, '+33662032692'), stat=1)
         self.sim.errors['AT+CMGD=0'] = CmsError('AT+CMGD=0', 500)

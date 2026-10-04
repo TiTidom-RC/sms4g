@@ -244,9 +244,12 @@ class Inbox:
         if other:
             steps.append(Step(f'AT+CPMS="{current}"'))  # the next readings (the catch-up) expect the usual memory
         transaction = Transaction(steps, Priority.MEMORY_RELEASE)
-        self._submit(transaction).add_done_callback(lambda future: self._fetched(future, transaction, index, position))
+        selectBack = current if other else None
+        self._submit(transaction).add_done_callback(
+            lambda future: self._fetched(future, transaction, index, position, selectBack))
 
-    def _fetched(self, future: Future, transaction: Transaction, index: int, position: int) -> None:
+    def _fetched(self, future: Future, transaction: Transaction, index: int, position: int,
+                 selectBack: str | None = None) -> None:
         """ Runs in the thread that completes the transaction (the Executor): it must stay short """
         try:
             try:
@@ -254,6 +257,7 @@ class Inbox:
             except CancelledError:
                 return
             responses = transaction.responses
+            self._restoreMemory(error, transaction, selectBack)
             reading = responses[position] if len(responses) > position else []
             if not (reading and reading[-1] == 'OK'):
                 self._notRead(index, error if error is not None else RuntimeError('no answer'))
@@ -270,6 +274,15 @@ class Inbox:
             self._received(index, reading, deleted=deleted)
         except Exception:
             log.exception('Error while processing the SMS at index %d', index)
+
+    def _restoreMemory(self, error: BaseException | None, transaction: Transaction, memory: str | None) -> None:
+        """ A failed step stopped the transaction before its last one: the modem stays on the other memory, which the
+        next readings (and the cache of the Executor) would take for the usual one. Select the usual one back. """
+        responses = transaction.responses
+        done = len(responses) == len(transaction.steps) and bool(responses[-1]) and responses[-1][-1] == 'OK'
+        if memory is None or done or isinstance(error, NotConnectedError):
+            return
+        self._submit(Transaction([Step(f'AT+CPMS="{memory}"')], Priority.MEMORY_RELEASE))
 
     def _notRead(self, index: int, error: BaseException) -> None:
         if isinstance(error, CmsError) and error.code == INVALID_INDEX:

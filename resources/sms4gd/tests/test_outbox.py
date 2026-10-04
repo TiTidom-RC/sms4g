@@ -335,6 +335,42 @@ class LimitedRetriesTest(OutboxTestCase):
         self.assertFalse(self.of(SmsFailed))
 
 
+class MessagePauseTest(OutboxTestCase):
+    def testTheNextSmsWaitsForThePauseEvenWhenItComesLater(self):
+        script = Script()
+        self.make(script, messagePause=0.4)
+        self.outbox.submit(NUMBER, 'one', '1')
+        self.assertTrue(self.waitEvents(SmsSent))
+        time.sleep(0.1)  # the second one arrives while the pause runs, the queue being empty
+        self.outbox.submit(NUMBER, 'two', '2')
+        self.assertTrue(self.waitEvents(SmsSent, 2))
+        first, second = script.times()
+        self.assertGreaterEqual(second - first, 0.4)
+
+    def testNoPauseByDefault(self):
+        script = Script()
+        self.make(script)
+        for text in ('one', 'two', 'three'):
+            self.outbox.submit(NUMBER, text)
+        self.assertTrue(self.waitEvents(SmsSent, 3))
+        self.assertLess(script.times()[-1] - script.times()[0], 0.3)
+
+    def testAnSmsThatDidNotLeaveDoesNotStartThePause(self):
+        script = Script(SendOutcome('retry', 'timeout'))
+        self.make(script, messagePause=0.5, delays=(0.05,))
+        self.outbox.submit(NUMBER, 'one', '1')
+        self.assertTrue(self.waitEvents(SmsSent))
+        first, second = script.times()
+        self.assertLess(second - first, 0.4)
+
+    def testTheQueueExpiryIsNotDelayedByThePause(self):
+        script = Script()
+        self.make(script, messagePause=0.5, ttl=0.2)
+        self.outbox.submit(NUMBER, 'one', '1')
+        self.outbox.submit(NUMBER, 'two', '2')
+        self.assertTrue(self.waitEvents(SmsExpired))
+
+
 class FakeTracker:
     """ Stands for the ReceiptTracker: records what the outbox tells it """
 
@@ -544,6 +580,18 @@ class ModemSmsTest(unittest.TestCase):
         self.assertEqual(self.of(SmsDelivery), [SmsDelivery(smsId, '42:abc', NUMBER, 'delivered', '', 1, 1)])
         events = [event for event in self.events if isinstance(event, (SmsSent, SmsDelivery))]
         self.assertIsInstance(events[0], SmsSent)  # "sent" is told first
+
+    def testAReportArrivingDuringThePauseBetweenTwoSmsIsHandled(self):
+        modem = self.makeModem(deliveryReport=True, messagePause=3.0)
+        modem.start()
+        self.waitConnected(modem)
+        first = modem.sendSms(NUMBER, 'one', ref='1')
+        modem.sendSms(NUMBER, 'two', ref='2')
+        self.assertTrue(self.waitEvents(SmsSent))
+        FakeSerial.instances[0].feed(('\r\n+CDS: 26\r\n' + statusReportPdu(7, NUMBER) + '\r\n').encode())
+        self.assertTrue(self.waitEvents(SmsDelivery, timeout=1.5))  # the second SMS still waits
+        self.assertEqual([(event.smsId, event.status) for event in self.of(SmsDelivery)], [(first, 'delivered')])
+        self.assertEqual(len(self.of(SmsSent)), 1)
 
     def testNothingIsFollowedWhenTheReportsAreNotAsked(self):
         modem = self.makeModem(deliveryReport=False)

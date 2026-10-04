@@ -434,6 +434,101 @@ class ModemTest(unittest.TestCase):
         self.assertIn('SMS memory usage: ME 3/23, SM 0/100', '\n'.join(logs.output))
         self.assertNotIn('SR', ' '.join(line for line in logs.output if 'usage' in line))
 
+    def testSmsDoneAfterTheInitializationAppliesTheSmsSettingsAgain(self):
+        modem = self.makeModem()
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        port = FakeSerial.instances[0]
+        self.assertEqual(port.commands().count('AT+CNMI=0,1,0,1'), 1)
+        with self.assertLogs('wwanlib', level='INFO') as logs:
+            port.feed(b'\r\nSMS DONE\r\n')  # the SMS service of the modem restarted
+            self.assertTrue(waitFor(lambda: port.commands().count('AT+CNMI=0,1,0,1') == 2))
+        self.assertIn('SMS DONE', '\n'.join(logs.output))
+        self.assertEqual(port.commands().count('AT+CPMS="SM","SM","SM"'), 2)
+        self.assertTrue(waitFor(lambda: port.commands().count('AT+CMGL=4') == 2))  # what arrived meanwhile is read
+        self.assertEqual(len(FakeSerial.instances), 1)  # no reconnection
+
+    def testSmsDoneDuringTheInitializationIsNotLost(self):
+        sent = []
+
+        def notifications(fake):
+            fake.feed(b'OK\r\n')
+            if not sent:
+                sent.append(True)
+                fake.feed(b'\r\nSMS DONE\r\n')
+
+        FakeSerial.behavior = answer(simcomTable(**{'AT+CNMI=0,1,0,1': notifications}), echo=True)
+        modem = self.makeModem()
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        port = FakeSerial.instances[0]
+        self.assertTrue(waitFor(lambda: port.commands().count('AT+CNMI=0,1,0,1') == 2))
+
+    def testSmsDoneFromAnotherConnectionIsIgnored(self):
+        modem = self.makeModem()
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        session = modem._session
+        modem._session = None  # disconnected
+        modem._onSmsDone(session)
+        time.sleep(0.3)
+        self.assertEqual(FakeSerial.instances[0].commands().count('AT+CNMI=0,1,0,1'), 1)
+
+    def restartsTheModem(self, fake):
+        fake.feed(b'OK\r\n')
+        threading.Timer(0.1, fake.unplug).start()  # the modem goes away a moment after the answer
+
+    def testRestartLosesTheConnectionOnPurposeAndComesBack(self):
+        FakeSerial.behavior = answer(simcomTable(**{'AT+CRESET': self.restartsTheModem}), echo=True)
+        modem = self.makeModem()
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        self.assertIsNone(modem.restart('requested').result(3))
+        self.assertTrue(waitFor(lambda: len(FakeSerial.instances) == 2 and modem.state == ConnectionState.CONNECTED))
+        self.assertTrue(waitFor(lambda: self.states()[-1:] == ['connected']))
+        self.assertIn('AT+CRESET', FakeSerial.instances[0].commands())
+        self.assertEqual(self.states(), ['connecting', 'connected', 'restarting', 'connected'])
+        self.assertEqual([event.details for event in self.eventsOf(StateChanged) if event.state == 'restarting'],
+                         [{'reason': 'requested'}])
+
+    def testRestartFallsBackOnAnotherCommand(self):
+        FakeSerial.behavior = answer(simcomTable(**{'AT+CRESET': 'ERROR\r\n', 'AT+CFUN=1,1': self.restartsTheModem}), echo=True)
+        modem = self.makeModem()
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        modem.restart().result(3)
+        self.assertTrue(waitFor(lambda: len(FakeSerial.instances) == 2 and modem.state == ConnectionState.CONNECTED))
+        self.assertEqual(FakeSerial.instances[0].commands()[-2:], ['AT+CRESET', 'AT+CFUN=1,1'])
+
+    def testRestartRefusedByTheModemChangesNothing(self):
+        FakeSerial.behavior = answer(simcomTable(**{'AT+CRESET': 'ERROR\r\n', 'AT+CFUN=1,1': 'ERROR\r\n'}), echo=True)
+        modem = self.makeModem()
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        with self.assertRaises(CommandError):
+            modem.restart().result(3)
+        self.assertTrue(waitFor(lambda: self.states()[-1:] == ['connected']))
+        self.assertEqual(modem.state, ConnectionState.CONNECTED)
+        self.assertEqual(len(FakeSerial.instances), 1)
+        self.assertEqual(modem.command('AT+CSQ').result(2), ['+CSQ: 20,99', 'OK'])  # still usable
+
+    def testRestartIsRefusedWhenNotConnected(self):
+        modem = self.makeModem()
+        with self.assertRaises(NotConnectedError):
+            modem.restart()
+
+    def testCommandsAreRefusedWhileRestarting(self):
+        FakeSerial.behavior = answer(simcomTable(**{'AT+CRESET': lambda fake: fake.feed(b'OK\r\n')}), echo=True)
+        modem = self.makeModem()
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        modem.restart().result(3)
+        self.assertEqual(modem.state, ConnectionState.RESTARTING)
+        with self.assertRaises(NotConnectedError):
+            modem.command('AT+CSQ').result(1)
+        with self.assertRaises(NotConnectedError):
+            modem.restart()
+
     def eventsOf(self, kind) -> list:
         return [event for event in self.events if isinstance(event, kind)]
 

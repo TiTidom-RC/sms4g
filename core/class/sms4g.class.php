@@ -691,13 +691,11 @@ class sms4g extends eqLogic {
 
 	public static function onSignal($_modem, $_message, $_time) {
 		$value = isset($_message['value']) ? (int) $_message['value'] : -1;
-		config::save('signalStrength', $value, 'sms4g');
 		$_modem->checkAndUpdateCmd('signal', $value, $_time);
 	}
 
 	public static function onNetwork($_modem, $_message, $_time) {
 		$operator = (isset($_message['operator']) && $_message['operator'] !== null) ? (string) $_message['operator'] : '';
-		config::save('networkName', $operator, 'sms4g');
 		$_modem->checkAndUpdateCmd('operator', $operator, $_time);
 	}
 

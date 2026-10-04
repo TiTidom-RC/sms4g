@@ -164,6 +164,9 @@ function sms4g_update() {
 
 	// Le mode texte n'existe plus : les SMS sont toujours envoyés et reçus en PDU
 	config::remove('textMode', 'sms4g');
+	// Le signal et le réseau ne sont plus recopiés dans la configuration : ils sont sur l'équipement Modem
+	config::remove('signalStrength', 'sms4g');
+	config::remove('networkName', 'sms4g');
 
 	// Équipement virtuel Modem (connexion, signal, réseau, commande AT de diagnostic)
 	try {

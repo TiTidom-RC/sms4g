@@ -174,20 +174,6 @@ if (!isConnect('admin')) {
                     <input type="checkbox" class="configKey" data-l1key="force4gOnly" />
                 </div>
             </div>
-            <div class="form-group">
-                <label class="col-lg-3 control-label">{{Force du signal}}
-                    <sup><i class="fas fa-question-circle tooltips" title="{{-1 = signal inconnu (pas de lecture disponible actuellement)}}"></i></sup>
-                </label>
-                <div class="col-lg-2">
-                    <span class="configKey" data-l1key="signalStrength"></span> / 30
-                </div>
-            </div>
-            <div class="form-group">
-                <label class="col-lg-3 control-label">{{Réseau}}</label>
-                <div class="col-lg-3">
-                    <span class="configKey" data-l1key="networkName"></span>
-                </div>
-            </div>
         </div>
         <div>
             <legend><i class="fas fa-sms"></i> {{Messages}}</legend>

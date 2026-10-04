@@ -16,6 +16,7 @@ from .executor import Executor, Priority, Transaction
 from .inbox import Inbox, Reassembler
 from .outbox import Outbox
 from .profiles import GENERIC, Profile, detectProfile
+from .receipts import ReceiptTracker
 from .sms import SmsSender, normalizeNumber
 from .supervisor import Supervisor
 from .transport import Transport
@@ -40,6 +41,7 @@ class ModemOptions:
     aging: float = 30.0  # seconds after which a waiting transaction rises by one rank (0 = off), see Executor
     concatPartsTtl: float = 300.0  # seconds the parts of a long SMS are waited for before the message is given up
     maxIncompleteSms: int = 50  # long SMS waiting for their last parts at most: beyond, the oldest is given up
+    receiptMaxAge: float = 25 * 3600.0  # seconds an SMS waits for its final delivery report before it is reported unknown
 
 
 class _Session:
@@ -63,7 +65,7 @@ class Modem:
 
         modem = Modem('/dev/ttyUSB2', 115200, pin=None, options=ModemOptions(deliveryReport=True))
         modem.onEvent(callback)   # StateChanged, ModemIdentified, SignalChanged, NetworkChanged, UnsolicitedNotification,
-                                  # SmsQueued, SmsSent, SmsFailed, SmsExpired, SmsReceived, SmsIncomplete
+                                  # SmsQueued, SmsSent, SmsFailed, SmsExpired, SmsReceived, SmsIncomplete, SmsDelivery
         modem.start()             # does not block: the Supervisor connects (and reconnects) in the background
         lines = modem.command('AT+CSQ', timeout=10).result()
         smsId = modem.sendSms('+33612345678', 'Hello', ref='42')   # queued, SmsSent / SmsFailed / SmsExpired follow
@@ -87,11 +89,13 @@ class Modem:
         self._lastSignal: int | None = None
         self._lastNetwork: tuple[str, str | None] | None = None
         self._smsStop = threading.Event()
+        # The delivery reports are followed only when they are asked for
+        self._receipts = ReceiptTracker(self._dispatcher.post, self.options.receiptMaxAge) if self.options.deliveryReport else None
         self._sender = SmsSender(self._submitTransaction, self.options.deliveryReport, self.options.segmentPause, self._smsStop)
         self._outbox = Outbox(self._sender.send, self._dispatcher.post, self.options.smsTtl, self.options.smsQueueSize,
-                              stopEvent=self._smsStop)
+                              stopEvent=self._smsStop, tracker=self._receipts)
         self._inbox = Inbox(self._submitTransaction, self._dispatcher.post, self._readMemory,
-                            Reassembler(self.options.concatPartsTtl, self.options.maxIncompleteSms))
+                            Reassembler(self.options.concatPartsTtl, self.options.maxIncompleteSms), self._receipts)
         self._supervisor = Supervisor(
             connect=self._connect, disconnect=self._disconnect, publish=self._publishState, isFatal=self._isFatal,
             baseDelay=self.options.reconnectBaseDelay, maxDelay=self.options.reconnectMaxDelay,
@@ -222,6 +226,8 @@ class Modem:
         """ Gives up the long SMS that stay incomplete, and checks that the memory holds nothing readable: a
         notification may have been lost (the port was resynchronized...) """
         self._inbox.sweep()
+        if self._receipts is not None:
+            self._receipts.expire()
         if not session.smsReady:
             return
         try:

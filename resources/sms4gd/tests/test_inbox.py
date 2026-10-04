@@ -18,7 +18,8 @@ from wwanlib import ConnectionState, Modem, ModemOptions, SmsIncomplete, SmsRece
 from wwanlib.exceptions import CmsError, NotConnectedError
 from wwanlib.executor import Executor, Priority, Transaction
 from wwanlib.inbox import Inbox, Reassembler
-from wwanlib.pdu import encodeSmsSubmitPdu
+from wwanlib.pdu import _encodeAddressField, _encodeTimestamp, encodeSmsSubmitPdu
+from wwanlib.receipts import ReceiptTracker
 
 NUMBER = '+33612345678'
 # Service center time stamp 2026-10-04 12:30:00, time zone +2 h (8 quarters of an hour)
@@ -38,6 +39,13 @@ def deliverPdus(number: str, text: str, reference: int = 0x42) -> list[str]:
         deliver = b'\x00' + bytes([first & 0x40]) + address + rest[:2] + SCTS + rest[2:]
         result.append(deliver.hex().upper())
     return result
+
+
+def statusReportPdu(reference: int, number: str, status: int = 0, when: datetime | None = None) -> str:
+    """ The SMS-STATUS-REPORT PDU of a network about the message sent to ``number`` with this TP-MR (the SMS center
+    puts the time it received the message, ``when``: now by default) """
+    stamp = bytes(_encodeTimestamp(when or datetime.now(timezone.utc).replace(microsecond=0)))
+    return (b'\x00\x06' + bytes([reference]) + bytes(_encodeAddressField(number)) + stamp + stamp + bytes([status])).hex().upper()
 
 
 def cmgrLines(stat: int, pdu: str) -> list[str]:
@@ -285,7 +293,7 @@ class InboxTest(unittest.TestCase):
     def testANotificationAboutAnotherMemorySelectsItFirst(self):
         self.sim.add(2, deliverPdus(NUMBER, 'Hello')[0])
         self.notify(2, memory='ME')
-        self.assertEqual(self.sim.commands(), [['AT+CPMS="ME"', 'AT+CMGR=2', 'AT+CMGD=2']])
+        self.assertEqual(self.sim.commands(), [['AT+CPMS="ME"', 'AT+CMGR=2', 'AT+CMGD=2', 'AT+CPMS="SM"']])  # and the usual one back
         self.assertEqual(self.received()[0].text, 'Hello')
 
     def testTheSelectedMemoryIsNotSelectedAgain(self):
@@ -419,6 +427,60 @@ class InboxTest(unittest.TestCase):
 
     def testAnUnreadableAnswerOfTheMemoryCheckIsNotAnAlarm(self):
         self.assertFalse(self.inbox.checkMemory(['ERROR']))
+
+
+class DeliveryReportTest(unittest.TestCase):
+    def setUp(self):
+        self.sim = FakeSim()
+        self.events: list = []
+        self.tracker = ReceiptTracker(self.events.append)
+        self.inbox = Inbox(self.sim.submit, self.events.append, lambda: 'SM', receipts=self.tracker)
+        self.tracker.register('a', '42', '0662032692', 1, 1, 218)
+        self.tracker.close('a')
+
+    def testADirectReportReachesTheTracker(self):
+        self.inbox.onNotification(['+CDS: 26', statusReportPdu(218, '+33662032692')])
+        self.assertEqual([(event.smsId, event.status) for event in self.events], [('a', 'delivered')])
+        self.assertEqual(self.sim.transactions, [])  # nothing is read: the report came with the notification
+
+    def testTheStatusOfThePduIsUsed(self):
+        self.inbox.onNotification(['+CDS: 26', statusReportPdu(218, '+33662032692', status=0x43)])
+        self.assertEqual([(event.status, event.reason) for event in self.events], [('undelivered', 'not obtainable')])
+
+    def testAReportIsNeverAReceivedSms(self):
+        self.inbox.onNotification(['+CDS: 26', statusReportPdu(218, '+33662032692')])
+        self.assertFalse([event for event in self.events if isinstance(event, SmsReceived)])
+
+    def testAReportThatWasNotAskedForIsIgnored(self):
+        inbox = Inbox(self.sim.submit, self.events.append, lambda: 'SM')
+        with self.assertNoLogs('wwanlib.inbox', level='WARNING'):
+            inbox.onNotification(['+CDS: 26', statusReportPdu(218, '+33662032692')])
+        self.assertEqual(self.events, [])
+
+    def testALineThatIsNotAPduAfterCdsIsNotAReport(self):
+        self.inbox.onNotification(['+CDS: 26', 'OK'])
+        self.inbox.onNotification(['+CDS: 26'])
+        self.assertEqual(self.events, [])
+
+    def testAnUnreadableReportIsLogged(self):
+        with self.assertLogs('wwanlib.inbox', level='ERROR') as logs:
+            self.inbox.onNotification(['+CDS: 26', 'FFFF'])
+        self.assertIn('Delivery report unreadable (2 bytes)', logs.output[0])
+
+    def testAReportKeptInTheSrMemoryIsReadThenDeleted(self):
+        self.sim.add(0, statusReportPdu(218, '+33662032692'), stat=1)
+        self.inbox.onNotification(['+CDSI: "SR",0'])
+        self.assertEqual(self.sim.commands(), [['AT+CPMS="SR"', 'AT+CMGR=0', 'AT+CMGD=0', 'AT+CPMS="SM"']])
+        self.assertEqual(self.sim.store, {})
+        self.assertEqual([(event.smsId, event.status) for event in self.events], [('a', 'delivered')])
+
+    def testTheMemoryIsSelectedBackEvenWhenTheDeletionFailed(self):
+        self.sim.add(0, statusReportPdu(218, '+33662032692'), stat=1)
+        self.sim.errors['AT+CMGD=0'] = CmsError('AT+CMGD=0', 500)
+        with self.assertLogs('wwanlib.inbox', level='WARNING') as logs:
+            self.inbox.onNotification(['+CDSI: "SR",0'])
+        self.assertIn('read but not deleted', logs.output[0])
+        self.assertEqual([event.status for event in self.events], ['delivered'])
 
 
 def simBehavior(sim: FakeSim, table: dict | None = None):

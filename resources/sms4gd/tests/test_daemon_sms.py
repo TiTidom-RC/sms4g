@@ -15,7 +15,7 @@ import serial
 
 from dispatcher import Dispatcher, smsInboxMessage, smsStatusMessage
 from jeedom.jeedom import jeedom_publisher
-from tests.test_inbox import FakeSim, NUMBER as SENDER, SENT, deliverPdus, simBehavior
+from tests.test_inbox import FakeSim, NUMBER as SENDER, SENT, deliverPdus, simBehavior, statusReportPdu
 from tests.test_outbox import smsBehavior
 from tests.test_publisher import Receiver
 from tests.test_wwanlib import FakeSerial, waitFor
@@ -63,7 +63,7 @@ class DaemonSmsTest(unittest.TestCase):
         self.addCleanup(self.publisher.stop)
         self.modem = Modem('fake', 115200, options=ModemOptions(
             reconnectBaseDelay=0.05, reconnectMaxDelay=0.1, reconnectMaxAttempts=100, segmentPause=0.0, smsQueueSize=2,
-            monitorInterval=0.1, concatPartsTtl=0.5))
+            monitorInterval=0.1, concatPartsTtl=0.5, deliveryReport=True))
         self.modem.onEvent(self.onEvent)
         self.addCleanup(self.modem.stop)
         self.dispatcher = Dispatcher(queue.Queue(), self.modem, self.publisher, 'KEY', diagnostic=False)
@@ -126,6 +126,19 @@ class DaemonSmsTest(unittest.TestCase):
             'type': 'smsReceived', 'number': SENDER, 'message': 'Allume le salon', 'parts': 1, 'sent': SENT})
         self.assertRegex(message['id'], r'^[0-9a-f]{32}$')
         self.assertEqual(self.sim.store, {})
+
+    def testTheDeliveryReportsBecomeTheStatesOfTheSms(self):
+        self.startConnected()
+        self.request(number=NUMBER, message='Hello', ref='42:abc')
+        self.assertTrue(waitFor(lambda: [s['status'] for s in self.statuses()] == ['sent']))
+        port = FakeSerial.instances[0]
+        port.feed(('\r\n+CDS: 26\r\n' + statusReportPdu(7, NUMBER, status=0x21) + '\r\n').encode())  # delayed
+        self.assertTrue(waitFor(lambda: [s['status'] for s in self.statuses()] == ['sent', 'pending']))
+        port.feed(('\r\n+CDS: 26\r\n' + statusReportPdu(7, NUMBER) + '\r\n').encode())  # delivered
+        self.assertTrue(waitFor(lambda: [s['status'] for s in self.statuses()] == ['sent', 'pending', 'delivered']))
+        pending, delivered = self.statuses()[1:]
+        self.assertEqual((pending['reason'], pending['ref'], pending['number']), ('recipient busy', '42:abc', NUMBER))
+        self.assertEqual((delivered['parts'], delivered['deliveredParts'], delivered['reason']), (1, 1, ''))
 
     def testALongSmsReceivedIsOneMessageForJeedom(self):
         self.startConnected()

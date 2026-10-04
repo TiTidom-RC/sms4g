@@ -118,6 +118,22 @@ class SmsExpired:
 
 
 @dataclass(frozen=True)
+class SmsDelivery:
+    """ What the network says became of an SMS that was sent, from its delivery reports (``deliveryReport`` option).
+    ``status``: ``pending`` (delayed, the network tries again), ``delivered`` (every part), ``undelivered`` (a part
+    failed for good), ``unknown`` (no final report in time). ``reason``: why (never the text). ``deliveredParts`` of
+    ``parts`` are delivered. Only published when the state moves forward, once the SMS was announced as sent. """
+
+    smsId: str
+    ref: str | None
+    number: str
+    status: str
+    reason: str
+    parts: int
+    deliveredParts: int
+
+
+@dataclass(frozen=True)
 class SmsReceived:
     """ An SMS was received (a long one is reassembled from its parts: ``parts``). ``number`` is the sender as the
     network gives it (+33..., a short number, or a name such as "Free"). ``sent`` is the date the SMS center put on it

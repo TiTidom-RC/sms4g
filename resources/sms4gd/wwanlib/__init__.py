@@ -9,7 +9,7 @@ Public API (everything else is internal):
 * Received SMS (``inbox.py``): read as soon as the modem announces them, long ones reassembled; the result comes as
   an event, ``SmsReceived`` or ``SmsIncomplete``.
 * Events (``events.py``): ``StateChanged``, ``ModemIdentified``, ``SignalChanged``, ``NetworkChanged``,
-  ``UnsolicitedNotification``, ``SmsQueued``, ``SmsSent``, ``SmsFailed``, ``SmsExpired``, ``SmsReceived``, ``SmsIncomplete``; connection states in ``ConnectionState``, network registration in ``Registration``.
+  ``UnsolicitedNotification``, ``SmsQueued``, ``SmsSent``, ``SmsFailed``, ``SmsExpired``, ``SmsReceived``, ``SmsIncomplete``, ``SmsDelivery``; connection states in ``ConnectionState``, network registration in ``Registration``.
 * Exceptions (``exceptions.py``): ``WwanException`` is the base class.
 
 Architecture: one Reader thread (the only one that reads the port), one Executor thread (the only one that
@@ -21,7 +21,7 @@ never imports Jeedom and logs through ``logging.getLogger(__name__)``.
 """
 
 from .events import (ConnectionState, ModemIdentified, NetworkChanged, Registration, SignalChanged, SmsExpired,
-                     SmsFailed, SmsIncomplete, SmsQueued, SmsReceived, SmsSent, StateChanged,
+                     SmsDelivery, SmsFailed, SmsIncomplete, SmsQueued, SmsReceived, SmsSent, StateChanged,
                      UnsolicitedNotification)
 from .exceptions import (CmeError, CmsError, CommandError, EncodingError, IncorrectPinError, NotConnectedError,
                          PduModeNotSupportedError, PinRequiredError, PukRequiredError, SmscNumberUnknownError,
@@ -36,5 +36,5 @@ __all__ = [
     'WwanException', 'CommandError', 'CmeError', 'CmsError', 'TimeoutException', 'NotConnectedError',
     'PinRequiredError', 'IncorrectPinError', 'PukRequiredError', 'SmscNumberUnknownError', 'EncodingError',
     'maskNumber', 'PduModeNotSupportedError', 'SmsQueueFullError', 'SmsQueued', 'SmsSent', 'SmsFailed', 'SmsExpired',
-    'SmsReceived', 'SmsIncomplete',
+    'SmsReceived', 'SmsIncomplete', 'SmsDelivery',
 ]

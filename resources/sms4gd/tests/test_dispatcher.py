@@ -8,7 +8,7 @@ import unittest
 from concurrent.futures import Future
 
 from dispatcher import MAX_RESPONSE_CHARS, Dispatcher, smsInboxMessage, smsStatusMessage
-from wwanlib import (CmeError, NotConnectedError, SignalChanged, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError,
+from wwanlib import (CmeError, NotConnectedError, SignalChanged, SmsDelivery, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError,
                     SmsReceived, SmsSent, TimeoutException)
 
 
@@ -144,6 +144,11 @@ class DispatcherTest(unittest.TestCase):
             'reason': '+CMS ERROR: 330', 'parts': 2, 'sentParts': 1})
         self.assertEqual(smsStatusMessage(SmsExpired('id1', '42', '+33600000000', '')), {
             'type': 'smsStatus', 'smsId': 'id1', 'ref': '42', 'number': '+33600000000', 'status': 'expired', 'reason': ''})
+        self.assertEqual(smsStatusMessage(SmsDelivery('id1', '42:x', '+33600000000', 'delivered', '', 3, 3)), {
+            'type': 'smsStatus', 'smsId': 'id1', 'ref': '42:x', 'number': '+33600000000', 'status': 'delivered', 'reason': '',
+            'parts': 3, 'deliveredParts': 3})
+        self.assertEqual(smsStatusMessage(SmsDelivery('id1', None, '+33600000000', 'undelivered', 'not obtainable', 2, 1))['status'],
+                         'undelivered')
         self.assertIsNone(smsStatusMessage(SignalChanged(20)))
         self.assertIsNone(smsStatusMessage('anything'))
         self.assertIsNone(smsStatusMessage(SmsReceived('+33600000000', 'Hello', None, 1)))

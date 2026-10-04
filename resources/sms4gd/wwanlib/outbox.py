@@ -21,6 +21,7 @@ from typing import Any
 
 from .events import SmsExpired, SmsFailed, SmsQueued, SmsSent
 from .exceptions import NotConnectedError, SmsQueueFullError
+from .receipts import ReceiptTracker
 from .sms import SendOutcome, maskNumber, normalizeNumber
 
 log = logging.getLogger(__name__)
@@ -52,10 +53,13 @@ class _Entry:
 class Outbox:
     def __init__(self, send: Callable[[str, str, int], SendOutcome], publish: Callable[[Any], None],
                  ttl: float = 3600.0, maxSize: int = 50, delays: tuple[float, ...] = RETRY_DELAYS,
-                 steadyDelay: float = STEADY_DELAY, stopEvent: threading.Event | None = None):
+                 steadyDelay: float = STEADY_DELAY, stopEvent: threading.Event | None = None,
+                 tracker: ReceiptTracker | None = None):
         """ :param send: sends one message and blocks until it is over (``SmsSender.send``)
         :param publish: receives the events (``SmsQueued``, ``SmsSent``, ``SmsFailed``, ``SmsExpired``)
-        :param stopEvent: set when the library stops (also ends the pauses between the parts of a message) """
+        :param stopEvent: set when the library stops (also ends the pauses between the parts of a message)
+        :param tracker: follows the delivery reports of what was sent (None: the reports are not asked) """
+        self._tracker = tracker
         self._send = send
         self._publish = publish
         self._ttl = ttl
@@ -146,7 +150,12 @@ class Outbox:
             if entry is None:
                 return
             try:
-                outcome = self._send(entry.number, entry.text, entry.maxPartsPerGroup)
+                if self._tracker is None:
+                    outcome = self._send(entry.number, entry.text, entry.maxPartsPerGroup)
+                else:
+                    tracker = self._tracker
+                    outcome = self._send(entry.number, entry.text, entry.maxPartsPerGroup, onPart=lambda index, parts, reference: tracker.register(
+                        entry.smsId, entry.ref, entry.number, index, parts, reference))
             except Exception:
                 log.exception('Unexpected error while sending an SMS')
                 outcome = SendOutcome('failed', 'internal error')
@@ -197,6 +206,12 @@ class Outbox:
                 self._schedule(entry, outcome.reason, events)
             self._cond.notify_all()
         self._emit(events)
+        if self._tracker is not None:
+            # After the events: "sent" is told before any state that comes from a report
+            if outcome.status == 'sent':
+                self._tracker.close(entry.smsId)
+            elif outcome.status == 'failed' and outcome.sentParts > 0:
+                self._tracker.abandon(entry.smsId)
 
     def _schedule(self, entry: _Entry, reason: str, events: list[Any]) -> None:
         now = time.monotonic()

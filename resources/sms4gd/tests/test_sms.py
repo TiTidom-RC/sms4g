@@ -207,6 +207,26 @@ class DecisionTest(unittest.TestCase):
         sender.send(NUMBER, 'two')
         self.assertEqual(seen[1], str(encodeSmsSubmitPdu(NUMBER, 'two', reference=0, requestStatusReport=False)[0]))
 
+    def testTheFirstTpMrIsRandomUnlessGiven(self):
+        starts = {SmsSender(FakeExecutor().submit)._reference for _ in range(40)}
+        self.assertTrue(all(0 <= start < 256 for start in starts))
+        self.assertGreater(len(starts), 1)
+        self.assertEqual(SmsSender(FakeExecutor().submit, startReference=300)._reference, 44)
+
+    def testEveryPartIsToldAsSoonAsItIsAccepted(self):
+        told = []
+        sender = SmsSender(FakeExecutor().submit, segmentPause=0)
+        outcome = sender.send(NUMBER, 'a' * 400, onPart=lambda index, parts, reference: told.append((index, parts, reference)))
+        self.assertEqual(outcome.status, 'sent')
+        self.assertEqual(told, [(1, 3, 100), (2, 3, 101), (3, 3, 102)])
+
+    def testAPartThatFailedIsNotTold(self):
+        told = []
+        sender = SmsSender(FakeExecutor(None, CmsError('AT+CMGS=153', 500)).submit, segmentPause=0)
+        outcome = sender.send(NUMBER, 'a' * 400, onPart=lambda index, parts, reference: told.append(index))
+        self.assertEqual((outcome.status, outcome.sentParts), ('failed', 1))
+        self.assertEqual(told, [1])
+
     def testInvalidInputTouchesNothing(self):
         executor = FakeExecutor()
         sender = SmsSender(executor.submit, segmentPause=0)
@@ -304,7 +324,7 @@ class SendingOnAFakePortTest(ExecutorTestCase):
     def testShortMessage(self):
         FakeSerial.behavior = modemBehavior()
         pdu = encodeSmsSubmitPdu(NUMBER, 'Hello', reference=0, requestStatusReport=False)[0]
-        outcome = self.sender().send(NUMBER, 'Hello')
+        outcome = self.sender(startReference=0).send(NUMBER, 'Hello')
         self.assertEqual((outcome.status, outcome.references), ('sent', [20]))
         self.assertEqual(self.written(), [f'AT+CMGS={pdu.tpduLength}\r', f'{pdu}{CTRL_Z}'])
 

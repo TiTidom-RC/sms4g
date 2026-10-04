@@ -17,10 +17,10 @@
 #
 #   Jeedom (PHP) --socket--> Dispatcher --> wwanlib.Modem --events--> jeedom_publisher --HTTP--> jeesms4g.php
 #
-# Milestone J4: connection state, signal and network are published to Jeedom, the AT commands sent from Jeedom are
+# Milestone J5: connection state, signal and network are published to Jeedom, the AT commands sent from Jeedom are
 # run in diagnostic mode, the SMS are sent (queue, retries and expiry are in the library; Jeedom learns what became
-# of each one from a `smsStatus` message) and the SMS received are handed over (`smsReceived`, long ones put back
-# together by the library; `smsIncomplete` when one was given up). The delivery reports come back with J5.
+# of each one from a `smsStatus` message, up to "delivered" when the delivery reports are asked for) and the SMS received
+# are handed over (`smsReceived`, long ones put back together by the library; `smsIncomplete` when one was given up).
 
 import logging
 import os

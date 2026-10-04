@@ -209,7 +209,7 @@ if (!isConnect('admin')) {
             <div class="form-group">
                 <label class="col-lg-3 control-label">{{Demander un accusé de réception}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
-                    <sup><i class="fas fa-question-circle tooltips" title="{{Le démon tentera de récupérer le statut de livraison (livré / échec) de chaque message envoyé}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Le démon récupère le statut de livraison de chaque message envoyé : « Statut » passe alors de « Envoyé » à « Livré » (ou « Non remis »), et « Remis » ne passe à 1 que dans ce cas (avec plusieurs numéros, quand tous ont reçu le message). Sans cette option, « Statut » reste sur « Envoyé » et « Remis » ne change pas.}}"></i></sup>
                 </label>
                 <div class="col-lg-1">
                     <input type="checkbox" class="configKey" data-l1key="deliveryReport" />

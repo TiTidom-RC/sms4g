@@ -11,8 +11,9 @@ from unittest import mock
 
 import serial
 
+from tests.test_inbox import statusReportPdu
 from tests.test_wwanlib import ExecutorTestCase, FakeSerial, answer, simcomTable, waitFor
-from wwanlib import (ConnectionState, Modem, ModemOptions, NotConnectedError, SmsExpired, SmsFailed, SmsQueued,
+from wwanlib import (ConnectionState, Modem, ModemOptions, NotConnectedError, SmsDelivery, SmsExpired, SmsFailed, SmsQueued,
                      SmsQueueFullError, SmsSent, StateChanged)
 from wwanlib.events import EventDispatcher
 from wwanlib.executor import CTRL_Z, Executor, Priority, Transaction
@@ -305,6 +306,70 @@ class OutboxTest(OutboxTestCase):
         self.assertTrue(waitFor(lambda: len(calls) == 2))
 
 
+class FakeTracker:
+    """ Stands for the ReceiptTracker: records what the outbox tells it """
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+    def register(self, smsId, ref, number, index, parts, reference):
+        self.calls.append(('register', ref, number, index, parts, reference))
+
+    def close(self, smsId):
+        self.calls.append(('close',))
+
+    def abandon(self, smsId):
+        self.calls.append(('abandon',))
+
+
+class PartsScript(Script):
+    """ A Script whose send() tells each part it sends, as SmsSender does """
+
+    def __init__(self, *outcomes, told=2):
+        super().__init__(*outcomes)
+        self.told = told
+
+    def send(self, number, text, maxPartsPerGroup, onPart=None):
+        for index in range(1, self.told + 1):
+            if onPart is not None:
+                onPart(index, 3, 9 + index)
+        return super().send(number, text, maxPartsPerGroup)
+
+
+class TrackerWiringTest(OutboxTestCase):
+    def setUp(self):
+        super().setUp()
+        self.tracker = FakeTracker()
+
+    def run_(self, script, ref='42:x', **kwargs):
+        outbox = self.make(script, tracker=self.tracker, **kwargs)
+        outbox.submit(NUMBER, 'Hello', ref)
+        return script
+
+    def testEachPartIsRegisteredThenTheSmsIsClosedAfterItsEvent(self):
+        self.run_(PartsScript(SendOutcome('sent', parts=2, references=[10, 11]), told=2))
+        self.assertTrue(self.waitEvents(SmsSent))
+        self.assertTrue(waitFor(lambda: ('close',) in self.tracker.calls))
+        self.assertEqual(self.tracker.calls, [('register', '42:x', NUMBER, 1, 3, 10), ('register', '42:x', NUMBER, 2, 3, 11), ('close',)])
+
+    def testAFailureAfterSomePartsLeftAbandonsTheFollowing(self):
+        self.run_(PartsScript(SendOutcome('failed', '+CMS ERROR: 500', parts=3, references=[10, 11]), told=2))
+        self.assertTrue(self.waitEvents(SmsFailed))
+        self.assertTrue(waitFor(lambda: ('abandon',) in self.tracker.calls))
+        self.assertNotIn(('close',), self.tracker.calls)
+
+    def testAFailureBeforeAnyPartLeftTellsNothing(self):
+        self.run_(PartsScript(SendOutcome('failed', 'invalid number'), told=0))
+        self.assertTrue(self.waitEvents(SmsFailed))
+        time.sleep(0.1)
+        self.assertEqual(self.tracker.calls, [])
+
+    def testAnSmsThatWillBeTriedAgainTellsNothingYet(self):
+        script = self.run_(PartsScript(RETRY, told=0), delays=(5.0,), steadyDelay=5.0)
+        self.assertTrue(waitFor(lambda: len(script.calls) >= 1))
+        time.sleep(0.1)
+        self.assertEqual(self.tracker.calls, [])
+
 class EventDispatcherTest(unittest.TestCase):
     def testTheLastEventsAreDeliveredAtStop(self):
         received = []
@@ -438,6 +503,27 @@ class ModemSmsTest(unittest.TestCase):
 
     def waitConnected(self, modem):
         self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+
+    def testADeliveryReportIsFollowedThroughTheModem(self):
+        modem = self.makeModem(deliveryReport=True)
+        modem.start()
+        self.waitConnected(modem)
+        smsId = modem.sendSms(NUMBER, 'Hello', ref='42:abc')
+        self.assertTrue(self.waitEvents(SmsSent))
+        FakeSerial.instances[0].feed(('\r\n+CDS: 26\r\n' + statusReportPdu(7, NUMBER) + '\r\n').encode())
+        self.assertTrue(self.waitEvents(SmsDelivery))
+        self.assertEqual(self.of(SmsDelivery), [SmsDelivery(smsId, '42:abc', NUMBER, 'delivered', '', 1, 1)])
+        events = [event for event in self.events if isinstance(event, (SmsSent, SmsDelivery))]
+        self.assertIsInstance(events[0], SmsSent)  # "sent" is told first
+
+    def testNothingIsFollowedWhenTheReportsAreNotAsked(self):
+        modem = self.makeModem(deliveryReport=False)
+        modem.start()
+        self.waitConnected(modem)
+        modem.sendSms(NUMBER, 'Hello')
+        self.assertTrue(self.waitEvents(SmsSent))
+        FakeSerial.instances[0].feed(('\r\n+CDS: 26\r\n' + statusReportPdu(7, NUMBER) + '\r\n').encode())
+        self.assertFalse(waitFor(lambda: self.of(SmsDelivery), 0.5))
 
     def testAnSmsIsSentAndReported(self):
         modem = self.makeModem()

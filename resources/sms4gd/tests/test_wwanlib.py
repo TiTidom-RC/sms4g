@@ -330,7 +330,7 @@ def simcomTable(**overrides) -> dict:
         'AT': 'OK\r\n', 'ATZ': 'OK\r\n', 'ATE0': 'OK\r\n', 'AT+CFUN?': '+CFUN: 1\r\nOK\r\n', 'AT+CFUN=1': 'OK\r\n',
         'AT+CMEE=1': 'OK\r\n', 'AT+CPIN?': '+CPIN: READY\r\nOK\r\n', 'AT+CGMI': 'SIMCOM INCORPORATED\r\nOK\r\n',
         'AT+CGMM': 'SIMCOM_SIM7600G-H\r\nOK\r\n', 'AT+CGMR': '+CGMR: LE20B04SIM7600G22\r\nOK\r\n', 'AT+COPS=3,0': 'OK\r\n',
-        'AT+CMGF=?': '+CMGF: (0,1)\r\nOK\r\n', 'AT+CMGF=0': 'OK\r\n', 'AT+CSCA?': '+CSCA: "+33695000695",145\r\nOK\r\n', 'AT+CSMP=17,167,0,0': 'OK\r\n',
+        'AT+CMGF=?': '+CMGF: (0,1)\r\nOK\r\n', 'AT+CMGF=0': 'OK\r\n', 'AT+CSCA?': '+CSCA: "+33695000695",145\r\nOK\r\n', 'AT+CSMP=17,167,0,0': 'OK\r\n', 'AT+CSMP=49,167,0,0': 'OK\r\n',
         'AT+CMGL=4': 'OK\r\n',
         'AT+CPMS?': '+CPMS: "SM",0,100,"SM",0,100,"SM",0,100\r\nOK\r\n',
         'AT+CPMS=?': '+CPMS: ("ME","MT","SM","SR"),("ME","MT","SM"),("ME","SM")\r\nOK\r\n',

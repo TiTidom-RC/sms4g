@@ -26,8 +26,8 @@ from concurrent.futures import Future
 from typing import Any, Protocol
 
 from atfilter import checkAtCommand
-from wwanlib import (NotConnectedError, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError, SmsReceived,
-                     SmsSent, TimeoutException, maskNumber)
+from wwanlib import (NotConnectedError, SmsDelivery, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError,
+                     SmsReceived, SmsSent, TimeoutException, maskNumber)
 
 log = logging.getLogger(__name__)
 
@@ -50,15 +50,19 @@ class OutLike(Protocol):
 def smsStatusMessage(event: Any) -> dict[str, Any] | None:
     """ The `smsStatus` message that tells Jeedom what became of an SMS, from an event of the library (None for any
     other event). It is an event for Jeedom (never merged with another one): `status` is `queued` (could not leave at
-    once, it will be tried again), `sent` (every part accepted by the SMS center), `failed` or `expired`.
-    `ref` is the one given with the request, `smsId` the one of the library. """
-    if not isinstance(event, (SmsQueued, SmsSent, SmsFailed, SmsExpired)):
+    once, it will be tried again), `sent` (every part accepted by the SMS center), `failed` or `expired`, then, when the
+    delivery reports are asked for, what the network says: `pending` (delayed, it tries again), `delivered` (every part),
+    `undelivered` (a part failed for good, `reason` says why) or `unknown` (no final report in time), with `parts` and
+    `deliveredParts`. `ref` is the one given with the request, `smsId` the one of the library. """
+    if not isinstance(event, (SmsQueued, SmsSent, SmsFailed, SmsExpired, SmsDelivery)):
         return None
     payload: dict[str, Any] = {'type': 'smsStatus', 'smsId': event.smsId, 'ref': event.ref, 'number': event.number}
     if isinstance(event, SmsQueued):
         payload.update(status='queued', reason=event.reason)
     elif isinstance(event, SmsSent):
         payload.update(status='sent', parts=event.parts, references=list(event.references))
+    elif isinstance(event, SmsDelivery):
+        payload.update(status=event.status, reason=event.reason, parts=event.parts, deliveredParts=event.deliveredParts)
     elif isinstance(event, SmsFailed):
         payload.update(status='failed', reason=event.reason, parts=event.parts, sentParts=event.sentParts)
     else:

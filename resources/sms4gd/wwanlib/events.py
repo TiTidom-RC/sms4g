@@ -71,6 +71,52 @@ class UnsolicitedNotification:
     lines: list[str]
 
 
+@dataclass(frozen=True)
+class SmsQueued:
+    """ An SMS could not leave at once (modem not connected, network unavailable...): it stays in the queue and
+    is tried again until it is sent, fails or expires. Published once per SMS. ``ref`` is the caller's own
+    reference, given back untouched. """
+
+    smsId: str
+    ref: str | None
+    number: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class SmsSent:
+    """ Every part of the SMS was accepted by the SMS center (``references``: the TP-MR returned by the modem) """
+
+    smsId: str
+    ref: str | None
+    number: str
+    parts: int
+    references: tuple[int | None, ...]
+
+
+@dataclass(frozen=True)
+class SmsFailed:
+    """ Final failure: refused by the modem or the network, or interrupted (``reason`` is short and never contains
+    the text). ``sentParts`` > 0 means that the first parts have been sent. """
+
+    smsId: str
+    ref: str | None
+    number: str
+    reason: str
+    parts: int = 0
+    sentParts: int = 0
+
+
+@dataclass(frozen=True)
+class SmsExpired:
+    """ The SMS stayed in the queue longer than its lifetime; ``reason`` is why its last attempt failed """
+
+    smsId: str
+    ref: str | None
+    number: str
+    reason: str
+
+
 class EventDispatcher:
     """ Delivers events to the subscribers from a dedicated thread, so that a slow callback
     (e.g. an HTTP call to Jeedom) never blocks the Reader, the Executor or the Supervisor """
@@ -79,13 +125,11 @@ class EventDispatcher:
         self._callbacks: list[Callable[[Any], None]] = []
         self._queue: queue.Queue = queue.Queue()
         self._thread: threading.Thread | None = None
-        self._stop = threading.Event()
 
     def subscribe(self, callback: Callable[[Any], None]) -> None:
         self._callbacks.append(callback)
 
     def start(self) -> None:
-        self._stop.clear()
         thread = threading.Thread(target=self._run, name='wwanlib-events', daemon=True)
         thread.start()
         self._thread = thread
@@ -94,17 +138,18 @@ class EventDispatcher:
         self._queue.put(event)
 
     def stop(self, timeout: float = 2.0) -> None:
-        self._stop.set()
+        """ Delivers the events posted before, then stops (the last ones, e.g. the final states of the SMS, must
+        not be lost) """
         self._queue.put(None)
         thread = self._thread
         if thread and thread is not threading.current_thread():
             thread.join(timeout)
 
     def _run(self) -> None:
-        while not self._stop.is_set():
+        while True:
             event = self._queue.get()
             if event is None:
-                continue
+                return
             for callback in list(self._callbacks):
                 try:
                     callback(event)

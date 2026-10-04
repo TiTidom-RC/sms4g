@@ -2,6 +2,7 @@
 
 import logging
 import re
+import threading
 from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass
@@ -11,8 +12,10 @@ from .events import (ConnectionState, EventDispatcher, ModemIdentified, NetworkC
                      StateChanged, UnsolicitedNotification)
 from .exceptions import (CommandError, IncorrectPinError, NotConnectedError, PduModeNotSupportedError, PinRequiredError,
                          PukRequiredError, SmscNumberUnknownError, TimeoutException, WwanException)
-from .executor import Executor, Priority
+from .executor import Executor, Priority, Transaction
+from .outbox import Outbox
 from .profiles import GENERIC, Profile, detectProfile
+from .sms import SmsSender
 from .supervisor import Supervisor
 from .transport import Transport
 from .util import lineMatching, lineStartingWith
@@ -30,6 +33,10 @@ class ModemOptions:
     reconnectMaxAttempts: int = 10
     monitorInterval: float = 30.0  # seconds between two readings of the signal and of the network (5 at least)
     readyTimeout: float = 20.0  # seconds to wait for a modem that is still starting to answer AT
+    smsTtl: float = 3600.0  # seconds an SMS waits in the queue before it expires
+    smsQueueSize: int = 50  # SMS waiting at most: a new one is refused beyond
+    segmentPause: float = 0.5  # seconds between two parts of an SMS
+    aging: float = 30.0  # seconds after which a waiting transaction rises by one rank (0 = off), see Executor
 
 
 class _Session:
@@ -51,9 +58,11 @@ class Modem:
     Usage::
 
         modem = Modem('/dev/ttyUSB2', 115200, pin=None, options=ModemOptions(deliveryReport=True))
-        modem.onEvent(callback)   # StateChanged, ModemIdentified, SignalChanged, NetworkChanged, UnsolicitedNotification
+        modem.onEvent(callback)   # StateChanged, ModemIdentified, SignalChanged, NetworkChanged, UnsolicitedNotification,
+                                  # SmsQueued, SmsSent, SmsFailed, SmsExpired
         modem.start()             # does not block: the Supervisor connects (and reconnects) in the background
         lines = modem.command('AT+CSQ', timeout=10).result()
+        smsId = modem.sendSms('+33612345678', 'Hello', ref='42')   # queued, SmsSent / SmsFailed / SmsExpired follow
         modem.stop()
 
     The library never imports Jeedom, takes its settings from the constructor only and logs through
@@ -73,6 +82,10 @@ class Modem:
         self._dispatcher = EventDispatcher()
         self._lastSignal: int | None = None
         self._lastNetwork: tuple[str, str | None] | None = None
+        self._smsStop = threading.Event()
+        self._sender = SmsSender(self._submitTransaction, self.options.deliveryReport, self.options.segmentPause, self._smsStop)
+        self._outbox = Outbox(self._sender.send, self._dispatcher.post, self.options.smsTtl, self.options.smsQueueSize,
+                              stopEvent=self._smsStop)
         self._supervisor = Supervisor(
             connect=self._connect, disconnect=self._disconnect, publish=self._publishState, isFatal=self._isFatal,
             baseDelay=self.options.reconnectBaseDelay, maxDelay=self.options.reconnectMaxDelay,
@@ -101,15 +114,18 @@ class Modem:
         """ Starts the library. Does not block: connection and reconnection run in the background. """
         self._state = ConnectionState.CONNECTING
         self._dispatcher.start()
+        self._outbox.start()
         self._supervisor.start()
 
     def stop(self) -> None:
         """ Stops the threads and closes the port """
+        self._smsStop.set()  # ends the pauses between the parts of an SMS
         self._supervisor.requestStop()
-        self._disconnect()
+        self._disconnect()  # fails the transaction in progress: the SMS being sent returns at once
         self._supervisor.join()
         self._disconnect()
-        self._dispatcher.stop()
+        self._outbox.stop()  # the SMS still waiting fail ("daemon stopped")
+        self._dispatcher.stop()  # delivers the last events, the final states of the SMS included
 
     def command(self, command: str, timeout: float = 10.0, parseError: bool = True) -> Future:
         """ Sends an AT command (diagnostic priority). The Future resolves to the response lines, or fails with
@@ -120,6 +136,28 @@ class Modem:
             failed.set_exception(NotConnectedError(f'Modem not connected (state: {self._state})'))
             return failed
         return session.executor.submit(command, timeout, Priority.CONSOLE, parseError)
+
+    def sendSms(self, number: str, text: str, ref: str | None = None, maxPartsPerGroup: int = 0) -> str:
+        """ Queues an SMS. Does not block: the result comes as an event, ``SmsSent`` or ``SmsFailed`` or ``SmsExpired``
+        (``SmsQueued`` first when it cannot leave at once, e.g. while the modem reconnects).
+
+        :param ref: the caller's own reference, given back untouched in the events
+        :param maxPartsPerGroup: a long message is split into groups of at most that many linked parts (0 = one group)
+        :return: the identifier of the SMS (``smsId`` of its events)
+        :raise SmsQueueFullError: too many SMS are waiting, this one is refused
+        :raise NotConnectedError: the connection was given up (or the library stopped) """
+        if self._state == ConnectionState.DISCONNECTED:
+            raise NotConnectedError('Modem disconnected')
+        return self._outbox.submit(number, text, ref, maxPartsPerGroup)
+
+    def _submitTransaction(self, transaction: Transaction) -> Future:
+        """ Submits the transaction of an SMS part to the connection in use (failed Future when there is none) """
+        session = self._session
+        if self._state not in (ConnectionState.CONNECTED, ConnectionState.SEARCHING) or session is None:
+            failed: Future = Future()
+            failed.set_exception(NotConnectedError(f'Modem not connected (state: {self._state})'))
+            return failed
+        return session.executor.submitTransaction(transaction)
 
     # ---- connection (called by the Supervisor) ----------------------------------------------------
 
@@ -132,6 +170,10 @@ class Modem:
         self._state = state
         log.info('State: %s %s', state, details or '')
         self._dispatcher.post(StateChanged(state, dict(details)))
+        if state == ConnectionState.CONNECTED:
+            self._outbox.retryNow()  # the SMS that wait are tried at once, not at the end of their delay
+        elif state == ConnectionState.DISCONNECTED:
+            self._outbox.failAll('modem disconnected')  # the connection is given up: nobody will send them
         if state in (ConnectionState.CONNECTING, ConnectionState.RECONNECTING, ConnectionState.DISCONNECTED):
             self._publishSignal(-1)
             self._publishNetwork(Registration.UNKNOWN, None)
@@ -215,7 +257,7 @@ class Modem:
         self._session = session
         session.executor = Executor(
             write=lambda data: session.transport.write(data),
-            onStuck=lambda reason: self._supervisor.reportFailure(token, reason))
+            onStuck=lambda reason: self._supervisor.reportFailure(token, reason), aging=self.options.aging)
         session.transport = Transport(
             self.port, self.baudrate, getContext=session.executor.context, onResponse=session.executor.onResponseLine,
             onNotification=lambda lines: self._dispatcher.post(UnsolicitedNotification(lines)),

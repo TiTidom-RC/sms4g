@@ -73,6 +73,8 @@ class Transaction:
     # Set before the step that cannot be undone is written. If the transaction fails while it is still False,
     # what it carries surely did not reach the network; if True and no error code came back, nobody knows.
     committed: bool = False
+    # When the transaction was submitted (time.monotonic()): the priority rises while it waits, see ``Executor``
+    queuedAt: float = 0.0
 
 
 class _Deadline(Exception):
@@ -105,11 +107,15 @@ class Executor:
     # After the first answer, the probes sent earlier may still answer: let them arrive, then discard them
     READY_SETTLE = 0.3
 
-    def __init__(self, write: Callable[[bytes], None], onStuck: Callable[[str], None]):
+    def __init__(self, write: Callable[[bytes], None], onStuck: Callable[[str], None], aging: float = 30.0):
         """ :param write: writes raw bytes to the port (raises on a lost port)
-        :param onStuck: called when the modem does not answer anymore (the connection must be rebuilt) """
+        :param onStuck: called when the modem does not answer anymore (the connection must be rebuilt)
+        :param aging: seconds of waiting after which a transaction of lower priority than ``SMS_CONTINUATION``
+            rises by one rank (and again after each further period), down to ``SMS_CONTINUATION``: a console command
+            is never starved by a long series of SMS, nor the monitoring. The ranks above never change. 0 = off. """
         self._write = write
         self._onStuck = onStuck
+        self._aging = aging
         self._queue: queue.PriorityQueue = queue.PriorityQueue()
         self._lines: queue.Queue = queue.Queue()
         self._sequence = itertools.count()
@@ -180,6 +186,7 @@ class Executor:
             if self._stopped:
                 transaction.future.set_exception(NotConnectedError('Modem not connected'))
             else:
+                transaction.queuedAt = time.monotonic()
                 self._queue.put((int(transaction.priority), next(self._sequence), transaction))
         return transaction.future
 
@@ -217,8 +224,33 @@ class Executor:
         self._queue.put((-1, next(self._sequence), None))
         self._lines.put(None)
 
+    def _effectivePriority(self, transaction: Transaction, now: float) -> int:
+        priority = int(transaction.priority)
+        if self._aging <= 0 or priority <= Priority.SMS_CONTINUATION:
+            return priority
+        risen = int((now - transaction.queuedAt) // self._aging)
+        return max(int(Priority.SMS_CONTINUATION), priority - risen)
+
+    def _age(self) -> None:
+        """ Puts the waiting transactions back in the queue with their current priority (the order of arrival
+        still decides between equal ranks). Few transactions wait at a time: this is cheap. """
+        if self._aging <= 0:
+            return
+        with self._lock:
+            waiting = []
+            while True:
+                try:
+                    waiting.append(self._queue.get_nowait())
+                except queue.Empty:
+                    break
+            now = time.monotonic()
+            for _, sequence, transaction in waiting:
+                rank = -1 if transaction is None else self._effectivePriority(transaction, now)
+                self._queue.put((rank, sequence, transaction))
+
     def _run(self) -> None:
         while not self._stopEvent.is_set():
+            self._age()
             try:
                 transaction = self._queue.get(timeout=self.POLL_INTERVAL)[2]
             except queue.Empty:

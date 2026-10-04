@@ -22,6 +22,10 @@ class PduModeNotSupportedError(WwanException):
     """ The modem does not offer the SMS PDU mode, the only one the library uses (DEC-36): retrying cannot fix it """
 
 
+class SmsQueueFullError(WwanException):
+    """ The queue of the SMS to send is full: the new SMS is refused, the oldest one is never dropped (DEC-34) """
+
+
 class InvalidStateException(WwanException):
     """ Raised when an API method call is invoked on an object that is in an incorrect state """
 

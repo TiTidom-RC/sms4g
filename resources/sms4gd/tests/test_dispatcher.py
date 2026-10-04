@@ -186,6 +186,16 @@ class DispatcherTest(unittest.TestCase):
         self.assertEqual((event['requestId'], event['status'], event['command']), ('a2', 'refused', 'AT+CMGS=5'))
         self.assertIn('sending', event['error'])
 
+    def testSwitchingTheSimOffIsRefusedWhenThereIsAPinAndAllowedOtherwise(self):
+        with self.assertLogs('dispatcher', level='WARNING'):
+            self.dispatch(cmd='atCommand', id='p1', command='AT+CFUN=0')  # a PIN is assumed by default
+        self.assertEqual(self.modem.calls, [])
+        self.assertEqual(self.out.events[0]['status'], 'refused')
+        self.assertIn('PIN', self.out.events[0]['error'])
+        noPin = Dispatcher(self.messages, self.modem, self.out, 'KEY', diagnostic=True, pinConfigured=False)
+        noPin.handle(message(cmd='atCommand', id='p2', command='AT+CFUN=0'))
+        self.assertEqual([call[0] for call in self.modem.calls], ['AT+CFUN=0'])
+
     def testChainedCommandIsRefused(self):
         with self.assertLogs('dispatcher', level='WARNING'):
             self.dispatch(cmd='atCommand', id='a3', command='AT+CSQ;ATZ')

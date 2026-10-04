@@ -32,7 +32,6 @@ class Config:
     cycle: float = 30.0  # seconds between two readings of the signal and of the network
     serialRate: int = 9600
     pin: str | None = None
-    textMode: bool = False
     smsc: str | None = None
     force4g: bool = False
     deliveryReport: bool = False
@@ -54,7 +53,6 @@ class Config:
         parser.add_argument("--cycle", help="Seconds between two readings of the signal and of the network", type=str)
         parser.add_argument("--serialrate", help="Serial rate of device", type=str)
         parser.add_argument("--pin", help="Pin sim code", type=str)
-        parser.add_argument("--textmode", help="Force text mode", type=str)
         parser.add_argument("--smsc", help="Smsc number", type=str)
         parser.add_argument("--force4g", help="Force LTE-only network mode (SimCom modems only)", type=str)
         parser.add_argument("--deliveryreport", help="Request SMS delivery status report", type=str)
@@ -83,8 +81,6 @@ class Config:
             config.serialRate = int(args.serialrate)
         if args.pin and args.pin != 'None':
             config.pin = args.pin
-        if args.textmode:
-            config.textMode = args.textmode == 'yes'
         if args.smsc and args.smsc != 'None':
             config.smsc = args.smsc
         if args.force4g:

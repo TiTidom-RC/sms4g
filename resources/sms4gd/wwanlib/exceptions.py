@@ -18,6 +18,10 @@ class NotConnectedError(WwanException):
     """ Raised when a command is submitted while the modem is not connected (connecting, reconnecting, disconnected or stopped) """
 
 
+class PduModeNotSupportedError(WwanException):
+    """ The modem does not offer the SMS PDU mode, the only one the library uses (DEC-36): retrying cannot fix it """
+
+
 class InvalidStateException(WwanException):
     """ Raised when an API method call is invoked on an object that is in an incorrect state """
 

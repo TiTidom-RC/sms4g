@@ -1,6 +1,6 @@
 """ Common helpers for parsing modem responses """
 
-from datetime import datetime, timedelta, tzinfo
+from datetime import timedelta, tzinfo
 import re
 
 
@@ -24,24 +24,6 @@ class SimpleOffsetTzInfo(tzinfo):
 
     def __repr__(self):
         return f'wwanlib.util.SimpleOffsetTzInfo({self.offsetInHours})'
-
-
-def parseTextModeTimeStr(timeStr):
-    """ Parses the specified SMS text mode time string
-
-    The time stamp format is "yy/MM/dd,hh:mm:ss±zz"
-    (yy = year, MM = month, dd = day, hh = hour, mm = minute, ss = second, zz = time zone
-    [Note: the unit of time zone is a quarter of an hour])
-
-    :param timeStr: The time string to parse
-    :type timeStr: str
-
-    :return: datetime object representing the specified time string
-    :rtype: datetime.datetime
-    """
-    msgTime = timeStr[:-3]
-    tzOffsetHours = int(int(timeStr[-3:]) * 0.25)
-    return datetime.strptime(msgTime, '%y/%m/%d,%H:%M:%S').replace(tzinfo=SimpleOffsetTzInfo(tzOffsetHours))
 
 
 def lineStartingWith(string, lines):

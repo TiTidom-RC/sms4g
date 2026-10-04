@@ -192,7 +192,6 @@ def main():
     logging.info('Cycle (signal and network) : %s', config.cycle)
     logging.info('Serial rate : %s', config.serialRate)
     logging.info('Pin : %s', '****' if config.pin else None)
-    logging.info('Text mode : %s', config.textMode)
     logging.info('SMSC : %s', config.smsc)
     logging.info('Force 4G only : %s', config.force4g)
     logging.info('Delivery report : %s', config.deliveryReport)
@@ -224,7 +223,6 @@ def main():
         modem = Modem(
             str(config.device), config.serialRate, pin=config.pin,
             options=ModemOptions(
-                textMode=config.textMode,
                 deliveryReport=config.deliveryReport,
                 smsc=config.smsc,
                 force4g=config.force4g,

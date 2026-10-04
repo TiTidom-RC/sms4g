@@ -162,6 +162,9 @@ function sms4g_update() {
 		config::save('diagMode', '0', 'sms4g');
 	}
 
+	// Le mode texte n'existe plus : les SMS sont toujours envoyés et reçus en PDU
+	config::remove('textMode', 'sms4g');
+
 	// Équipement virtuel Modem (connexion, signal, réseau, commande AT de diagnostic)
 	try {
 		sms4g::manageModemEquipment();

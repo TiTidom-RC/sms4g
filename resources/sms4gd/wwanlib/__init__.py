@@ -17,7 +17,8 @@ never imports Jeedom and logs through ``logging.getLogger(__name__)``.
 from .events import (ConnectionState, ModemIdentified, NetworkChanged, Registration, SignalChanged, StateChanged,
                      UnsolicitedNotification)
 from .exceptions import (CmeError, CmsError, CommandError, EncodingError, IncorrectPinError, NotConnectedError,
-                         PinRequiredError, PukRequiredError, SmscNumberUnknownError, TimeoutException, WwanException)
+                         PduModeNotSupportedError, PinRequiredError, PukRequiredError, SmscNumberUnknownError,
+                         TimeoutException, WwanException)
 from .modem import Modem, ModemOptions
 from .profiles import Profile
 
@@ -26,4 +27,5 @@ __all__ = [
     'SignalChanged', 'NetworkChanged', 'UnsolicitedNotification',
     'WwanException', 'CommandError', 'CmeError', 'CmsError', 'TimeoutException', 'NotConnectedError',
     'PinRequiredError', 'IncorrectPinError', 'PukRequiredError', 'SmscNumberUnknownError', 'EncodingError',
+    'PduModeNotSupportedError',
 ]

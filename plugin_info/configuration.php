@@ -200,7 +200,7 @@ if (!isConnect('admin')) {
             <div class="form-group">
                 <label class="col-lg-3 control-label">{{Durée de vie des SMS en attente (minutes)}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
-                    <sup><i class="fas fa-question-circle tooltips" title="{{Un SMS qui ne peut pas partir tout de suite (modem déconnecté, pas de réseau...) est réessayé pendant cette durée, puis abandonné (statut Expiré). 1 minute au minimum, 60 par défaut}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Durée pendant laquelle le plugin retente l'envoi d'un SMS qui n'a pas pu partir (modem déconnecté, absence de réseau...). Passé ce délai, l'envoi est abandonné et le statut passe à « Expiré ». Minimum : 1 minute. Par défaut : 60 minutes.}}"></i></sup>
                 </label>
                 <div class="col-lg-1">
                     <input class="configKey form-control" data-l1key="smsTtl" />

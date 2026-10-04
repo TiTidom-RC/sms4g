@@ -17,6 +17,7 @@
 #
 #   Jeedom (PHP) --socket--> Dispatcher --> wwanlib.Modem --events--> jeedom_publisher --HTTP--> jeesms4g.php
 #
+# Milestone J6: the modem can be restarted from Jeedom, the self-test (the modem sends an SMS to its own SIM) is relayed.
 # Milestone J5: connection state, signal and network are published to Jeedom, the AT commands sent from Jeedom are
 # run in diagnostic mode, the SMS are sent (queue, retries and expiry are in the library; Jeedom learns what became
 # of each one from a `smsStatus` message, up to "delivered" when the delivery reports are asked for) and the SMS received
@@ -31,10 +32,10 @@ import threading
 import traceback
 from typing import Optional
 
-from dispatcher import Dispatcher, smsInboxMessage, smsStatusMessage
+from dispatcher import Dispatcher, selfTestMessage, smsInboxMessage, smsStatusMessage
 from utils import Config
 from wwanlib import (ConnectionState, Modem, ModemIdentified, ModemOptions, NetworkChanged, Registration, SignalChanged,
-                     StateChanged, WwanException)
+                     StateChanged, WwanException, maskNumber)
 
 try:
     from jeedom.jeedom import jeedom_publisher, jeedom_socket, jeedom_utils, JEEDOM_SOCKET_MESSAGE
@@ -120,6 +121,8 @@ def onModemEvent(event):
             runDiagnostic()
         elif event.state == ConnectionState.SEARCHING:
             logging.warning("Modem not registered on the mobile network, searching")
+        elif event.state == ConnectionState.RESTARTING:
+            logging.warning("Modem restarting (%s)", event.details.get('reason'))
         elif event.state == ConnectionState.DISCONNECTED:
             _finalStatePublished = True
             logging.error("Modem disconnected for good (%s), stopping the daemon", event.details.get('reason'))
@@ -134,7 +137,7 @@ def onModemEvent(event):
         if publisher:
             publisher.state('network', {'type': 'network', 'registration': event.registration, 'operator': event.operator})
     else:
-        smsMessage = smsStatusMessage(event) or smsInboxMessage(event)
+        smsMessage = smsStatusMessage(event) or smsInboxMessage(event) or selfTestMessage(event)
         if smsMessage is not None and publisher:
             publisher.event(smsMessage)
 
@@ -207,6 +210,12 @@ def main():
     logging.info('Concat parts TTL : %s s', config.concatPartsTtl)
     logging.info('SMS lifetime in the queue : %s s', config.smsTtl)
     logging.info('Diagnostic mode (AT commands from Jeedom) : %s', config.diagnostic)
+    logging.info('Pause between two SMS : %s s', config.messagePause)
+    logging.info('Self-test every : %s h (0 = none)', config.selfTestInterval / 3600)
+    if 0 < config.selfTest < config.MIN_SELF_TEST_HOURS:
+        logging.warning('Self-test interval raised to the minimum of %s h', config.MIN_SELF_TEST_HOURS)
+    logging.info('SIM number for the self-test : %s', maskNumber(config.ownNumber) if config.ownNumber else None)
+    logging.info('Restart the modem when the self-test fails : %s', config.autoRestart)
 
     if config.device is None:
         logging.error('No device found')
@@ -239,6 +248,10 @@ def main():
                 monitorInterval=config.cycle,
                 smsTtl=config.smsTtl,
                 concatPartsTtl=config.concatPartsTtl,
+                messagePause=config.messagePause,
+                selfTestInterval=config.selfTestInterval,
+                ownNumber=config.ownNumber,
+                selfTestRestart=config.autoRestart,
             ),
         )
         dispatcher = Dispatcher(JEEDOM_SOCKET_MESSAGE, modem, publisher, config.apikey, config.diagnostic, config.pin is not None)

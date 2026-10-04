@@ -20,14 +20,15 @@
 import json
 import logging
 import queue
+import re
 import secrets
 import threading
 from concurrent.futures import Future
 from typing import Any, Protocol
 
 from atfilter import checkAtCommand
-from wwanlib import (NotConnectedError, SmsDelivery, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError,
-                     SmsReceived, SmsSent, TimeoutException, maskNumber)
+from wwanlib import (NotConnectedError, SelfTestResult, SmsDelivery, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued,
+                     SmsQueueFullError, SmsReceived, SmsSent, TimeoutException, maskNumber)
 
 log = logging.getLogger(__name__)
 
@@ -35,12 +36,17 @@ DEFAULT_AT_TIMEOUT = 15.0
 MIN_AT_TIMEOUT = 1.0
 MAX_AT_TIMEOUT = 180.0  # the longest known command, AT+COPS=?
 MAX_RESPONSE_CHARS = 4000
+CNUM_LINE = re.compile(r'^\+CNUM:\s*"[^"]*",\s*"(\+?\d{3,20})"')  # +CNUM: "<label>","<number>",<type>
 
 
 class ModemLike(Protocol):
     def command(self, command: str, timeout: float = ..., parseError: bool = ...) -> Future: ...
 
     def sendSms(self, number: str, text: str, ref: str | None = ..., maxPartsPerGroup: int = ...) -> str: ...
+
+    def restart(self, reason: str = ...) -> Future: ...
+
+    def selfTest(self) -> Future: ...
 
 
 class OutLike(Protocol):
@@ -85,6 +91,17 @@ def smsInboxMessage(event: Any) -> dict[str, Any] | None:
     return None
 
 
+def selfTestMessage(event: Any) -> dict[str, Any] | None:
+    """ The `selfTest` message with the result of a self-test (the modem sent an SMS to its own SIM), from an event of the
+    library (None for any other event): `status` is `ok`, `noReception` (the SMS did not come back), `noReceipt` (it came
+    back, its delivery report did not) or `skipped` (not run, `reason` says why); `duration` in seconds; `restarted` when
+    the modem was restarted because of the failure. """
+    if not isinstance(event, SelfTestResult):
+        return None
+    return {'type': 'selfTest', 'status': event.status, 'reason': event.reason, 'duration': event.duration,
+            'restarted': event.restarted}
+
+
 class Dispatcher:
     def __init__(self, messages: 'queue.Queue[bytes | None]', modem: ModemLike, out: OutLike, apikey: str, diagnostic: bool,
                  pinConfigured: bool = True):
@@ -99,7 +116,8 @@ class Dispatcher:
         self._diagnostic = diagnostic
         self._pinConfigured = pinConfigured
         self._thread: threading.Thread | None = None
-        self._handlers = {'atCommand': self._atCommand, 'sendSms': self._sendSms}
+        self._handlers = {'atCommand': self._atCommand, 'sendSms': self._sendSms, 'restartModem': self._restartModem,
+                          'selfTest': self._selfTest, 'readOwnNumber': self._readOwnNumber}
 
     def start(self) -> None:
         thread = threading.Thread(target=self._run, name='dispatcher', daemon=True)
@@ -178,6 +196,52 @@ class Dispatcher:
         log.warning('SMS to %s refused (%s)', maskNumber(number), reason)
         self._out.event({'type': 'smsStatus', 'ref': ref, 'number': number, 'status': 'failed', 'reason': reason,
                          'parts': 0, 'sentParts': 0})
+
+    def _restartModem(self, message: dict[str, Any]) -> None:
+        """ Restarts the modem. The answer is a `restartResult` message (`ok`: the modem took the command, its state
+        then says `restarting`; `refused` with the reason otherwise). """
+        try:
+            future = self._modem.restart('requested')
+        except NotConnectedError as e:
+            self._restartResult('refused', str(e))
+            return
+        log.warning('Restart of the modem requested from Jeedom')
+        future.add_done_callback(self._restartDone)
+
+    def _restartDone(self, done: Future) -> None:
+        error = done.exception()
+        self._restartResult('ok' if error is None else 'refused', '' if error is None else f'{type(error).__name__}: {error}')
+
+    def _restartResult(self, status: str, reason: str) -> None:
+        if status == 'refused':
+            log.warning('Restart of the modem refused (%s)', reason)
+        self._out.event({'type': 'restartResult', 'status': status, 'reason': reason})
+
+    def _selfTest(self, message: dict[str, Any]) -> None:
+        """ Runs the self-test now. The result comes as a `selfTest` message (see `selfTestMessage`). """
+        log.info('Self-test requested from Jeedom')
+        self._modem.selfTest()
+
+    def _readOwnNumber(self, message: dict[str, Any]) -> None:
+        """ Reads the number the SIM knows for itself (`AT+CNUM`, read only: not a command of the user). The answer is an
+        `ownNumber` message: `number` (null when the SIM does not know it, `reason` says why). """
+        future = self._modem.command('AT+CNUM', DEFAULT_AT_TIMEOUT, False)
+        future.add_done_callback(self._ownNumberDone)
+
+    def _ownNumberDone(self, done: Future) -> None:
+        number = None
+        error = done.exception()
+        if error is not None:
+            reason = f'{type(error).__name__}: {error}'
+        else:
+            number = next((match.group(1) for match in map(CNUM_LINE.match, done.result()) if match), None)
+            reason = '' if number else 'the SIM does not know its number'
+        if number:
+            log.info('Number of the SIM read: %s', maskNumber(number))
+        else:
+            log.warning('Number of the SIM not read (%s)', reason)
+        self._out.event({'type': 'ownNumber', 'number': number, 'reason': reason})
+
     def _atCommand(self, message: dict[str, Any]) -> None:
         requestId = message.get('id')
         command = message.get('command')

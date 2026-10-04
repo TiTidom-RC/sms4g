@@ -41,7 +41,18 @@ class Config:
     concatPartsTtl: float = 300.0
     smsTtl: float = 3600.0  # seconds an SMS waits in the queue before it expires
     diagnostic: bool = False  # AT commands from Jeedom allowed (diagnostic mode)
+    messagePause: float = 0.0  # seconds between the end of an SMS and the start of the next one
+    selfTest: float = 0.0  # hours between two self-tests (the modem sends an SMS to its own SIM), 0 = none
+    ownNumber: str | None = None  # number of the SIM, for the self-test
+    autoRestart: bool = False  # restart the modem when the self-test fails
     pidFile: str = '/tmp/sms4gd.pid'
+
+    MIN_SELF_TEST_HOURS = 1.0  # a test costs an SMS: a lower value is raised to this one
+
+    @property
+    def selfTestInterval(self) -> float:
+        """ Seconds between two self-tests (0 = none) """
+        return max(self.selfTest, self.MIN_SELF_TEST_HOURS) * 3600.0 if self.selfTest > 0 else 0.0
 
     @classmethod
     def fromArgs(cls, argv: list[str] | None = None) -> 'Config':
@@ -63,6 +74,10 @@ class Config:
         parser.add_argument("--concatpartsttl", help="Max age (s) of incomplete concatenated SMS parts before they are discarded", type=str)
         parser.add_argument("--smsttl", help="Seconds an SMS waits in the queue before it expires", type=str)
         parser.add_argument("--diagnostic", help="Allow the AT commands sent from Jeedom (yes / no)", type=str)
+        parser.add_argument("--messagepause", help="Seconds between the end of an SMS and the start of the next one", type=str)
+        parser.add_argument("--selftest", help="Hours between two self-tests of the SMS service (0 = none)", type=str)
+        parser.add_argument("--ownnumber", help="Number of the SIM, for the self-test", type=str)
+        parser.add_argument("--autorestart", help="Restart the modem when the self-test fails (yes / no)", type=str)
         parser.add_argument("--pid", help="Pid file", type=str)
         args = parser.parse_args(argv)
 
@@ -101,6 +116,14 @@ class Config:
             config.smsTtl = float(args.smsttl)
         if args.diagnostic:
             config.diagnostic = args.diagnostic == 'yes'
+        if args.messagepause:
+            config.messagePause = max(0.0, float(args.messagepause))
+        if args.selftest:
+            config.selfTest = max(0.0, float(args.selftest))
+        if args.ownnumber and args.ownnumber != 'None':
+            config.ownNumber = args.ownnumber
+        if args.autorestart:
+            config.autoRestart = args.autorestart == 'yes'
         if args.pid:
             config.pidFile = args.pid
         return config

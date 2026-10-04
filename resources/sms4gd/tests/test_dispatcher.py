@@ -7,8 +7,8 @@ import time
 import unittest
 from concurrent.futures import Future
 
-from dispatcher import MAX_RESPONSE_CHARS, Dispatcher, smsInboxMessage, smsStatusMessage
-from wwanlib import (CmeError, NotConnectedError, SignalChanged, SmsDelivery, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError,
+from dispatcher import MAX_RESPONSE_CHARS, Dispatcher, selfTestMessage, smsInboxMessage, smsStatusMessage
+from wwanlib import (CmeError, NotConnectedError, SelfTestResult, SignalChanged, SmsDelivery, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError,
                     SmsReceived, SmsSent, TimeoutException)
 
 
@@ -18,6 +18,20 @@ class FakeModem:
         self.future: Future = Future()
         self.sms: list[tuple] = []
         self.smsError: Exception | None = None
+        self.restarts: list[str] = []
+        self.restartError: Exception | None = None
+        self.restartFuture: Future = Future()
+        self.selfTests = 0
+
+    def restart(self, reason='requested'):
+        if self.restartError is not None:
+            raise self.restartError
+        self.restarts.append(reason)
+        return self.restartFuture
+
+    def selfTest(self):
+        self.selfTests += 1
+        return Future()
 
     def command(self, command, timeout=10.0, parseError=True):
         self.calls.append((command, timeout, parseError))
@@ -277,6 +291,77 @@ class DispatcherTest(unittest.TestCase):
         self.assertNotIn('truncated', self.out.events[0])
 
     # ---- thread -----------------------------------------------------------------------------------
+
+    # ---- restart, self-test, number of the SIM ----------------------------------------------------
+
+    def testRestartIsAskedAndAnsweredWhenTheModemTookIt(self):
+        with self.assertLogs('dispatcher', level='WARNING'):
+            self.dispatch(cmd='restartModem')
+        self.assertEqual(self.modem.restarts, ['requested'])
+        self.assertEqual(self.out.events, [])  # nothing before the modem answered
+        self.modem.restartFuture.set_result(None)
+        self.assertEqual(self.out.events, [{'type': 'restartResult', 'status': 'ok', 'reason': ''}])
+
+    def testRestartRefusedBecauseTheModemIsNotConnected(self):
+        self.modem.restartError = NotConnectedError('Modem not connected (state: reconnecting)')
+        with self.assertLogs('dispatcher', level='WARNING'):
+            self.dispatch(cmd='restartModem')
+        self.assertEqual(self.out.events, [{'type': 'restartResult', 'status': 'refused',
+                                            'reason': 'Modem not connected (state: reconnecting)'}])
+
+    def testRestartRefusedByTheModem(self):
+        with self.assertLogs('dispatcher', level='WARNING'):
+            self.dispatch(cmd='restartModem')
+            self.modem.restartFuture.set_exception(CmeError('AT+CRESET', 100))
+        self.assertEqual((self.out.events[0]['status'], self.out.events[0]['reason'].split(':')[0]), ('refused', 'CmeError'))
+
+    def testRestartAndSelfTestDoNotNeedTheDiagnosticMode(self):
+        self.dispatcher = Dispatcher(self.messages, self.modem, self.out, 'KEY', diagnostic=False)
+        with self.assertLogs('dispatcher', level='INFO'):
+            self.dispatch(cmd='restartModem')
+            self.dispatch(cmd='selfTest')
+        self.assertEqual((self.modem.restarts, self.modem.selfTests), (['requested'], 1))
+
+    def testSelfTestIsRunByTheModemWhoseEventTellsTheResult(self):
+        with self.assertLogs('dispatcher', level='INFO'):
+            self.dispatch(cmd='selfTest')
+        self.assertEqual((self.modem.selfTests, self.out.events), (1, []))
+
+    def testSelfTestMessage(self):
+        self.assertEqual(selfTestMessage(SelfTestResult('noReceipt', 'no report', 61.5, True)),
+                         {'type': 'selfTest', 'status': 'noReceipt', 'reason': 'no report', 'duration': 61.5, 'restarted': True})
+        self.assertIsNone(selfTestMessage(SignalChanged(20)))
+
+    def ownNumber(self, lines=None, error=None):
+        with self.assertLogs('dispatcher', level='INFO') as logs:
+            self.dispatch(cmd='readOwnNumber')
+            if error is not None:
+                self.modem.future.set_exception(error)
+            else:
+                self.modem.future.set_result(lines)
+        return self.out.events[0], '\n'.join(logs.output)
+
+    def testTheNumberOfTheSimIsRead(self):
+        event, logs = self.ownNumber(['+CNUM: "Messagerie","+33767923801",145', 'OK'])
+        self.assertEqual(self.modem.calls, [('AT+CNUM', 15.0, False)])
+        self.assertEqual(event, {'type': 'ownNumber', 'number': '+33767923801', 'reason': ''})
+        self.assertNotIn('33767923801', logs)  # masked in the log
+
+    def testTheFirstNumberIsTaken(self):
+        event, _ = self.ownNumber(['+CNUM: "","0612345678",129', '+CNUM: "Fax","+33611111111",145', 'OK'])
+        self.assertEqual(event['number'], '0612345678')
+
+    def testASimThatDoesNotKnowItsNumber(self):
+        for lines in (['OK'], ['+CNUM: "","",129', 'OK'], ['+CME ERROR: 100']):
+            self.out.events.clear()
+            self.modem.future = Future()
+            event, _ = self.ownNumber(lines)
+            self.assertEqual((event['number'], event['reason']), (None, 'the SIM does not know its number'))
+
+    def testANumberThatCannotBeReadIsExplained(self):
+        event, _ = self.ownNumber(error=NotConnectedError('Modem not connected (state: restarting)'))
+        self.assertEqual(event['number'], None)
+        self.assertIn('NotConnectedError', event['reason'])
 
     def testThreadHandlesMessagesAndStopsAtOnce(self):
         self.dispatcher.start()

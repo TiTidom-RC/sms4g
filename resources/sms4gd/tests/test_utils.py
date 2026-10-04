@@ -27,6 +27,21 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual((config.diagnostic, config.callback, config.apikey, config.pidFile), (True, 'http://127.0.0.1:80/cb.php', 'K', '/tmp/p.pid'))
         self.assertEqual(config.smsTtl, 1800.0)
 
+    def testSupervisionSettings(self):
+        config = Config.fromArgs([])
+        self.assertEqual((config.messagePause, config.selfTestInterval, config.ownNumber, config.autoRestart), (0.0, 0.0, None, False))
+        config = Config.fromArgs(['--messagepause', '3', '--selftest', '24', '--ownnumber', '+33767923801', '--autorestart', 'yes'])
+        self.assertEqual((config.messagePause, config.selfTestInterval, config.ownNumber, config.autoRestart),
+                         (3.0, 24 * 3600.0, '+33767923801', True))
+
+    def testAnSelfTestIntervalBelowTheMinimumIsRaised(self):
+        self.assertEqual(Config.fromArgs(['--selftest', '0.2']).selfTestInterval, 3600.0)  # an SMS costs money
+        self.assertEqual(Config.fromArgs(['--selftest', '0']).selfTestInterval, 0.0)
+        self.assertEqual(Config.fromArgs(['--selftest', '-5']).selfTestInterval, 0.0)
+
+    def testNoSimNumberIsTheTextNone(self):
+        self.assertIsNone(Config.fromArgs(['--ownnumber', 'None']).ownNumber)
+
     def testPinAndSmscAreKeptWhenGiven(self):
         config = Config.fromArgs(['--pin', '1234', '--smsc', '+33695000695', '--diagnostic', 'no'])
         self.assertEqual((config.pin, config.smsc, config.diagnostic), ('1234', '+33695000695', False))

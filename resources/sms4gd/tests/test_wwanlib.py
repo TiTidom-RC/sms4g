@@ -386,6 +386,35 @@ class ModemTest(unittest.TestCase):
         self.assertIn('AT+CNMP=38', commands)
         self.assertEqual(modem.command('AT+CSQ').result(2), ['+CSQ: 20,99', 'OK'])
 
+    def connectWithSmsc(self, smsc, **table):
+        FakeSerial.behavior = answer(simcomTable(**table), echo=True)
+        modem = self.makeModem(smsc=smsc)
+        with self.assertLogs('wwanlib', level='INFO') as logs:
+            modem.start()
+            self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        return FakeSerial.instances[0].commands(), '\n'.join(logs.output)
+
+    def testSmscIsWrittenToTheModemWithoutSeparators(self):
+        commands, _ = self.connectWithSmsc('+33 6 95 00-06.95', **{'AT+CSCA="+33695000695"': 'OK\r\n'})
+        self.assertIn('AT+CSCA="+33695000695"', commands)
+
+    def testNoSmscAsksTheSimOnly(self):
+        commands, _ = self.connectWithSmsc(None)
+        self.assertIn('AT+CSCA?', commands)
+        self.assertFalse([c for c in commands if c.startswith('AT+CSCA="')])
+
+    def testAnSmscThatIsNotAPhoneNumberNeverReachesTheModem(self):
+        commands, logs = self.connectWithSmsc('+33"; AT+CFUN=0')
+        self.assertFalse([c for c in commands if c.startswith('AT+CSCA="') or 'CFUN=0' in c])
+        self.assertIn('is not a phone number', logs)
+        self.assertIn('AT+CSCA?', commands)
+
+    def testAnSmscRefusedByTheModemDoesNotBreakTheConnection(self):
+        commands, logs = self.connectWithSmsc('+33600000000', **{'AT+CSCA="+33600000000"': '+CMS ERROR: 303\r\n'})
+        self.assertIn('SMS center +33600000000 refused by the modem', logs)
+        self.assertIn('the one of the SIM is kept', logs)
+        # the SIM's one is read back and written again if the SMS parameters erased it
+        self.assertIn('AT+CSCA?', commands)
     def testSmsMemoryUsageLogged(self):
         modem = self.makeModem()
         with self.assertLogs('wwanlib', level='INFO') as logs:

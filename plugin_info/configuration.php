@@ -198,18 +198,9 @@ if (!isConnect('admin')) {
                 </div>
             </div>
             <div class="form-group">
-                <label class="col-lg-3 control-label">{{Durée de vie des SMS en attente (minutes)}}
-                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
-                    <sup><i class="fas fa-question-circle tooltips" title="{{Durée pendant laquelle le plugin retente l'envoi d'un SMS qui n'a pas pu partir (modem déconnecté, absence de réseau...). Passé ce délai, l'envoi est abandonné et le statut passe à « Expiré ». Minimum : 1 minute. Par défaut : 60 minutes.}}"></i></sup>
-                </label>
-                <div class="col-lg-1">
-                    <input class="configKey form-control" data-l1key="smsTtl" />
-                </div>
-            </div>
-            <div class="form-group">
                 <label class="col-lg-3 control-label">{{Passerelle SMS (SMSC)}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
-                    <sup><i class="fas fa-question-circle tooltips" title="{{A renseigner en cas d'erreur CMS 330 (SMSC number not set). Utiliser le code #*#*4636#*#* sur un mobile pour trouver le SMSC de votre opérateur}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{À laisser vide dans le cas normal : le centre SMS de la SIM est utilisé. À renseigner seulement si l'envoi échoue avec l'erreur CMS 330 (centre SMS non défini) : numéro de la passerelle SMS de votre opérateur, par exemple +33695000695 (sur Android, le code #*#*4636#*#* l'affiche). Un numéro invalide est ignoré et signalé dans le log du démon.}}"></i></sup>
                 </label>
                 <div class="col-lg-2">
                     <input class="configKey form-control" data-l1key="smsc" />
@@ -222,6 +213,15 @@ if (!isConnect('admin')) {
                 </label>
                 <div class="col-lg-1">
                     <input type="checkbox" class="configKey" data-l1key="deliveryReport" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Durée de vie des SMS en attente (minutes)}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Durée pendant laquelle le plugin retente l'envoi d'un SMS qui n'a pas pu partir (modem déconnecté, absence de réseau...). Passé ce délai, l'envoi est abandonné et le statut passe à « Expiré ». Minimum : 1 minute. Par défaut : 60 minutes.}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="smsTtl" />
                 </div>
             </div>
             <div class="form-group">
@@ -256,6 +256,7 @@ if (!isConnect('admin')) {
             <div class="form-group">
                 <label class="col-lg-3 control-label">{{Délai maximum entre deux tentatives (s)}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Le délai entre deux tentatives double à chaque échec, sans jamais dépasser cette valeur. Par défaut : 300 secondes}}"></i></sup>
                 </label>
                 <div class="col-lg-1">
                     <input class="configKey form-control" data-l1key="reconnectMaxDelay" />

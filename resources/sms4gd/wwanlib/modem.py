@@ -16,7 +16,7 @@ from .executor import Executor, Priority, Transaction
 from .inbox import Inbox, Reassembler
 from .outbox import Outbox
 from .profiles import GENERIC, Profile, detectProfile
-from .sms import SmsSender
+from .sms import SmsSender, normalizeNumber
 from .supervisor import Supervisor
 from .transport import Transport
 from .util import lineMatching, lineStartingWith
@@ -429,9 +429,17 @@ class Modem:
         return match.group(1) if match else None
 
     def _setupSmsCenter(self, run: Callable[..., list[str]]) -> None:
-        if self.options.smsc:
-            run(f'AT+CSCA="{self.options.smsc}"')
-            smsc: str | None = self.options.smsc
+        smsc: str | None = normalizeNumber(self.options.smsc) if self.options.smsc else None
+        if self.options.smsc and smsc is None:
+            # What is written in the AT command must be a phone number: nothing else reaches the modem
+            log.error('SMS center %r is not a phone number (digits, optionally after a +): ignored, the one of the SIM is used',
+                      self.options.smsc)
+        if smsc is not None:
+            try:
+                run(f'AT+CSCA="{smsc}"')
+            except CommandError as e:
+                log.warning('SMS center %s refused by the modem (%s): the one of the SIM is kept', smsc, e)
+                smsc = self._readSmsc(run)
         else:
             smsc = self._readSmsc(run)
         run('AT+CSMP=49,167,0,0' if self.options.deliveryReport else 'AT+CSMP=17,167,0,0', parseError=False)

@@ -290,11 +290,17 @@ class sms4g extends eqLogic {
 		$cmd .= ' --concatpartsttl ' . config::byKey('concatPartsTtl', 'sms4g', 300);
 		// Durée de vie d'un SMS en file : réglée en minutes (1 au minimum), donnée au démon en secondes
 		$cmd .= ' --smsttl ' . (max(1, (int) config::byKey('smsTtl', 'sms4g', 60)) * 60);
+		$cmd .= ' --messagepause ' . self::numericSetting('messagePause');
+		// Auto-test (heures, 0 = aucun ; le démon relève une valeur trop basse à 1 h) ; le numéro de la SIM est nettoyé : il finit dans une commande shell
+		$cmd .= ' --selftest ' . self::numericSetting('selfTestHours');
+		$ownNumber = preg_replace('/[^0-9+]/', '', (string) config::byKey('ownNumber', 'sms4g', ''));
+		$cmd .= ' --ownnumber ' . (($ownNumber != '') ? $ownNumber : 'None');
+		$cmd .= ' --autorestart ' . ((config::byKey('selfTestRestart', 'sms4g', 0) == 1) ? 'yes' : 'no');
 		$cmd .= ' --callback ' . network::getNetworkAccess('internal', 'http:127.0.0.1:port:comp') . '/plugins/sms4g/core/php/jeesms4g.php';
 		$cmd .= ' --apikey ' . jeedom::getApiKey('sms4g');
 		$cmd .= ' --pid ' . jeedom::getTmpFolder('sms4g') . '/deamon.pid';
 		// Masque apikey/pin uniquement dans le log (la commande exécutée ci-dessous garde les vraies valeurs)
-		log::add('sms4g', 'info', 'Lancement démon sms4g : ' . preg_replace('/(--apikey|--pin)\s+\S+/', '$1 ***', $cmd));
+		log::add('sms4g', 'info', 'Lancement démon sms4g : ' . preg_replace('/(--apikey|--pin|--ownnumber)\s+\S+/', '$1 ***', $cmd));
 		$result = exec($cmd . ' >> ' . log::getPathToLog('sms4gd') . ' 2>&1 &');
 		$i = 0;
 		while ($i < 30) {
@@ -311,6 +317,21 @@ class sms4g extends eqLogic {
 		}
 		message::removeAll('sms4g', 'unableStartDeamon');
 		return true;
+	}
+
+	/**
+	 * Réglage numérique donné au démon : nombre positif ou nul, point décimal (jamais la virgule d'une saisie
+	 * française ni celle d'une locale), 0 si la valeur n'est pas un nombre.
+	 *
+	 * @param string $_key clé de configuration du plugin
+	 * @return string
+	 */
+	private static function numericSetting($_key) {
+		$value = str_replace(',', '.', trim((string) config::byKey($_key, 'sms4g', '0')));
+		if (!is_numeric($value) || (float) $value <= 0) {
+			return '0';
+		}
+		return rtrim(rtrim(number_format((float) $value, 3, '.', ''), '0'), '.');
 	}
 
 	public static function deamon_stop() {
@@ -463,6 +484,62 @@ class sms4g extends eqLogic {
 			$cmd->setConfiguration('interact::auto::disable', 1);
 			$cmd->setDisplay('title_placeholder', __('Délai en secondes (facultatif)', __FILE__));
 			$cmd->setDisplay('message_placeholder', __('Commande AT', __FILE__));
+			$cmd->setOrder($orderCmd++);
+			$cmd->save();
+		} else {
+			$orderCmd++;
+		}
+
+		// restart_modem (action/other) : redémarre le modem (AT+CRESET) ; masquée par défaut, avec confirmation dans l'interface
+		$cmd = $modem->getCmd(null, 'restart_modem');
+		if (!is_object($cmd)) {
+			$cmd = new sms4gCmd();
+			$cmd->setName(__('Redémarrer le modem', __FILE__));
+			$cmd->setEqLogic_id($modem->getId());
+			$cmd->setLogicalId('restart_modem');
+			$cmd->setType('action');
+			$cmd->setSubType('other');
+			$cmd->setIsVisible(0);
+			$cmd->setConfiguration('actionConfirm', 1);
+			$cmd->setConfiguration('interact::auto::disable', 1);
+			$cmd->setOrder($orderCmd++);
+			$cmd->save();
+		} else {
+			$orderCmd++;
+		}
+
+		// self_test (action/other) : lance l'auto-test tout de suite (le résultat arrive dans « Dernier auto-test »)
+		$cmd = $modem->getCmd(null, 'self_test');
+		if (!is_object($cmd)) {
+			$cmd = new sms4gCmd();
+			$cmd->setName(__('Auto-test', __FILE__));
+			$cmd->setEqLogic_id($modem->getId());
+			$cmd->setLogicalId('self_test');
+			$cmd->setType('action');
+			$cmd->setSubType('other');
+			$cmd->setIsVisible(0);
+			$cmd->setConfiguration('interact::auto::disable', 1);
+			$cmd->setOrder($orderCmd++);
+			$cmd->save();
+		} else {
+			$orderCmd++;
+		}
+
+		// self_test_result (info/string) : résultat du dernier auto-test, toujours notifié même identique
+		$cmd = $modem->getCmd(null, 'self_test_result');
+		if (!is_object($cmd)) {
+			$cmd = new sms4gCmd();
+			$cmd->setName(__('Dernier auto-test', __FILE__));
+			$cmd->setEqLogic_id($modem->getId());
+			$cmd->setLogicalId('self_test_result');
+			$cmd->setType('info');
+			$cmd->setSubType('string');
+			$cmd->setIsVisible(0);
+			$cmd->setIsHistorized(1);
+			$cmd->setConfiguration('repeatEventManagement', 'always');
+			$cmd->setConfiguration('interact::auto::disable', 1);
+			$cmd->setDisplay('forceReturnLineBefore', 1);
+			$cmd->setDisplay('forceReturnLineAfter', 1);
 			$cmd->setOrder($orderCmd++);
 			$cmd->save();
 		} else {
@@ -826,6 +903,134 @@ class sms4g extends eqLogic {
 		return $_labels['delivered'] . ' ' . $delivered . '/' . count($_batch['numbers']) . ' : ' . implode(', ', $items) . ' (' . $_date . ')';
 	}
 	/**
+	 * Redémarre le modem (action « Redémarrer le modem »). Rend la main aussitôt : le démon répond par `restartResult`
+	 * (onRestartResult) et l'état de connexion passe à « Redémarrage du modem ».
+	 *
+	 * @return bool false si le démon n'a pas pu être joint
+	 */
+	public static function restartModem() {
+		log::add('sms4g', 'info', '[MODEM] Redémarrage du modem demandé');
+		if (!self::sendToDaemon(array('cmd' => 'restartModem'))) {
+			message::add('sms4g', __('Redémarrage du modem impossible', __FILE__) . ' : ' . __('le démon ne répond pas', __FILE__), '', 'sms4gRestart');
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Lance l'auto-test tout de suite (action « Auto-test ») : le résultat arrive dans « Dernier auto-test » (onSelfTest).
+	 *
+	 * @return bool false si le démon n'a pas pu être joint
+	 */
+	public static function runSelfTest() {
+		log::add('sms4g', 'info', '[AUTOTEST] Auto-test demandé');
+		return self::sendToDaemon(array('cmd' => 'selfTest'));
+	}
+
+	/**
+	 * Demande au démon le numéro que la carte SIM connaît pour elle-même (bouton « Détecter » de la configuration).
+	 * La réponse arrive plus tard (onOwnNumber) et est poussée à la page par l'événement `sms4g::ownNumber`.
+	 *
+	 * @return bool false si le démon n'a pas pu être joint
+	 */
+	public static function detectOwnNumber() {
+		return self::sendToDaemon(array('cmd' => 'readOwnNumber'));
+	}
+
+	/**
+	 * Raison donnée par le démon (anglais, courte) en français ; une raison inconnue (texte du modem...) est affichée
+	 * telle quelle, protégée des balises HTML.
+	 */
+	private static function translateReason($_reason) {
+		$reason = (string) $_reason;
+		$known = array(
+			'Modem not connected' => __('le modem n\'est pas connecté', __FILE__),
+			'modem not connected' => __('le modem n\'est pas connecté', __FILE__),
+			'The modem is already restarting' => __('le modem redémarre déjà', __FILE__),
+			'no number for the SIM' => __('le numéro de la SIM n\'est pas renseigné', __FILE__),
+			'a test is already running' => __('un test est déjà en cours', __FILE__),
+			'the SMS stayed in the queue' => __('le SMS n\'a pas pu partir', __FILE__),
+			'the SIM does not know its number' => __('la carte SIM ne connaît pas son numéro', __FILE__),
+		);
+		foreach ($known as $text => $translation) {
+			if (strpos($reason, $text) === 0) {
+				return $translation;
+			}
+		}
+		if (preg_match('/^the SMS could not be (?:sent|queued) \((.*)\)$/', $reason, $match)) {
+			return __('le SMS n\'a pas pu partir', __FILE__) . ' (' . secureXSS($match[1]) . ')';
+		}
+		return secureXSS($reason);
+	}
+
+	/**
+	 * Réponse du démon à la demande de redémarrage : seule une réponse refusée est signalée (message Jeedom).
+	 */
+	public static function onRestartResult($_message) {
+		if (isset($_message['status']) && $_message['status'] == 'ok') {
+			log::add('sms4g', 'info', '[MODEM] Redémarrage du modem accepté');
+			return;
+		}
+		$reason = self::translateReason(isset($_message['reason']) ? $_message['reason'] : '');
+		log::add('sms4g', 'warning', '[MODEM] Redémarrage du modem refusé : ' . $reason);
+		message::add('sms4g', __('Redémarrage du modem impossible', __FILE__) . ' : ' . $reason, '', 'sms4gRestart');
+	}
+
+	/**
+	 * Résultat d'un auto-test (le modem s'est envoyé un SMS) : écrit dans « Dernier auto-test ». Un échec est aussi
+	 * journalisé en erreur et signalé dans le centre de messages ; un test non effectué n'est qu'un avertissement.
+	 */
+	public static function onSelfTest($_modem, $_message, $_time) {
+		$status = isset($_message['status']) ? $_message['status'] : '';
+		$reason = isset($_message['reason']) ? (string) $_message['reason'] : '';
+		$failed = false;
+		switch ($status) {
+			case 'ok':
+				$text = __('OK', __FILE__);
+				break;
+			case 'noReception':
+				$text = __('Échec : le SMS envoyé à la SIM n\'est pas revenu', __FILE__);
+				$failed = true;
+				break;
+			case 'noReceipt':
+				$text = __('Échec : le SMS est revenu, mais pas son accusé de réception', __FILE__);
+				$failed = true;
+				break;
+			case 'skipped':
+				$text = __('Non effectué', __FILE__) . ' : ' . self::translateReason($reason);
+				break;
+			default:
+				log::add('sms4g', 'warning', '[AUTOTEST] Résultat inconnu : ' . secureXSS($status));
+				return;
+		}
+		if ($failed && !empty($_message['restarted'])) {
+			$text .= ' — ' . __('modem redémarré', __FILE__);
+		}
+		if ($failed && strpos($reason, 'intervention needed') !== false) {
+			$text .= ' — ' . __('intervention nécessaire', __FILE__);
+		}
+		$_modem->checkAndUpdateCmd('self_test_result', $text, $_time);
+		if ($failed) {
+			log::add('sms4g', 'error', '[AUTOTEST] ' . $text);
+			message::add('sms4g', __('Auto-test SMS', __FILE__) . ' : ' . $text, '', 'sms4gSelfTest');
+		} elseif ($status == 'skipped') {
+			log::add('sms4g', 'warning', '[AUTOTEST] ' . $text);
+		} else {
+			log::add('sms4g', 'info', '[AUTOTEST] ' . $text);
+			message::removeAll('sms4g', 'sms4gSelfTest');
+		}
+	}
+
+	/**
+	 * Numéro de la SIM lu par le démon : poussé à la page de configuration (`sms4g::ownNumber`) qui remplit son champ.
+	 */
+	public static function onOwnNumber($_message) {
+		$number = (isset($_message['number']) && preg_match('/^\+?[0-9]{3,20}$/', (string) $_message['number'])) ? $_message['number'] : '';
+		$reason = ($number == '') ? self::translateReason(isset($_message['reason']) ? $_message['reason'] : '') : '';
+		event::add('sms4g::ownNumber', array('number' => $number, 'reason' => $reason));
+	}
+
+	/**
 	 * Commande AT du mode diagnostic. Rend la main aussitôt : le résultat arrive plus tard dans les commandes
 	 * « Statut AT » et « Réponse AT » (onAtResponse). Ici seul le mode diagnostic est contrôlé : le format et le
 	 * filtre des commandes autorisées sont ceux du démon, qui fait foi (son refus arrive dans « Statut AT »).
@@ -928,6 +1133,15 @@ class sms4g extends eqLogic {
 					$text = __('Reconnexion dans', __FILE__) . ' ' . (int) round($_message['retryIn']) . ' s (' . $attempt . '/' . $maxAttempts . ')';
 				} else {
 					$text = __('Reconnexion', __FILE__) . ' ' . $attempt . '/' . $maxAttempts;
+				}
+				$code = 1;
+				$online = 0;
+				break;
+			case 'restarting':
+				// Redémarrage voulu du modem : la perte de la connexion est attendue, la reconnexion suit
+				$text = __('Redémarrage du modem', __FILE__);
+				if (isset($_message['reason']) && $_message['reason'] == 'selfTest') {
+					$text .= ' (' . __('auto-test', __FILE__) . ')';
 				}
 				$code = 1;
 				$online = 0;
@@ -1332,7 +1546,7 @@ class sms4gCmd extends cmd {
 		// commandes signal / connexion des équipements SMS se suppriment à la main)
 		$eqLogic = $this->getEqLogic();
 		if (is_object($eqLogic) && $eqLogic->getLogicalId() == 'modem') {
-			return in_array($this->getLogicalId(), array('signal', 'operator', 'connection', 'connection_state', 'online', 'at_status', 'at_response', 'at_command'));
+			return in_array($this->getLogicalId(), array('signal', 'operator', 'connection', 'connection_state', 'online', 'at_status', 'at_response', 'at_command', 'restart_modem', 'self_test', 'self_test_result'));
 		}
 		if (str_starts_with($this->getLogicalId(), 'delivery_status_') || str_starts_with($this->getLogicalId(), 'delivery_success_')) {
 			return true;
@@ -1415,6 +1629,12 @@ class sms4gCmd extends cmd {
 	}
 
 	public function execute($_options = null) {
+		if ($this->getLogicalId() == 'restart_modem') {
+			return sms4g::restartModem();
+		}
+		if ($this->getLogicalId() == 'self_test') {
+			return sms4g::runSelfTest();
+		}
 		if ($this->getLogicalId() == 'at_command') {
 			// Commande AT du mode diagnostic : la commande est le message, le délai (facultatif) est le titre
 			return sms4g::sendAtCommand(isset($_options['message']) ? $_options['message'] : '', isset($_options['title']) ? $_options['title'] : '');

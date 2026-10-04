@@ -72,6 +72,15 @@ if (isset($result['messages']) && is_array($result['messages'])) {
 				case 'smsIncomplete':
 					sms4g::onSmsIncomplete($message, $time);
 					break;
+				case 'restartResult':
+					sms4g::onRestartResult($message);
+					break;
+				case 'selfTest':
+					sms4g::onSelfTest($modem, $message, $time);
+					break;
+				case 'ownNumber':
+					sms4g::onOwnNumber($message);
+					break;
 				default:
 					log::add('sms4g', 'warning', '[CALLBACK] Type de message inconnu : ' . secureXSS($message['type']));
 			}

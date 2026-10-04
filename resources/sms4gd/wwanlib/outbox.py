@@ -54,12 +54,15 @@ class Outbox:
     def __init__(self, send: Callable[[str, str, int], SendOutcome], publish: Callable[[Any], None],
                  ttl: float = 3600.0, maxSize: int = 50, delays: tuple[float, ...] = RETRY_DELAYS,
                  steadyDelay: float = STEADY_DELAY, stopEvent: threading.Event | None = None,
-                 tracker: ReceiptTracker | None = None):
+                 tracker: ReceiptTracker | None = None, messagePause: float = 0.0):
         """ :param send: sends one message and blocks until it is over (``SmsSender.send``)
         :param publish: receives the events (``SmsQueued``, ``SmsSent``, ``SmsFailed``, ``SmsExpired``)
         :param stopEvent: set when the library stops (also ends the pauses between the parts of a message)
-        :param tracker: follows the delivery reports of what was sent (None: the reports are not asked) """
+        :param tracker: follows the delivery reports of what was sent (None: the reports are not asked)
+        :param messagePause: seconds left between the end of an SMS and the start of the next one (0: none) """
         self._tracker = tracker
+        self._messagePause = messagePause
+        self._notBefore = 0.0  # no SMS starts before this time (time.monotonic())
         self._send = send
         self._publish = publish
         self._ttl = ttl
@@ -172,7 +175,8 @@ class Outbox:
                 for entry in [entry for entry in self._entries if not entry.inFlight and entry.expiresAt <= now]:
                     self._entries.remove(entry)
                     events.append(self._expired(entry))
-                due = next((entry for entry in self._entries if not entry.inFlight and entry.nextAttempt <= now), None)
+                due = next((entry for entry in self._entries if not entry.inFlight and entry.nextAttempt <= now), None) \
+                    if now >= self._notBefore else None
                 if due is not None:
                     due.inFlight = True
                 elif not events:
@@ -183,7 +187,7 @@ class Outbox:
                 return due
 
     def _sleep(self, now: float) -> float | None:
-        waiting = [min(entry.nextAttempt, entry.expiresAt) for entry in self._entries if not entry.inFlight]
+        waiting = [min(max(entry.nextAttempt, self._notBefore), entry.expiresAt) for entry in self._entries if not entry.inFlight]
         return max(0.0, min(waiting) - now) if waiting else None
 
     def _finish(self, entry: _Entry, outcome: SendOutcome) -> None:
@@ -196,6 +200,7 @@ class Outbox:
                 outcome = SendOutcome('failed', 'daemon stopped' if self._stopped else str(self._abandon))
                 log.warning('SMS to %s failed (%s)', entry.shown, outcome.reason)
             if outcome.status == 'sent':
+                self._notBefore = time.monotonic() + self._messagePause
                 self._entries.remove(entry)
                 log.info('SMS to %s sent (%d part(s))', entry.shown, outcome.parts)
                 events.append(SmsSent(entry.smsId, entry.ref, entry.number, outcome.parts, tuple(outcome.references)))

@@ -2,6 +2,7 @@
 """ SMS PDU encoding methods """
 
 import codecs
+import random
 import sys
 from datetime import datetime, timedelta, tzinfo
 from typing import Any, Dict, List, Optional, Union
@@ -10,7 +11,6 @@ from .exceptions import EncodingError
 
 MAX_INT = sys.maxsize
 
-TEXT_MODE = ('\n\r !\"#%&\'()*+,-./0123456789:;<=>?ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz')  # TODO: Check if all of them are supported inside text mode
 # Tables can be found at: http://en.wikipedia.org/wiki/GSM_03.38#GSM_7_bit_default_alphabet_and_extension_table_of_3GPP_TS_23.038_.2F_GSM_03.38
 GSM7_BASIC = ('@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\x1bÆæßÉ !\"#¤%&\'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ`¿abcdefghijklmnopqrstuvwxyzäöñüà')
 GSM7_EXTENDED = {chr(0xFF): 0x0A,
@@ -236,14 +236,15 @@ class Pdu(object):
         return self.data.hex().upper()
 
 
-def encodeSmsSubmitPdu(number: str, text: str, reference: int = 0, validity: Union[None, timedelta, datetime] = None, smsc: Optional[str] = None, requestStatusReport: bool = True, rejectDuplicates: bool = False, sendFlash: bool = False, maxPartsPerGroup: int = 0) -> List['Pdu']:
+def encodeSmsSubmitPdu(number: str, text: str, reference: int = 0, validity: Union[None, timedelta, datetime] = None, smsc: Optional[str] = None, requestStatusReport: bool = True, rejectDuplicates: bool = False, sendFlash: bool = False, maxPartsPerGroup: int = 0, concatReference: Optional[int] = None) -> List['Pdu']:
     """ Creates an SMS-SUBMIT PDU for sending a message with the specified text to the specified number
 
     :param number: the destination mobile number
     :type number: str
     :param text: the message text
     :type text: str
-    :param reference: message reference number (see also: rejectDuplicates parameter)
+    :param reference: TP-MR (message reference) of the first PDU: every PDU of the message takes its own value, one more
+        than the previous one (modulo 256). The modem may replace it; the real one is returned by ``+CMGS``.
     :type reference: int
     :param validity: message validity period (absolute or relative)
     :type validity: datetime.timedelta (relative) or datetime.datetime (absolute)
@@ -254,6 +255,9 @@ def encodeSmsSubmitPdu(number: str, text: str, reference: int = 0, validity: Uni
     :param maxPartsPerGroup: if the message needs more parts than this, it is sent as several independent
         concatenation groups (each with its own reference) instead of a single big one. 0 = no limit.
     :type maxPartsPerGroup: int
+    :param concatReference: reference of the concatenation of the first group (one more for each following group),
+        random by default. It is not the TP-MR: all the parts of a group carry the same one, each with its own TP-MR.
+    :type concatReference: int
 
     :return: A list of one or more tuples containing the SMS PDU (as a bytearray, and the length of the TPDU part
     :rtype: list of tuples
@@ -306,10 +310,13 @@ def encodeSmsSubmitPdu(number: str, text: str, reference: int = 0, validity: Uni
     else:
         groups = [[text]]
 
+    if concatReference is None:
+        concatReference = random.randrange(256)
+
     # Construct required PDU(s) : one independent concatenation group (and reference) per group
     pdus = []
     for groupIndex, groupParts in enumerate(groups):
-        groupReference = (reference + groupIndex) % 256
+        groupReference = (concatReference + groupIndex) % 256
         groupHasConcat = len(groupParts) > 1
         for i, pduText in enumerate(groupParts):
             pdu = bytearray()
@@ -329,7 +336,7 @@ def encodeSmsSubmitPdu(number: str, text: str, reference: int = 0, validity: Uni
             udhLen = len(udh)
 
             pdu.append(tpduFirstOctet | (0x40 if groupHasConcat else 0x00))
-            pdu.append(groupReference)  # message reference
+            pdu.append((reference + len(pdus)) % 256)  # TP-MR: one per PDU
             # Add destination number
             pdu.extend(_encodeAddressField(number))
             pdu.append(0x00)  # Protocol identifier - no higher-level protocol
@@ -522,7 +529,7 @@ def _decodeTimestamp(byteIter):
 def _encodeTimestamp(timestamp):
     """ Encodes a 7-octet timestamp from the specified date
 
-    Note: the specified timestamp must have a UTC offset set; you can use gsmmodem.util.SimpleOffsetTzInfo for simple cases
+    Note: the specified timestamp must have a UTC offset set; you can use wwanlib.util.SimpleOffsetTzInfo for simple cases
 
     :param timestamp: The timestamp to encode
     :type timestamp: datetime.datetime
@@ -531,7 +538,7 @@ def _encodeTimestamp(timestamp):
     :rtype: bytearray
     """
     if timestamp.tzinfo is None:
-        raise ValueError('Please specify time zone information for the timestamp (e.g. by using gsmmodem.util.SimpleOffsetTzInfo)')
+        raise ValueError('Please specify time zone information for the timestamp (e.g. by using wwanlib.util.SimpleOffsetTzInfo)')
 
     # See if the timezone difference is positive/negative
     tzDelta = timestamp.utcoffset()
@@ -684,33 +691,6 @@ def decodeSemiOctets(encodedNumber, numberOfOctets=None):
             if i == numberOfOctets:
                 break
     return ''.join(number)
-
-
-def encodeTextMode(plaintext):
-    """ Text mode checker
-
-    Tests whether SMS could be sent in text mode
-
-    :param text: the text string to encode
-
-    :raise ValueError: if the text string cannot be sent in text mode
-
-    :return: Passed string
-    :rtype: str
-    """
-    plaintext = str(plaintext)
-
-    for char in plaintext:
-        idx = TEXT_MODE.find(char)
-        if idx != -1:
-            continue
-        else:
-            raise ValueError(f'Cannot encode char "{char}" inside text mode')
-
-    if len(plaintext) > MAX_MESSAGE_LENGTH[0x00]:
-        raise ValueError('Message is too long for text mode (maximum {0} characters)'.format(MAX_MESSAGE_LENGTH[0x00]))
-
-    return plaintext
 
 
 def encodeGsm7(plaintext, discardInvalid=False):

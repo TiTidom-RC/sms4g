@@ -98,7 +98,7 @@ if (!isConnect('admin')) {
             <div class="form-group">
                 <label class="col-lg-3 control-label">{{Cycle (s)}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
-                    <sup><i class="fas fa-question-circle tooltips" title="{{Cycle de scrutation du démon pour l'envoi et la réception des SMS. Un chiffre trop bas peut amener à une certaine instabilité.}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Intervalle entre deux relevés du signal et de l'enregistrement sur le réseau mobile (5 secondes au minimum). Un chiffre trop bas peut amener à une certaine instabilité.}}"></i></sup>
                 </label>
                 <div class="col-lg-1">
                     <input class="configKey form-control" data-l1key="cycle" />
@@ -125,6 +125,18 @@ if (!isConnect('admin')) {
         </div>
         <div>
             <legend><i class="fas fa-sim-card"></i> {{Modem}}</legend>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{État du modem}}
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Affiche la connexion du modem, son enregistrement sur le réseau mobile et la qualité du signal (valeurs de l'équipement Modem)}}"></i></sup>
+                </label>
+                <div class="col-lg-9" style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding-top:4px;">
+                    <button type="button" id="btn_checkModem" class="btn btn-sm btn-info">
+                        <i class="fas fa-stethoscope"></i> {{Vérifier}}
+                    </button>
+                    <span id="modemCheck_network"><i class="fas fa-question-circle" style="color:var(--al-default-color,#95a5a6)"></i> {{Réseau}}</span>
+                    <span id="modemCheck_signal"><i class="fas fa-question-circle" style="color:var(--al-default-color,#95a5a6)"></i> {{Signal}}</span>
+                </div>
+            </div>
             <div class="form-group">
                 <label class="col-lg-3 control-label">{{Port SMS}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
@@ -166,35 +178,12 @@ if (!isConnect('admin')) {
                 </div>
             </div>
             <div class="form-group">
-                <label class="col-lg-3 control-label">{{Texte mode}}
-                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
-                    <sup><i class="fas fa-question-circle tooltips" title="{{A utiliser si vous ne recevez pas de message (compatibilité avec un maximum de modem) mais enleve le support des SMS multiple et des caractères spéciaux}}"></i></sup>
-                </label>
-                <div class="col-lg-1">
-                    <input type="checkbox" class="configKey" data-l1key="textMode" />
-                </div>
-            </div>
-            <div class="form-group">
                 <label class="col-lg-3 control-label">{{Forcer le mode 4G uniquement}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
                     <sup><i class="fas fa-question-circle tooltips" title="{{Recommandé si votre opérateur a coupé la 2G/3G : évite au modem de perdre du temps à les rechercher. Attention, si la couverture 4G est absente à un endroit, le modem ne se repliera pas sur 2G/3G. Uniquement pris en compte sur les modems SimCom (ex : SIM7600G-H)}}"></i></sup>
                 </label>
                 <div class="col-lg-1">
                     <input type="checkbox" class="configKey" data-l1key="force4gOnly" />
-                </div>
-            </div>
-            <div class="form-group">
-                <label class="col-lg-3 control-label">{{Force du signal}}
-                    <sup><i class="fas fa-question-circle tooltips" title="{{-1 = signal inconnu (pas de lecture disponible actuellement)}}"></i></sup>
-                </label>
-                <div class="col-lg-2">
-                    <span class="configKey" data-l1key="signalStrength"></span> / 30
-                </div>
-            </div>
-            <div class="form-group">
-                <label class="col-lg-3 control-label">{{Réseau}}</label>
-                <div class="col-lg-3">
-                    <span class="configKey" data-l1key="networkName"></span>
                 </div>
             </div>
         </div>
@@ -211,7 +200,7 @@ if (!isConnect('admin')) {
             <div class="form-group">
                 <label class="col-lg-3 control-label">{{Passerelle SMS (SMSC)}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
-                    <sup><i class="fas fa-question-circle tooltips" title="{{A renseigner en cas d'erreur CMS 330 (SMSC number not set). Utiliser le code #*#*4636#*#* sur un mobile pour trouver le SMSC de votre opérateur}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{À laisser vide dans le cas normal : le centre SMS de la SIM est utilisé. À renseigner seulement si l'envoi échoue avec l'erreur CMS 330 (centre SMS non défini) : numéro de la passerelle SMS de votre opérateur, par exemple +33695000695 (sur Android, le code #*#*4636#*#* l'affiche). Un numéro invalide est ignoré et signalé dans le log du démon.}}"></i></sup>
                 </label>
                 <div class="col-lg-2">
                     <input class="configKey form-control" data-l1key="smsc" />
@@ -220,19 +209,45 @@ if (!isConnect('admin')) {
             <div class="form-group">
                 <label class="col-lg-3 control-label">{{Demander un accusé de réception}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
-                    <sup><i class="fas fa-question-circle tooltips" title="{{Le démon tentera de récupérer le statut de livraison (livré / échec) de chaque message envoyé}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Le démon récupère le statut de livraison de chaque message envoyé : « Statut » passe alors de « Envoyé » à « Livré » (ou « Non remis »), et « Remis » ne passe à 1 que dans ce cas (avec plusieurs numéros, quand tous ont reçu le message). Sans cette option, « Statut » reste sur « Envoyé » et « Remis » ne change pas.}}"></i></sup>
                 </label>
                 <div class="col-lg-1">
                     <input type="checkbox" class="configKey" data-l1key="deliveryReport" />
                 </div>
             </div>
             <div class="form-group">
-                <label class="col-lg-3 control-label">{{Expiration des fragments incomplets (s)}}
+                <label class="col-lg-3 control-label">{{Pause entre deux SMS (s)}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
-                    <sup><i class="fas fa-question-circle tooltips" title="{{Si un SMS multi-parties (message long) n'est jamais reçu en entier, les fragments déjà reçus sont délivrés tels quels après ce délai, avec un marqueur aux emplacements manquants}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Délai laissé au modem entre la fin de l'envoi d'un SMS et le début du suivant. 0 : aucune pause (par défaut).}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="messagePause" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Durée de vie des SMS en attente (minutes)}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Durée pendant laquelle le plugin retente l'envoi d'un SMS qui n'a pas pu partir (modem déconnecté, absence de réseau...). Passé ce délai, l'envoi est abandonné et le statut passe à « Expiré ». Minimum : 1 minute. Par défaut : 60 minutes.}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="smsTtl" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Attente des parties d'un SMS long (s)}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Durée pendant laquelle le plugin attend les parties manquantes d'un SMS long. Passé ce délai, le message est abandonné (il n'est pas transmis à moitié) et un message d'erreur apparaît dans Jeedom. Par défaut : 300 secondes.}}"></i></sup>
                 </label>
                 <div class="col-lg-1">
                     <input class="configKey form-control" data-l1key="concatPartsTtl" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Interactions : ignorer les SMS de plus de (minutes)}}
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Un SMS reçu avec plus de retard que ce délai (modem débranché, démon arrêté...) n'est plus exécuté comme une commande : il n'y a ni interaction ni réponse à une question en attente, pour éviter d'exécuter un ordre périmé. Les commandes « Message » et « Expéditeur » sont quand même mises à jour (un scénario déclenché par ces commandes doit donc tenir compte de l'âge du message) et le SMS est écrit dans le log. 0 : jamais ignoré. Par défaut : 10 minutes. L'âge est calculé avec la date du centre SMS : l'horloge de Jeedom doit être à l'heure.}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="smsMaxAge" />
                 </div>
             </div>
         </div>
@@ -250,6 +265,7 @@ if (!isConnect('admin')) {
             <div class="form-group">
                 <label class="col-lg-3 control-label">{{Délai maximum entre deux tentatives (s)}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Le délai entre deux tentatives double à chaque échec, sans jamais dépasser cette valeur. Par défaut : 300 secondes}}"></i></sup>
                 </label>
                 <div class="col-lg-1">
                     <input class="configKey form-control" data-l1key="reconnectMaxDelay" />
@@ -262,6 +278,53 @@ if (!isConnect('admin')) {
                 </label>
                 <div class="col-lg-1">
                     <input class="configKey form-control" data-l1key="reconnectMaxAttempts" />
+                </div>
+            </div>
+        </div>
+        <div>
+            <legend><i class="fas fa-heartbeat"></i> {{Supervision}}</legend>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Numéro de la SIM}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Utilisé seulement par l'auto-test. « Détecter » le lit sur la SIM si elle le connaît, sinon saisissez-le (+33...).}}"></i></sup>
+                </label>
+                <div class="col-lg-2">
+                    <input class="configKey form-control" data-l1key="ownNumber" />
+                </div>
+                <div class="col-lg-2">
+                    <button type="button" id="btn_detectOwnNumber" class="btn btn-sm btn-info">
+                        <i class="fas fa-search"></i> {{Détecter}}
+                    </button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Auto-test des SMS (heures)}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{0 : désactivé (par défaut). Le modem s'envoie un SMS pour vérifier la réception des SMS et des accusés. Un SMS consommé par test. Minimum : 1 heure.}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input class="configKey form-control" data-l1key="selfTestHours" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Redémarrer le modem si l'auto-test échoue}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Redémarre le modem (environ 30 secondes sans service), une fois par heure au plus. Sans cette option, l'échec est seulement signalé.}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input type="checkbox" class="configKey" data-l1key="selfTestRestart" />
+                </div>
+            </div>
+        </div>
+        <div>
+            <legend><i class="fas fa-stethoscope"></i> {{Diagnostic}}</legend>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Mode diagnostic (commandes AT)}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Autorise l'envoi de commandes AT au modem depuis Jeedom, avec la commande « Commande AT » de l'équipement Modem (le résultat arrive dans « Statut AT » et « Réponse AT »). Les commandes dangereuses sont refusées par le démon. A activer le temps d'un diagnostic.}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input type="checkbox" class="configKey" data-l1key="diagMode" />
                 </div>
             </div>
         </div>
@@ -306,13 +369,48 @@ if (!isConnect('admin')) {
         })
     }
 
-    document.getElementById('btn_checkModemManager').addEventListener('click', (event) => {
+    document.getElementById('btn_checkModemManager')?.addEventListener('click', (event) => {
         const btn = event.currentTarget
         btn.disabled = true
         refreshModemManagerStatus(() => { btn.disabled = false })
     })
 
-    document.getElementById('btn_disableModemManager').addEventListener('click', (event) => {
+    // Indicateur d'une ligne de résultat : ok / warn / ko, ou inconnu (icône « ? »)
+    const modemIndicator = (item, fallback) => {
+        if (!item || item.status === 'unknown') {
+            return unknownHtml + ((item && item.label) || fallback)
+        }
+        return indicator(item.status === 'ok', item.label, item.status === 'warn')
+    }
+
+    const showModemStatus = (result) => {
+        document.getElementById('modemCheck_network').innerHTML = modemIndicator(result && result.network, '{{Réseau}}')
+        document.getElementById('modemCheck_signal').innerHTML = modemIndicator(result && result.signal, '{{Signal}}')
+    }
+
+    document.getElementById('btn_checkModem')?.addEventListener('click', (event) => {
+        const btn = event.currentTarget
+        btn.disabled = true
+        domUtils.ajax({
+            type: 'POST',
+            url: AJAX_URL,
+            data: { action: 'getModemStatus' },
+            dataType: 'json',
+            error: (request, status, error) => { handleAjaxError(request, status, error); showModemStatus(null); btn.disabled = false },
+            success: (data) => {
+                btn.disabled = false
+                if (data.state !== 'ok') {
+                    jeedomUtils.showAlert({ message: data.result, level: 'danger' })
+                    showModemStatus(null)
+                } else {
+                    jeedomUtils.showAlert({ message: data.result.message, level: data.result.level })
+                    showModemStatus(data.result)
+                }
+            }
+        })
+    })
+
+    document.getElementById('btn_disableModemManager')?.addEventListener('click', (event) => {
         const btn = event.currentTarget
         jeeDialog.confirm({
             title: '{{Désactivation de}} ModemManager',
@@ -338,6 +436,72 @@ if (!isConnect('admin')) {
                     }
                 }
             })
+        })
+    })
+
+    // Numéro de la SIM : le démon répond plus tard, Jeedom pousse la réponse à la page (événement sms4g::ownNumber)
+    const detectButton = document.getElementById('btn_detectOwnNumber')
+    const ownNumberInput = document.querySelector('.configKey[data-l1key="ownNumber"]')
+    let ownNumberTimeout = null
+
+    // Le Core envoie les événements des plugins avec jQuery quand il est chargé (4.6.1 : toujours). Depuis 4.6.2 la liste
+    // jeedom.vanillaEvents les envoie en CustomEvent : on y inscrit l'événement. Sinon, le pont jQuery → CustomEvent de TVRemote,
+    // seul endroit du plugin où jQuery intervient.
+    if (typeof jeedom !== 'undefined' && Array.isArray(jeedom.vanillaEvents)) {
+        if (!jeedom.vanillaEvents.includes('sms4g::ownNumber')) {
+            jeedom.vanillaEvents.push('sms4g::ownNumber')
+        }
+    } else if (typeof jQuery !== 'undefined' && !window.sms4gBridgeAttached) {
+        window.sms4gBridgeAttached = true
+        $('body').on('sms4g::ownNumber', function (event, data) {
+            if (event.originalEvent && event.originalEvent.__bridged) {
+                return
+            }
+            const customEvent = new CustomEvent('sms4g::ownNumber', { detail: data })
+            customEvent.__bridged = true
+            document.body.dispatchEvent(customEvent)
+        })
+    }
+
+    if (window.sms4gOwnNumberHandler) {
+        document.body.removeEventListener('sms4g::ownNumber', window.sms4gOwnNumberHandler)
+    }
+    window.sms4gOwnNumberHandler = (event) => {
+        clearTimeout(ownNumberTimeout)
+        if (detectButton) {
+            detectButton.disabled = false
+        }
+        const data = event.detail || {}
+        if (data.number && ownNumberInput) {
+            ownNumberInput.value = data.number
+            ownNumberInput.dispatchEvent(new Event('change', { bubbles: true }))
+            jeedomUtils.showAlert({ message: '{{Numéro de la SIM détecté}} : ' + data.number, level: 'success' })
+        } else {
+            jeedomUtils.showAlert({ message: '{{La carte SIM ne connaît pas son numéro : saisissez-le à la main}}', level: 'warning' })
+        }
+    }
+    document.body.addEventListener('sms4g::ownNumber', window.sms4gOwnNumberHandler)
+
+    detectButton?.addEventListener('click', (event) => {
+        const btn = event.currentTarget
+        btn.disabled = true
+        domUtils.ajax({
+            type: 'POST',
+            url: AJAX_URL,
+            data: { action: 'detectOwnNumber' },
+            dataType: 'json',
+            error: (request, status, error) => { handleAjaxError(request, status, error); btn.disabled = false },
+            success: (data) => {
+                if (data.state !== 'ok') {
+                    jeedomUtils.showAlert({ message: data.result, level: 'danger' })
+                    btn.disabled = false
+                    return
+                }
+                ownNumberTimeout = setTimeout(() => {
+                    btn.disabled = false
+                    jeedomUtils.showAlert({ message: '{{Pas de réponse du démon}}', level: 'warning' })
+                }, 15000)
+            }
         })
     })
 })()

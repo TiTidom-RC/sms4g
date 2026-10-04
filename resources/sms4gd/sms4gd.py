@@ -13,36 +13,47 @@
 # You should have received a copy of the GNU General Public License
 # along with Jeedom. If not, see <http://www.gnu.org/licenses/>.
 
+# Daemon of the sms4g plugin: glue between Jeedom and the wwanlib library, which owns the modem.
+#
+#   Jeedom (PHP) --socket--> Dispatcher --> wwanlib.Modem --events--> jeedom_publisher --HTTP--> jeesms4g.php
+#
+# Milestone J6: the modem can be restarted from Jeedom, the self-test (the modem sends an SMS to its own SIM) is relayed.
+# Milestone J5: connection state, signal and network are published to Jeedom, the AT commands sent from Jeedom are
+# run in diagnostic mode, the SMS are sent (queue, retries and expiry are in the library; Jeedom learns what became
+# of each one from a `smsStatus` message, up to "delivered" when the delivery reports are asked for) and the SMS received
+# are handed over (`smsReceived`, long ones put back together by the library; `smsIncomplete` when one was given up).
+
 import logging
-import re
-import sys
 import os
-import time
-import argparse
+import re
 import signal
+import sys
+import threading
 import traceback
-import json
-from itertools import count
 from typing import Optional
-from queue import Empty
-from gsmmodem.exceptions import TimeoutException
-from gsmmodem.modem import GsmModem, StatusReport
+
+from dispatcher import Dispatcher, selfTestMessage, smsInboxMessage, smsStatusMessage
+from utils import Config
+from wwanlib import (ConnectionState, Modem, ModemIdentified, ModemOptions, NetworkChanged, Registration, SignalChanged,
+                     StateChanged, WwanException, maskNumber)
 
 try:
-    from jeedom.jeedom import jeedom_com, jeedom_socket, jeedom_utils, JEEDOM_SOCKET_MESSAGE
-
-    # Type hints for global instances (initialized later)
-    j_com_instance: Optional[jeedom_com] = None
-    j_socket_instance: Optional[jeedom_socket] = None
-
+    from jeedom.jeedom import jeedom_publisher, jeedom_socket, jeedom_utils, JEEDOM_SOCKET_MESSAGE
 except ImportError as e:
     print("Error: importing module from jeedom folder: %s", e)
     sys.exit(1)
 
 # PARAMETERS #
 
-gsm: Optional[GsmModem] = None
-_smsSeq = count()  # compteur thread-safe (CPython) pour différencier les clés du buffer devices:: entre 2 flush
+config: Config
+modem: Optional[Modem] = None
+publisher: Optional[jeedom_publisher] = None
+dispatcher: Optional[Dispatcher] = None
+socketServer: Optional[jeedom_socket] = None
+_stopEvent = threading.Event()
+_finalStatePublished = False  # la lib a déjà publié disconnected (avec sa cause) : ne pas la remplacer à l'arrêt
+_identity: Optional[ModemIdentified] = None
+_DIAGNOSTIC_COMMANDS = ('AT+CSQ', 'AT+CREG?', 'AT+COPS?', 'AT+CPMS?', 'AT+CNMI?', 'AT+CSMS?')
 
 
 class SecretMaskFilter(logging.Filter):
@@ -72,251 +83,95 @@ class SecretMaskFilter(logging.Filter):
         return True
 
 
-def handleSms(sms):
-    logging.info("Got SMS message : %s", sms)
-    if not sms.text:
-        logging.debug("No text so nothing to do")
+def runDiagnostic():
+    """Journalise l'état du modem à chaque connexion (identité, signal, réseau, mémoire SMS, notifications).
+    Sert notamment à analyser l'erreur 322 : valeurs de CNMI / CSMS et remplissage de la mémoire (CPMS)."""
+    if modem is None:
         return
-    message = sms.text.replace('"', '')
-    # message = jeedom_utils.remove_accents(sms.text.replace('"', ''))
-    if j_com_instance:
-        # Clé unique par message (pas juste le numéro) : sinon 2 SMS du même expéditeur avant le prochain
-        # flush s'écrasent dans le buffer (merge_dict remplace la valeur précédente sur la même clé)
-        j_com_instance.add_changes(f'devices::{sms.number}#{next(_smsSeq)}', {'number': sms.number, 'message': message})
-
-
-def handleStatusReport(report):
-    status = 'delivered' if report.deliveryStatus == StatusReport.DELIVERED else 'failed'
-    logging.info("Delivery report for %s : %s (ref %s)", report.number, status, report.reference)
-    if j_com_instance:
-        j_com_instance.send_change_immediate({'number': 'deliveryReport', 'destination': report.number, 'status': status, 'reference': report.reference})
-
-
-def _backoffDelay(attempt):
-    return min(_reconnect_base_delay * (2 ** (attempt - 1)), _reconnect_max_delay)
-
-
-def _isTransientNetworkError(e):
-    return isinstance(e, TimeoutException) or str(e) in ('Device not searching for network operator', 'Timeout')
-
-
-_modem_status = None
-_modem_status_extra = None
-
-
-def _setModemStatus(status, **kwargs):
-    """Push the modem connection status to Jeedom (deduplicated on status+details, PHP does the display translation)"""
-    global _modem_status, _modem_status_extra
-    if status == _modem_status and kwargs == _modem_status_extra:
-        return
-    _modem_status = status
-    _modem_status_extra = kwargs
-    if j_com_instance:
-        change = {'number': 'modemStatus', 'status': status}
-        change.update(kwargs)
-        j_com_instance.send_change_immediate(change)
-
-
-def _createAndConnectModem():
-    if _device is None:
-        raise ValueError('Device not found')
-    modem = GsmModem(
-        _device, int(_serial_rate),
-        smsReceivedCallbackFunc=handleSms,
-        smsStatusReportCallback=handleStatusReport,
-        requestDelivery=(_delivery_report == 'yes'),
-    )
-    try:
-        logging.debug("Text mode %s", _text_mode == 'yes')
-        modem.smsTextMode = (_text_mode == 'yes')
-        if _pin != 'None':
-            logging.debug("Enter pin code : %s ", _pin)
-            modem.connect(_pin, 5)
-        else:
-            modem.connect(None, 5)
-        if _force_4g == 'yes' and modem.isSimComModem:
-            try:
-                modem.write('AT+CNMP=38')
-                logging.info("Forced LTE-only network mode (AT+CNMP=38)")
-            except Exception as e:
-                logging.error("Failed to force LTE-only network mode (AT+CNMP=38) : %s", e)
-        if _smsc != 'None':
-            logging.debug("Configure smsc : %s", _smsc)
-            modem.write(f'AT+CSCA="{_smsc}"')
-        logging.debug("Waiting for network...")
-        modem.waitForNetworkCoverage(timeout=_cycle)
-        logging.info("Network coverage acquired")
-        if modem.isSimComModem:
-            try:
-                # First field of the response is the actual RAT in use (LTE/WCDMA/GSM/NO SERVICE...) -
-                # useful to spot a fallback to 2G/3G when force_4g is set, or just to see the current mode otherwise
-                cpsi = modem.write('AT+CPSI?')
-                logging.info("Network system info (AT+CPSI?) : %s", cpsi)
-            except Exception as e:
-                logging.error("Failed to query network system info (AT+CPSI?) : %s", e)
+    if _identity:
+        logging.info("Diagnostic : profile=%s, manufacturer=%s, model=%s, revision=%s", _identity.profile, _identity.manufacturer, _identity.model, _identity.revision)
+    for command in _DIAGNOSTIC_COMMANDS + modem.profile.diagnosticCommands:
         try:
-            if j_com_instance:
-                j_com_instance.send_change_immediate({'number': 'networkName', 'message': str(modem.networkName)})
-        except Exception as e:
-            logging.error("Exception during send_change_immediate: %s", e)
-        for mem in ('ME', 'SM'):
-            try:
-                modem.write(f'AT+CPMS="{mem}","{mem}","{mem}"')
-                modem.write('AT+CMGD=1,4')
-            except Exception as e:
-                logging.error("Exception clearing '%s' storage: %s", mem, e)
-        return modem
-    except Exception:
-        # Otherwise a failed attempt leaves its read thread and serial port open, contending with the
-        # next attempt's connection over the same device and corrupting its I/O (garbled/duplicated bytes)
-        try:
-            modem.close()
-        except Exception:
-            pass
-        raise
+            lines = modem.command(command, timeout=15).result()
+        except WwanException as e:
+            logging.warning("Diagnostic %s failed : %s", command, e)
+            if modem.state not in (ConnectionState.CONNECTED, ConnectionState.SEARCHING):
+                return
+            continue
+        logging.info("Diagnostic %s : %s", command, ' | '.join(lines[:-1]))
 
 
-def _catchUpStoredSms(modem):
-    # Appel unique post-connexion (pas à chaque cycle) : la réception temps réel passe par +CMTI,
-    # répéter ce polling en continu ferait courir une race avec lui (même SMS livré deux fois si
-    # +CMTI le traite pendant que ce polling le voit encore comme non lu)
-    try:
-        modem.processStoredSms(True)
-    except Exception as e:
-        logging.error("Failed to process stored SMS after connect : %s", e)
+def publishState(state: str, **details):
+    """Publie l'état de connexion (regroupé : seul le dernier part si Jeedom est lent)"""
+    if publisher:
+        publisher.state('modemState', {'type': 'modemState', 'state': state, **details})
 
 
-def _reconnectLoop():
-    global gsm
-    try:
-        if gsm:
-            gsm.close()
-    except Exception:
-        pass
-    # No modem instance to query while reconnecting - signalStrength convention (gsmmodem): -1 = unknown
-    if j_com_instance:
-        j_com_instance.send_change_immediate({'number': 'signalStrength', 'message': '-1'})
-    attempt = 0
-    while attempt < _reconnect_max_attempts:
-        attempt += 1
-        delay = _backoffDelay(attempt)
-        _setModemStatus('reconnecting', attempt=attempt, max_attempts=_reconnect_max_attempts)
-        logging.warning("Attempting modem reconnection %d/%d in %.0fs", attempt, _reconnect_max_attempts, delay)
-        time.sleep(delay)
-        try:
-            gsm = _createAndConnectModem()
-            logging.info("Modem reconnection successful after %d attempt(s)", attempt)
-            _setModemStatus('connected')
-            _catchUpStoredSms(gsm)
-            return True
-        except Exception as e:
-            logging.error("Reconnection attempt %d/%d failed : %s", attempt, _reconnect_max_attempts, e)
-    logging.error("Maximum number of reconnection attempts reached (%d), giving up", _reconnect_max_attempts)
-    _setModemStatus('disconnected')
-    return False
-
-
-def listen():
-    global gsm
-    if j_socket_instance:
-        j_socket_instance.open()
-    logging.info("Daemon started, socket ready to receive commands from Jeedom")
-    logging.info("Connecting to GSM Modem...")
-    _setModemStatus('connecting')
-    try:
-        gsm = _createAndConnectModem()
-        _setModemStatus('connected')
-        _catchUpStoredSms(gsm)
-    except Exception as e:
-        logging.error("Unexpected error while starting to listen (%s): %s", type(e).__name__, e)
-        if j_com_instance:
-            j_com_instance.send_change_immediate({'number': 'none', 'message': str(e)})
-        logging.error("Initial connection failed, entering reconnection loop")
-        if not _reconnectLoop():
-            shutdown()
-            return
-    consecutive_network_failures = 0
-    try:
-        while 1:
-            sleep_duration = _cycle
-            if gsm and j_com_instance:
-                try:
-                    ss = gsm.signalStrength
-                except Exception as e:
-                    logging.debug("Failed to read signal strength : %s", e)
-                    ss = -1
-                j_com_instance.send_change_immediate({'number': 'signalStrength', 'message': str(ss)})
-            try:
-                if gsm:
-                    gsm.waitForNetworkCoverage(timeout=_cycle)
-                    consecutive_network_failures = 0
-                    _setModemStatus('connected')
-                    gsm.purgeStaleSmsParts(_concat_parts_ttl)
-            except Exception as e:
-                if _isTransientNetworkError(e):
-                    consecutive_network_failures += 1
-                    sleep_duration = _backoffDelay(consecutive_network_failures)
-                    _setModemStatus('searching')
-                    logging.warning("Temporary network loss (%s), rechecking in %.0fs (attempt %d)", e, sleep_duration, consecutive_network_failures)
-                else:
-                    logging.error("Exception on GSM : %s", e)
-                    logging.error("Modem connection lost, attempting reconnection...")
-                    if not _reconnectLoop():
-                        shutdown()
-                        return
-                    consecutive_network_failures = 0
-            try:
-                read_socket()
-            except Exception as e:
-                logging.error("Exception on socket : %s", e)
-            # Attente interruptible : un SMS sortant remis dans la queue reveille la boucle immédiatement
-            # au lieu d'attendre la fin du cycle (read_socket() le traitera au prochain tour)
-            try:
-                pending_message = JEEDOM_SOCKET_MESSAGE.get(timeout=sleep_duration)
-                JEEDOM_SOCKET_MESSAGE.put(pending_message)
-            except Empty:
-                pass
-    except KeyboardInterrupt:
-        shutdown()
-
-
-def read_socket():
-    if not JEEDOM_SOCKET_MESSAGE.empty():
-        logging.debug("Message received from Jeedom socket")
-        message = json.loads(JEEDOM_SOCKET_MESSAGE.get().decode("utf-8"))
-        if message['apikey'] != _apikey:
-            logging.error("Invalid apikey from socket (number=%s)", message.get('number'))
-            return
-        if gsm:
-            try:
-                gsm.waitForNetworkCoverage(timeout=_cycle)
-                logging.info("Sending message to %s: %s", message['number'], message['message'])
-                gsm.sendSms(message['number'], message['message'], maxPartsPerGroup=message.get('maxPartsPerGroup', 0))
-            except Exception as e:
-                logging.error("Failed to send SMS to %s : %s", message['number'], e)
-                if j_com_instance:
-                    j_com_instance.send_change_immediate({'number': 'deliveryReport', 'destination': message['number'], 'status': 'failed'})
+def onModemEvent(event):
+    """Callback des événements de wwanlib (thread dédié de la lib) : publie vers Jeedom et journalise"""
+    global _identity, _finalStatePublished
+    if isinstance(event, ModemIdentified):
+        _identity = event
+    elif isinstance(event, StateChanged):
+        publishState(event.state, **event.details)
+        if event.state == ConnectionState.CONNECTING:
+            logging.info("Connecting to the modem...")
+        elif event.state == ConnectionState.CONNECTED:
+            logging.info("Modem connected")
+            runDiagnostic()
+        elif event.state == ConnectionState.SEARCHING:
+            logging.warning("Modem not registered on the mobile network, searching")
+        elif event.state == ConnectionState.RESTARTING:
+            logging.warning("Modem restarting (%s)", event.details.get('reason'))
+        elif event.state == ConnectionState.DISCONNECTED:
+            _finalStatePublished = True
+            logging.error("Modem disconnected for good (%s), stopping the daemon", event.details.get('reason'))
+            # Jeedom relancera le démon (gestion automatique)
+            _stopEvent.set()
+    elif isinstance(event, SignalChanged):
+        logging.info("Signal : %s", event.value)
+        if publisher:
+            publisher.state('signal', {'type': 'signal', 'value': event.value})
+    elif isinstance(event, NetworkChanged):
+        logging.info("Network : %s, operator : %s", event.registration, event.operator)
+        if publisher:
+            publisher.state('network', {'type': 'network', 'registration': event.registration, 'operator': event.operator})
+    else:
+        smsMessage = smsStatusMessage(event) or smsInboxMessage(event) or selfTestMessage(event)
+        if smsMessage is not None and publisher:
+            publisher.event(smsMessage)
 
 
 def handler(signum=None, frame=None):
     logging.info("Signal %i caught, exiting...", signum)
-    shutdown()
+    _stopEvent.set()
 
 
 def shutdown():
     logging.info("Shutting down daemon, cleaning up before exit")
-    # Envoi synchrone : garantit que Jeedom reflète bien l'état déconnecté avant la fin du process
-    if j_com_instance:
-        j_com_instance.send_change_sync({'number': 'modemStatus', 'status': 'disconnected'})
-        j_com_instance.send_change_sync({'number': 'signalStrength', 'message': '-1'})
-    logging.debug("Removing PID file %s", _pidfile)
     try:
-        os.remove(_pidfile)
+        if dispatcher:
+            dispatcher.stop()
+        if modem:
+            modem.stop()
+    except Exception as e:
+        logging.error("Error while stopping the modem : %s", e)
+    if publisher:
+        # Le modem est arrêté : plus aucun événement de la lib ne peut repasser devant ces états finaux
+        if not _finalStatePublished:
+            publishState(ConnectionState.DISCONNECTED, reason='daemon stopped', fatal=False)
+        publisher.state('signal', {'type': 'signal', 'value': -1})
+        publisher.state('network', {'type': 'network', 'registration': Registration.UNKNOWN, 'operator': None})
+        publisher.flush(2.0)
+        publisher.stop()
+    logging.debug("Removing PID file %s", config.pidFile)
+    try:
+        os.remove(config.pidFile)
     except Exception:
         pass
     try:
-        if j_socket_instance:
-            j_socket_instance.close()
+        if socketServer:
+            socketServer.close()
     except Exception:
         pass
     logging.debug("Exit 0")
@@ -326,127 +181,91 @@ def shutdown():
 # ----------------------------------------------------------------------------
 
 
-_log_level = "error"
-_socket_port = 55115
-_socket_host = '127.0.0.1'
-_device = None
-_pidfile = '/tmp/sms4gd.pid'
-_apikey = ''
-_callback = ''
-_cycle = 30
-_cycleComm = 0.5  # cycle du buffer add_changes (jeedom_com), indépendant du cycle de scrutation principal
-_serial_rate = 9600
-_pin = 'None'
-_text_mode = 'no'
-_smsc = 'None'
-_force_4g = 'no'
-_delivery_report = 'no'
-_reconnect_base_delay = 5.0
-_reconnect_max_delay = 300.0
-_reconnect_max_attempts = 10
-_concat_parts_ttl = 300.0
+def main():
+    global config, modem, publisher, dispatcher, socketServer
 
+    config = Config.fromArgs()
+    jeedom_utils.set_log_level(config.logLevel)
 
-parser = argparse.ArgumentParser(description='SMS Daemon for Jeedom plugin')
-parser.add_argument("--device", help="Device", type=str)
-parser.add_argument("--socketport", help="Socketport for server", type=str)
-parser.add_argument("--loglevel", help="Log Level for the daemon", type=str)
-parser.add_argument("--callback", help="Callback", type=str)
-parser.add_argument("--apikey", help="Apikey", type=str)
-parser.add_argument("--cycle", help="Cycle to send event", type=str)
-parser.add_argument("--serialrate", help="Serial rate of device", type=str)
-parser.add_argument("--pin", help="Pin sim code", type=str)
-parser.add_argument("--textmode", help="Force text mode", type=str)
-parser.add_argument("--smsc", help="Smsc number", type=str)
-parser.add_argument("--force4g", help="Force LTE-only network mode (SimCom modems only)", type=str)
-parser.add_argument("--deliveryreport", help="Request SMS delivery status report", type=str)
-parser.add_argument("--reconnectbasedelay", help="Base delay (s) before first reconnect attempt", type=str)
-parser.add_argument("--reconnectmaxdelay", help="Max delay (s) between reconnect attempts", type=str)
-parser.add_argument("--reconnectmaxattempts", help="Max number of reconnect attempts before giving up", type=str)
-parser.add_argument("--concatpartsttl", help="Max age (s) of incomplete concatenated SMS parts before they are discarded", type=str)
-parser.add_argument("--pid", help="Pid file", type=str)
-args = parser.parse_args()
+    secretFilter = SecretMaskFilter()
+    for logHandler in logging.root.handlers:
+        logHandler.addFilter(secretFilter)
 
-if args.device:
-    _device = args.device
-if args.socketport:
-    _socket_port = int(args.socketport)
-if args.loglevel:
-    _log_level = args.loglevel
-if args.callback:
-    _callback = args.callback
-if args.apikey:
-    _apikey = args.apikey
-if args.cycle:
-    _cycle = float(args.cycle)
-if args.serialrate:
-    _serial_rate = int(args.serialrate)
-if args.pin:
-    _pin = args.pin
-if args.textmode:
-    _text_mode = args.textmode
-if args.smsc:
-    _smsc = args.smsc
-if args.force4g:
-    _force_4g = args.force4g
-if args.deliveryreport:
-    _delivery_report = args.deliveryreport
-if args.reconnectbasedelay:
-    _reconnect_base_delay = float(args.reconnectbasedelay)
-if args.reconnectmaxdelay:
-    _reconnect_max_delay = float(args.reconnectmaxdelay)
-if args.reconnectmaxattempts:
-    _reconnect_max_attempts = int(args.reconnectmaxattempts)
-if args.concatpartsttl:
-    _concat_parts_ttl = float(args.concatpartsttl)
-if args.pid:
-    _pidfile = args.pid
+    logging.info('Start sms4gd')
+    logging.info('Log level : %s', config.logLevel)
+    logging.info('Socket port : %s', config.socketPort)
+    logging.info('Socket host : %s', config.socketHost)
+    logging.info('PID file : %s', config.pidFile)
+    logging.info('Device : %s', config.device)
+    logging.info('Callback : %s', config.callback)
+    logging.info('Cycle (signal and network) : %s', config.cycle)
+    logging.info('Serial rate : %s', config.serialRate)
+    logging.info('Pin : %s', '****' if config.pin else None)
+    logging.info('SMSC : %s', config.smsc)
+    logging.info('Force 4G only : %s', config.force4g)
+    logging.info('Delivery report : %s', config.deliveryReport)
+    logging.info('Reconnect base delay : %s', config.reconnectBaseDelay)
+    logging.info('Reconnect max delay : %s', config.reconnectMaxDelay)
+    logging.info('Reconnect max attempts : %s', config.reconnectMaxAttempts)
+    logging.info('Concat parts TTL : %s s', config.concatPartsTtl)
+    logging.info('SMS lifetime in the queue : %s s', config.smsTtl)
+    logging.info('Diagnostic mode (AT commands from Jeedom) : %s', config.diagnostic)
+    logging.info('Pause between two SMS : %s s', config.messagePause)
+    logging.info('Self-test every : %s h (0 = none)', config.selfTestInterval / 3600)
+    if 0 < config.selfTest < config.MIN_SELF_TEST_HOURS:
+        logging.warning('Self-test interval raised to the minimum of %s h', config.MIN_SELF_TEST_HOURS)
+    logging.info('SIM number for the self-test : %s', maskNumber(config.ownNumber) if config.ownNumber else None)
+    logging.info('Restart the modem when the self-test fails : %s', config.autoRestart)
 
-_socket_port = int(_socket_port)
-_cycle = float(_cycle)
-
-jeedom_utils.set_log_level(_log_level)
-
-_secret_filter = SecretMaskFilter()
-for _h in logging.root.handlers:
-    _h.addFilter(_secret_filter)
-
-logging.info('Start sms4gd')
-logging.info('Log level : %s', _log_level)
-logging.info('Socket port : %s', _socket_port)
-logging.info('Socket host : %s', _socket_host)
-logging.info('PID file : %s', _pidfile)
-logging.info('Device : %s', _device)
-logging.info('Callback : %s', _callback)
-logging.info('Cycle : %s', _cycle)
-logging.info('Serial rate : %s', _serial_rate)
-logging.info('Pin : %s', '****' if _pin and _pin != 'None' else _pin)
-logging.info('Text mode : %s', _text_mode)
-logging.info('SMSC : %s', _smsc)
-logging.info('Force 4G only : %s', _force_4g)
-logging.info('Delivery report : %s', _delivery_report)
-logging.info('Reconnect base delay : %s', _reconnect_base_delay)
-logging.info('Reconnect max delay : %s', _reconnect_max_delay)
-logging.info('Reconnect max attempts : %s', _reconnect_max_attempts)
-logging.info('Concat parts TTL : %s', _concat_parts_ttl)
-
-
-if _device is None:
-    logging.error('No device found')
-    shutdown()
-
-signal.signal(signal.SIGINT, handler)
-signal.signal(signal.SIGTERM, handler)
-
-try:
-    jeedom_utils.write_pid(str(_pidfile))
-    j_com_instance = jeedom_com(apikey=_apikey, url=_callback, cycle=_cycleComm)
-    if not j_com_instance.test():
-        logging.error('Network communication issues. Please fix your Jeedom network configuration.')
+    if config.device is None:
+        logging.error('No device found')
         shutdown()
-    j_socket_instance = jeedom_socket(port=_socket_port, address=_socket_host)
-    listen()
-except Exception as e:
-    logging.error('Fatal error : %s', e)
-    logging.debug(traceback.format_exc())
+
+    signal.signal(signal.SIGINT, handler)
+    signal.signal(signal.SIGTERM, handler)
+
+    try:
+        jeedom_utils.write_pid(str(config.pidFile))
+        candidate = jeedom_publisher(config.callback, config.apikey)
+        if not candidate.test():
+            logging.error('Network communication issues. Please fix your Jeedom network configuration.')
+            candidate.stop()
+            shutdown()
+        publisher = candidate
+        publisher.start()
+        socketServer = jeedom_socket(port=config.socketPort, address=config.socketHost)
+        socketServer.open()
+        logging.info("Daemon started, socket ready to receive commands from Jeedom")
+        modem = Modem(
+            str(config.device), config.serialRate, pin=config.pin,
+            options=ModemOptions(
+                deliveryReport=config.deliveryReport,
+                smsc=config.smsc,
+                force4g=config.force4g,
+                reconnectBaseDelay=config.reconnectBaseDelay,
+                reconnectMaxDelay=config.reconnectMaxDelay,
+                reconnectMaxAttempts=config.reconnectMaxAttempts,
+                monitorInterval=config.cycle,
+                smsTtl=config.smsTtl,
+                concatPartsTtl=config.concatPartsTtl,
+                messagePause=config.messagePause,
+                selfTestInterval=config.selfTestInterval,
+                ownNumber=config.ownNumber,
+                selfTestRestart=config.autoRestart,
+            ),
+        )
+        dispatcher = Dispatcher(JEEDOM_SOCKET_MESSAGE, modem, publisher, config.apikey, config.diagnostic, config.pin is not None)
+        dispatcher.start()
+        modem.onEvent(onModemEvent)
+        modem.start()
+        # Attente par tranches : un signal est traité à la tranche suivante au plus tard, aussi sous Windows
+        while not _stopEvent.wait(0.5):
+            pass
+    except Exception as e:
+        logging.error('Fatal error : %s', e)
+        logging.debug(traceback.format_exc())
     shutdown()
+
+
+if __name__ == '__main__':
+    main()

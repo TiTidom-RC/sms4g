@@ -9,8 +9,8 @@ from typing import Any
 
 from .events import (ConnectionState, EventDispatcher, ModemIdentified, NetworkChanged, Registration, SignalChanged,
                      StateChanged, UnsolicitedNotification)
-from .exceptions import (CommandError, IncorrectPinError, NotConnectedError, PinRequiredError, PukRequiredError,
-                         SmscNumberUnknownError, TimeoutException, WwanException)
+from .exceptions import (CommandError, IncorrectPinError, NotConnectedError, PduModeNotSupportedError, PinRequiredError,
+                         PukRequiredError, SmscNumberUnknownError, TimeoutException, WwanException)
 from .executor import Executor, Priority
 from .profiles import GENERIC, Profile, detectProfile
 from .supervisor import Supervisor
@@ -22,7 +22,6 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class ModemOptions:
-    textMode: bool = False  # SMS text mode instead of PDU mode
     deliveryReport: bool = False  # ask the SMS center for delivery reports
     smsc: str | None = None  # SMS center number, None to keep the one of the SIM
     force4g: bool = False  # LTE only (SimCom modems only)
@@ -51,7 +50,7 @@ class Modem:
 
     Usage::
 
-        modem = Modem('/dev/ttyUSB2', 115200, pin=None, options=ModemOptions(textMode=False))
+        modem = Modem('/dev/ttyUSB2', 115200, pin=None, options=ModemOptions(deliveryReport=True))
         modem.onEvent(callback)   # StateChanged, ModemIdentified, SignalChanged, NetworkChanged, UnsolicitedNotification
         modem.start()             # does not block: the Supervisor connects (and reconnects) in the background
         lines = modem.command('AT+CSQ', timeout=10).result()
@@ -126,8 +125,8 @@ class Modem:
 
     @staticmethod
     def _isFatal(error: Exception) -> bool:
-        """ Retrying cannot fix a missing or wrong PIN, and would lock the SIM """
-        return isinstance(error, (PinRequiredError, IncorrectPinError, PukRequiredError))
+        """ Retrying cannot fix a missing or wrong PIN (and would lock the SIM), nor a modem without the PDU mode """
+        return isinstance(error, (PinRequiredError, IncorrectPinError, PukRequiredError, PduModeNotSupportedError))
 
     def _publishState(self, state: str, details: dict[str, Any]) -> None:
         self._state = state
@@ -274,7 +273,7 @@ class Modem:
         self._dispatcher.post(ModemIdentified(session.profile.name, manufacturer, model, revision))
 
         run('AT+COPS=3,0', parseError=False)  # long alphanumeric operator name
-        run(f'AT+CMGF={1 if self.options.textMode else 0}')
+        self._setupSmsFormat(run)
         self._setupSmsCenter(run)
         if self._selectSmsMemory(run):
             self._setupNotifications(run, session.profile)
@@ -284,6 +283,38 @@ class Modem:
                 log.info('LTE-only network mode forced (AT+CNMP=38)')
             except WwanException as e:
                 log.error('Failed to force the LTE-only network mode (AT+CNMP=38): %s', e)
+
+    @staticmethod
+    def _setupSmsFormat(run: Callable[..., list[str]]) -> None:
+        """ SMS are always handled in PDU mode (DEC-36). A modem that says it does not offer it cannot be used: the
+        connection stops with a clear reason instead of failing at the first SMS. An answer that cannot be read is
+        no obstacle: AT+CMGF=0 tells. """
+        try:
+            answer = lineStartingWith('+CMGF', run('AT+CMGF=?'))
+        except CommandError:
+            answer = None
+        modes = Modem._supportedModes(answer) if answer else None
+        if modes is not None and 0 not in modes:
+            raise PduModeNotSupportedError(f'The modem does not offer the SMS PDU mode ({answer})')
+        run('AT+CMGF=0')
+
+    @staticmethod
+    def _supportedModes(answer: str) -> set[int] | None:
+        """ Modes of ``+CMGF: (0,1)`` (some modems write a range, ``(0-1)``). None if the answer cannot be read. """
+        match = re.search(r'\(([^)]*)\)', answer)
+        if match is None:
+            return None
+        modes: set[int] = set()
+        for item in match.group(1).split(','):
+            item = item.strip()
+            span = re.fullmatch(r'(\d+)-(\d+)', item)
+            if span:
+                modes.update(range(int(span.group(1)), int(span.group(2)) + 1))
+            elif item.isdigit():
+                modes.add(int(item))
+            else:
+                return None
+        return modes or None
 
     @staticmethod
     def _identity(line: str) -> str:

@@ -10,18 +10,18 @@ class ConfigTest(unittest.TestCase):
     def testDefaults(self):
         config = Config.fromArgs([])
         self.assertEqual((config.device, config.socketPort, config.cycle, config.pin, config.smsc), (None, 55115, 30.0, None, None))
-        self.assertEqual((config.textMode, config.force4g, config.deliveryReport, config.diagnostic), (False, False, False, False))
+        self.assertEqual((config.force4g, config.deliveryReport, config.diagnostic), (False, False, False))
 
     def testCommandLineOfDeamonStart(self):
         config = Config.fromArgs([
             '--device', '/dev/serial/by-id/x', '--loglevel', 'debug', '--socketport', '55116', '--serialrate', '115200',
-            '--pin', 'None', '--textmode', 'no', '--smsc', 'None', '--force4g', 'yes', '--cycle', '45',
+            '--pin', 'None', '--smsc', 'None', '--force4g', 'yes', '--cycle', '45',
             '--deliveryreport', 'yes', '--reconnectbasedelay', '2', '--reconnectmaxdelay', '60', '--reconnectmaxattempts', '4',
             '--concatpartsttl', '120', '--diagnostic', 'yes', '--callback', 'http://127.0.0.1:80/cb.php', '--apikey', 'K',
             '--pid', '/tmp/p.pid'])
         self.assertEqual(config.device, '/dev/serial/by-id/x')
         self.assertEqual((config.logLevel, config.socketPort, config.serialRate), ('debug', 55116, 115200))
-        self.assertEqual((config.pin, config.smsc, config.textMode, config.force4g, config.deliveryReport), (None, None, False, True, True))
+        self.assertEqual((config.pin, config.smsc, config.force4g, config.deliveryReport), (None, None, True, True))
         self.assertEqual((config.cycle, config.reconnectBaseDelay, config.reconnectMaxDelay, config.reconnectMaxAttempts, config.concatPartsTtl),
                          (45.0, 2.0, 60.0, 4, 120.0))
         self.assertEqual((config.diagnostic, config.callback, config.apikey, config.pidFile), (True, 'http://127.0.0.1:80/cb.php', 'K', '/tmp/p.pid'))

@@ -46,6 +46,20 @@ class Step:
     timeout: float = 10.0
     terminator: str = TERMINATOR
     expectPrompt: bool = False
+    # Writing this step cannot be undone (the body of an SMS ended by Ctrl-Z): see ``Transaction.committed``
+    commit: bool = False
+    # Name of the step in the warnings and in the errors, for data that must not appear there (an SMS)
+    label: str | None = None
+
+    @property
+    def shown(self) -> str:
+        """ What the logs and the errors may show: the PIN never appears in clear text, not even in the logs of a
+        library used alone """
+        if self.label is not None:
+            return self.label
+        if self.data.upper().startswith('AT+CPIN='):
+            return 'AT+CPIN="****"'
+        return self.data
 
 
 @dataclass
@@ -56,6 +70,9 @@ class Transaction:
     # Upper bound of the time the port stays reserved after a timeout (see Executor)
     maxHold: float = 180.0
     future: Future = field(default_factory=Future)
+    # Set before the step that cannot be undone is written. If the transaction fails while it is still False,
+    # what it carries surely did not reach the network; if True and no error code came back, nobody knows.
+    committed: bool = False
 
 
 class _Deadline(Exception):
@@ -227,7 +244,7 @@ class Executor:
             try:
                 lines, stepIndex = self._runSteps(transaction)
             except _StepTimeout as timeout:
-                log.warning('Timeout on %s', self._mask(timeout.step.data))
+                log.warning('Timeout on %s', timeout.step.shown)
                 transaction.future.set_exception(TimeoutException(timeout.partial or None))
                 self._holdPort(timeout.step, started, transaction.maxHold)
                 return
@@ -241,7 +258,7 @@ class Executor:
                 return
 
             self.lastExchange = time.monotonic()
-            command = self._mask(transaction.steps[stepIndex].data)
+            command = transaction.steps[stepIndex].shown
             error = self._parseError(command, lines) if transaction.parseError else None
             busyCode = self._busyCode(lines)
             if busyCode is not None and transaction.parseError and stepIndex == 0 and busyRetries < self.BUSY_MAX_RETRIES:
@@ -270,6 +287,8 @@ class Executor:
         """ :return: the lines of the last step run, and its index. Stops at the first step that ends with an error. """
         lines: list[str] = []
         for index, step in enumerate(transaction.steps):
+            if step.commit:
+                transaction.committed = True
             lines = self._runStep(step)
             if index < len(transaction.steps) - 1 and not self._ok(lines):
                 return lines, index
@@ -281,7 +300,8 @@ class Executor:
         self._discardStale()
         self._active = step.data
         self._promptWanted = step.expectPrompt
-        log.debug('write: %s', self._mask(step.data))
+        # the content of an SMS is only in this debug line (TP-MR and references can be checked there)
+        log.debug('write: %s', step.data if step.label is not None else step.shown)
         self._write((step.data + step.terminator).encode())
         self._inPrompt = False
         deadline = time.monotonic() + step.timeout
@@ -343,7 +363,7 @@ class Executor:
             pass
         except NotConnectedError:
             return
-        log.warning('No end code for %s, resynchronizing with AT+CMEE?', self._mask(step.data))
+        log.warning('No end code for %s, resynchronizing with AT+CMEE?', step.shown)
         try:
             resynchronized = self._resynchronize()
         except (NotConnectedError, OSError):
@@ -414,10 +434,3 @@ class Executor:
             cpms = self.CPMS_COMMAND.match(step.data)
             if cpms:
                 self._cache['smsMemories'] = tuple(name for name in cpms.groups() if name)
-
-    @staticmethod
-    def _mask(command: str) -> str:
-        """ The PIN never appears in clear text, not even in the logs of a library used alone """
-        if command.upper().startswith('AT+CPIN='):
-            return 'AT+CPIN="****"'
-        return command

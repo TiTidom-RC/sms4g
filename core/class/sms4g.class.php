@@ -291,6 +291,7 @@ class sms4g extends eqLogic {
 		// Durée de vie d'un SMS en file : réglée en minutes (1 au minimum), donnée au démon en secondes
 		$cmd .= ' --smsttl ' . (max(1, (int) config::byKey('smsTtl', 'sms4g', 60)) * 60);
 		$cmd .= ' --messagepause ' . self::numericSetting('messagePause');
+		$cmd .= ' --replydelay ' . self::numericSetting('replyDelay');
 		// Auto-test (heures, 0 = aucun ; le démon relève une valeur trop basse à 1 h) ; le numéro de la SIM est nettoyé : il finit dans une commande shell
 		$cmd .= ' --selftest ' . self::numericSetting('selfTestHours');
 		$ownNumber = preg_replace('/[^0-9+]/', '', (string) config::byKey('ownNumber', 'sms4g', ''));

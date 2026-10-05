@@ -42,6 +42,7 @@ class Config:
     smsTtl: float = 3600.0  # seconds an SMS waits in the queue before it expires
     diagnostic: bool = False  # AT commands from Jeedom allowed (diagnostic mode)
     messagePause: float = 0.0  # seconds between the end of an SMS and the start of the next one
+    replyDelay: float = 0.0  # seconds after an SMS was received before an SMS may be sent
     selfTest: float = 0.0  # hours between two self-tests (the modem sends an SMS to its own SIM), 0 = none
     ownNumber: str | None = None  # number of the SIM, for the self-test
     autoRestart: bool = False  # restart the modem when the self-test fails
@@ -75,6 +76,7 @@ class Config:
         parser.add_argument("--smsttl", help="Seconds an SMS waits in the queue before it expires", type=str)
         parser.add_argument("--diagnostic", help="Allow the AT commands sent from Jeedom (yes / no)", type=str)
         parser.add_argument("--messagepause", help="Seconds between the end of an SMS and the start of the next one", type=str)
+        parser.add_argument("--replydelay", help="Seconds after a received SMS before an SMS may be sent", type=str)
         parser.add_argument("--selftest", help="Hours between two self-tests of the SMS service (0 = none)", type=str)
         parser.add_argument("--ownnumber", help="Number of the SIM, for the self-test", type=str)
         parser.add_argument("--autorestart", help="Restart the modem when the self-test fails (yes / no)", type=str)
@@ -118,6 +120,8 @@ class Config:
             config.diagnostic = args.diagnostic == 'yes'
         if args.messagepause:
             config.messagePause = max(0.0, float(args.messagepause))
+        if args.replydelay:
+            config.replyDelay = max(0.0, float(args.replydelay))
         if args.selftest:
             config.selfTest = max(0.0, float(args.selftest))
         if args.ownnumber and args.ownnumber != 'None':

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .events import (ConnectionState, EventDispatcher, ModemIdentified, NetworkChanged, Registration, SignalChanged,
-                     StateChanged, UnsolicitedNotification)
+                     SmsReceived, StateChanged, UnsolicitedNotification)
 from .exceptions import (CommandError, IncorrectPinError, NotConnectedError, PduModeNotSupportedError, PinRequiredError,
                          PukRequiredError, SmscNumberUnknownError, TimeoutException, WwanException)
 from .executor import Executor, Priority, Transaction
@@ -41,6 +41,7 @@ class ModemOptions:
     smsQueueSize: int = 50  # SMS waiting at most: a new one is refused beyond
     segmentPause: float = 0.5  # seconds between two parts of an SMS
     messagePause: float = 0.0  # seconds between the end of an SMS and the start of the next one (0: none)
+    replyDelay: float = 0.0  # seconds after an SMS was received before an SMS may be sent (0: none)
     aging: float = 30.0  # seconds after which a waiting transaction rises by one rank (0 = off), see Executor
     concatPartsTtl: float = 300.0  # seconds the parts of a long SMS are waited for before the message is given up
     maxIncompleteSms: int = 50  # long SMS waiting for their last parts at most: beyond, the oldest is given up
@@ -106,7 +107,8 @@ class Modem:
         self._receipts = ReceiptTracker(self._publish, self.options.receiptMaxAge) if self.options.deliveryReport else None
         self._sender = SmsSender(self._submitTransaction, self.options.deliveryReport, self.options.segmentPause, self._smsStop)
         self._outbox = Outbox(self._sender.send, self._publish, self.options.smsTtl, self.options.smsQueueSize,
-                              stopEvent=self._smsStop, tracker=self._receipts, messagePause=self.options.messagePause)
+                              stopEvent=self._smsStop, tracker=self._receipts, messagePause=self.options.messagePause,
+                              replyDelay=self.options.replyDelay)
         self._inbox = Inbox(self._submitTransaction, self._publish, self._readMemory,
                             Reassembler(self.options.concatPartsTtl, self.options.maxIncompleteSms), self._receipts)
         self._supervisor = Supervisor(
@@ -127,6 +129,8 @@ class Modem:
         """ Publishes an SMS event, unless it belongs to the self-test """
         selfTest = self._selfTest
         if selfTest is None or not selfTest.intercept(event):
+            if isinstance(event, SmsReceived):
+                self._outbox.noteReception()  # before the event is published: the reply cannot be queued earlier
             self._dispatcher.post(event)
 
     # ---- public API -------------------------------------------------------------------------------

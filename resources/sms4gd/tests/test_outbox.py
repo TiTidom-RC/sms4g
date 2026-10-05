@@ -371,6 +371,45 @@ class MessagePauseTest(OutboxTestCase):
         self.assertTrue(self.waitEvents(SmsExpired))
 
 
+class ReplyDelayTest(OutboxTestCase):
+    def testNoSmsStartsRightAfterAReception(self):
+        script = Script()
+        self.make(script, replyDelay=0.4)
+        received = time.monotonic()
+        self.outbox.noteReception()
+        self.outbox.submit(NUMBER, 'the reply', '1')  # the reply is asked for at once
+        self.assertTrue(self.waitEvents(SmsSent))
+        self.assertGreaterEqual(script.times()[0] - received, 0.4)
+
+    def testNoDelayWithoutAReception(self):
+        script = Script()
+        self.make(script, replyDelay=0.4)
+        started = time.monotonic()
+        self.outbox.submit(NUMBER, 'a notification', '1')
+        self.assertTrue(self.waitEvents(SmsSent))
+        self.assertLess(script.times()[0] - started, 0.3)
+
+    def testNoDelayByDefault(self):
+        script = Script()
+        self.make(script)
+        started = time.monotonic()
+        self.outbox.noteReception()
+        self.outbox.submit(NUMBER, 'the reply', '1')
+        self.assertTrue(self.waitEvents(SmsSent))
+        self.assertLess(script.times()[0] - started, 0.3)
+
+    def testTheMessagePauseDoesNotShortenTheDelay(self):
+        script = Script()
+        self.make(script, replyDelay=0.5, messagePause=0.05)
+        self.outbox.submit(NUMBER, 'one', '1')
+        self.assertTrue(self.waitEvents(SmsSent))
+        received = time.monotonic()
+        self.outbox.noteReception()
+        self.outbox.submit(NUMBER, 'two', '2')
+        self.assertTrue(self.waitEvents(SmsSent, 2))
+        self.assertGreaterEqual(script.times()[1] - received, 0.5)  # the pause (0.05 s) of the first one did not replace it
+
+
 class FakeTracker:
     """ Stands for the ReceiptTracker: records what the outbox tells it """
 

@@ -8,6 +8,7 @@ Run from resources/sms4gd:  python -m unittest discover -s tests -t .
 import json
 import queue
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -174,6 +175,53 @@ class DaemonSmsTest(unittest.TestCase):
         self.assertTrue(self.publisher.flush(5))
         stopped = sorted(s['ref'] for s in self.statuses() if s['status'] == 'failed' and s['reason'] == 'daemon stopped')
         self.assertEqual(stopped, ['a', 'b'])
+
+
+class ReplyDelayChainTest(unittest.TestCase):
+    """ A reply asked for as soon as an SMS is received (what an interaction does) leaves after the reply delay """
+
+    def setUp(self):
+        FakeSerial.instances.clear()
+        self.sim = FakeSim()
+        FakeSerial.behavior = receptionBehavior(self.sim)
+        patcher = mock.patch('wwanlib.transport.serial.Serial', FakeSerial)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for owner, name, value in ((Modem, 'MIN_MONITOR_INTERVAL', 0.05), (Executor, 'READY_INTERVAL', 0.1)):
+            patcher = mock.patch.object(owner, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def run_(self, **options) -> tuple[float, float]:
+        """ :return: when the SMS was announced and when the reply was written to the port """
+        modem = Modem('fake', 115200, options=ModemOptions(
+            reconnectBaseDelay=0.05, reconnectMaxDelay=0.1, reconnectMaxAttempts=100, segmentPause=0.0, **options))
+        replied = threading.Event()
+
+        def onEvent(event):
+            if smsInboxMessage(event) is not None and not replied.is_set():
+                replied.set()
+                modem.sendSms(SENDER, 'the answer', ref='1')  # the reply of an interaction, at once
+
+        modem.onEvent(onEvent)
+        self.addCleanup(modem.stop)
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        port = FakeSerial.instances[0]
+        self.sim.add(0, deliverPdus(SENDER, 'a question')[0])
+        announced = time.monotonic()
+        port.feed(b'\r\n+CMTI: "SM",0\r\n')
+        self.assertTrue(waitFor(lambda: any(data.startswith(b'AT+CMGS=') for _, data in port.written)))
+        written = next(moment for moment, data in port.written if data.startswith(b'AT+CMGS='))
+        return announced, written
+
+    def testTheReplyWaitsForTheDelay(self):
+        announced, written = self.run_(replyDelay=0.5)
+        self.assertGreaterEqual(written - announced, 0.5)
+
+    def testWithoutDelayTheReplyLeavesAtOnce(self):
+        announced, written = self.run_()
+        self.assertLess(written - announced, 0.4)
 
 
 if __name__ == '__main__':

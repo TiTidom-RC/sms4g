@@ -211,6 +211,7 @@ def main():
     logging.info('SMS lifetime in the queue : %s s', config.smsTtl)
     logging.info('Diagnostic mode (AT commands from Jeedom) : %s', config.diagnostic)
     logging.info('Pause between two SMS : %s s', config.messagePause)
+    logging.info('Delay before a reply : %s s', config.replyDelay)
     logging.info('Self-test every : %s h (0 = none)', config.selfTestInterval / 3600)
     if 0 < config.selfTest < config.MIN_SELF_TEST_HOURS:
         logging.warning('Self-test interval raised to the minimum of %s h', config.MIN_SELF_TEST_HOURS)
@@ -249,6 +250,7 @@ def main():
                 smsTtl=config.smsTtl,
                 concatPartsTtl=config.concatPartsTtl,
                 messagePause=config.messagePause,
+                replyDelay=config.replyDelay,
                 selfTestInterval=config.selfTestInterval,
                 ownNumber=config.ownNumber,
                 selfTestRestart=config.autoRestart,

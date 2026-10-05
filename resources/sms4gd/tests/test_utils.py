@@ -34,6 +34,11 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual((config.messagePause, config.selfTestInterval, config.ownNumber, config.autoRestart),
                          (3.0, 24 * 3600.0, '+33767923801', True))
 
+    def testReplyDelay(self):
+        self.assertEqual(Config.fromArgs([]).replyDelay, 0.0)
+        self.assertEqual(Config.fromArgs(['--replydelay', '3']).replyDelay, 3.0)
+        self.assertEqual(Config.fromArgs(['--replydelay', '-2']).replyDelay, 0.0)
+
     def testAnSelfTestIntervalBelowTheMinimumIsRaised(self):
         self.assertEqual(Config.fromArgs(['--selftest', '0.2']).selfTestInterval, 3600.0)  # an SMS costs money
         self.assertEqual(Config.fromArgs(['--selftest', '0']).selfTestInterval, 0.0)

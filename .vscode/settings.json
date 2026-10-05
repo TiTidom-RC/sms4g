@@ -1,5 +1,6 @@
 {
     "cSpell.words": [
+        "asyncio",
         "Aucamp",
         "baudrate",
         "CCFC",
@@ -53,6 +54,7 @@
         "davidjb",
         "DDET",
         "deliveryreport",
+        "Discordlink",
         "dnumber",
         "dsrdtr",
         "dtmf",
@@ -73,7 +75,9 @@
         "ISDN",
         "jeesms4g",
         "lgdecode",
+        "linkify",
         "nkfd",
+        "nutfreed",
         "OLDDIR",
         "pdus",
         "phonebook",
@@ -87,6 +91,7 @@
         "reconnectmaxdelay",
         "REGEXT",
         "Reinit",
+        "rrmdir",
         "rtscts",
         "rtype",
         "serialrate",
@@ -97,11 +102,21 @@
         "statusreport",
         "textmode",
         "tpdu",
+        "tvremoted",
         "UDHI",
         "ussd",
         "USSD",
         "USSDMODE",
         "Wavecom",
+        "Wwan",
+        "wwanlib",
         "ZPAS"
+    ],
+    "python-envs.pythonProjects": [
+        {
+            "path": ".",
+            "envManager": "ms-python.python:venv",
+            "packageManager": "ms-python.python:pip"
+        }
     ]
 }

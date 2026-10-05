@@ -33,6 +33,18 @@ try {
 		ajax::success($status);
 	}
 
+	if (init('action') == 'getModemStatus') {
+		ajax::success(sms4g::getModemStatus());
+	}
+
+	if (init('action') == 'detectOwnNumber') {
+		// La réponse du démon arrive plus tard, poussée à la page par l'événement sms4g::ownNumber
+		if (!sms4g::detectOwnNumber()) {
+			throw new Exception(__('Le démon n\'est pas démarré', __FILE__));
+		}
+		ajax::success();
+	}
+
 	if (init('action') == 'disableModemManager') {
 		$success = sms4g::disableModemManager();
 		if (!$success) {

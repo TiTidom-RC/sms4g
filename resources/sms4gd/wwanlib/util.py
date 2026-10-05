@@ -1,6 +1,6 @@
-""" Some common utility classes used by tests """
+""" Common helpers for parsing modem responses """
 
-from datetime import datetime, timedelta, tzinfo
+from datetime import timedelta, tzinfo
 import re
 
 
@@ -23,25 +23,7 @@ class SimpleOffsetTzInfo(tzinfo):
         return timedelta(0)
 
     def __repr__(self):
-        return f'gsmmodem.util.SimpleOffsetTzInfo({self.offsetInHours})'
-
-
-def parseTextModeTimeStr(timeStr):
-    """ Parses the specified SMS text mode time string
-
-    The time stamp format is "yy/MM/dd,hh:mm:ss±zz"
-    (yy = year, MM = month, dd = day, hh = hour, mm = minute, ss = second, zz = time zone
-    [Note: the unit of time zone is a quarter of an hour])
-
-    :param timeStr: The time string to parse
-    :type timeStr: str
-
-    :return: datetime object representing the specified time string
-    :rtype: datetime.datetime
-    """
-    msgTime = timeStr[:-3]
-    tzOffsetHours = int(int(timeStr[-3:]) * 0.25)
-    return datetime.strptime(msgTime, '%y/%m/%d,%H:%M:%S').replace(tzinfo=SimpleOffsetTzInfo(tzOffsetHours))
+        return f'wwanlib.util.SimpleOffsetTzInfo({self.offsetInHours})'
 
 
 def lineStartingWith(string, lines):
@@ -95,33 +77,3 @@ def lineMatchingPattern(pattern, lines):
     else:
         return None
 
-
-def allLinesMatchingPattern(pattern, lines):
-    """ Like lineMatchingPattern, but returns all lines that match the specified pattern
-
-    :type pattern: Compiled regular expression pattern to use
-    :type lines: List of lines to search
-
-    :return: list of re.Match objects for each line matched, or an empty list if none matched
-    :rtype: list
-    """
-    result = []
-    for line in lines:
-        m = pattern.match(line)
-        if m:
-            result.append(m)
-    return result
-
-
-def removeAtPrefix(string):
-    """ Remove AT prefix from a specified string.
-
-    :param string: An original string
-    :type string: str
-
-    :return: A string with AT prefix removed
-    :rtype: str
-    """
-    if string.startswith('AT'):
-        return string[2:]
-    return string

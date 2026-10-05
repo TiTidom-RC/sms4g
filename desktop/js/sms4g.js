@@ -19,6 +19,16 @@
 (function () {
   'use strict'
 
+// Appelée par le Core à l'affichage d'un équipement : l'équipement virtuel Modem (logicalId "modem") n'a ni
+// numéros ni paramètres spécifiques
+function printEqLogic(_eqLogic) {
+  const isModem = _eqLogic.logicalId === 'modem'
+  document.querySelectorAll('.sms4gSmsOnly').forEach((element) => {
+    element.style.display = isModem ? 'none' : ''
+  })
+}
+window.printEqLogic = printEqLogic
+
 function addCmdToTable(_cmd) {
   if (!isset(_cmd)) {
     _cmd = { configuration: {} }
@@ -32,7 +42,8 @@ function addCmdToTable(_cmd) {
     _cmd.subType = 'message'
   }
 
-  const showUserPhone = _cmd.type == 'action' && _cmd.logicalId != 'send_to_custom_number'
+  // Seules les commandes "numéro" n'ont pas de logicalId (les commandes spéciales en ont un)
+  const showUserPhone = _cmd.type == 'action' && !_cmd.logicalId
   const testButtons = is_numeric(_cmd.id)
     ? '<a class="btn btn-default btn-xs cmdAction" data-action="configure"><i class="fas fa-cogs"></i></a> <a class="btn btn-default btn-xs cmdAction" data-action="test"><i class="fas fa-rss"></i> {{Tester}}</a>'
     : ''

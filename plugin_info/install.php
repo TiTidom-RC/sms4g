@@ -88,7 +88,7 @@ function sms4g_install() {
 		config::save('messagePause', '0', 'sms4g');
 	}
 	if (config::byKey('replyDelay', 'sms4g') == '') {
-		config::save('replyDelay', '0', 'sms4g');
+		config::save('replyDelay', '3', 'sms4g');
 	}
 	if (config::byKey('selfTestHours', 'sms4g') == '') {
 		config::save('selfTestHours', '0', 'sms4g');
@@ -189,7 +189,7 @@ function sms4g_update() {
 		config::save('messagePause', '0', 'sms4g');
 	}
 	if (config::byKey('replyDelay', 'sms4g') == '') {
-		config::save('replyDelay', '0', 'sms4g');
+		config::save('replyDelay', '3', 'sms4g');
 	}
 	if (config::byKey('selfTestHours', 'sms4g') == '') {
 		config::save('selfTestHours', '0', 'sms4g');

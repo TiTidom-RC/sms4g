@@ -227,7 +227,7 @@ if (!isConnect('admin')) {
             <div class="form-group">
                 <label class="col-lg-3 control-label">{{Délai avant l'envoi d'une réponse (s)}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
-                    <sup><i class="fas fa-question-circle tooltips" title="{{Délai minimal entre la réception d'un SMS et l'envoi d'une réponse. 0 : aucun (par défaut). À essayer (3 secondes) si l'expéditeur voit son SMS rester en « envoi en cours » après une réponse automatique.}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Délai minimal entre la réception d'un SMS et l'envoi d'une réponse. Une réponse trop rapide laisse le SMS de l'expéditeur en « envoi en cours » sur son téléphone. 0 : aucun. Par défaut : 3 secondes.}}"></i></sup>
                 </label>
                 <div class="col-lg-1">
                     <input class="configKey form-control" data-l1key="replyDelay" />

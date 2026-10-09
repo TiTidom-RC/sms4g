@@ -154,7 +154,7 @@
         "Durée pendant laquelle le plugin retente l'envoi d'un SMS qui n'a pas pu partir (modem déconnecté, absence de réseau...). Passé ce délai, l'envoi est abandonné et le statut passe à « Expiré ». Minimum : 1 minute. Par défaut : 60 minutes.": "The amount of time the plugin will retry sending an SMS that could not be sent (modem disconnected, no network, etc.). After this time has elapsed, the attempt is abandoned and the status changes to “Expired.” Minimum: 1 minute. Default: 60 minutes.",
         "Délai avant l'envoi d'une réponse (s)": "Time before a response is sent (s)",
         "Délai avant la première tentative (s)": "Time before first attempt(s)",
-        "Délai laissé au modem entre la fin de l'envoi d'un SMS et le début du suivant. 0 : aucune pause (par défaut).": "The delay allowed for the modem between the end of sending one SMS and the start of the next. 0: no pause (default).",
+        "Délai laissé au modem entre la fin de l'envoi d'un SMS et le début du suivant. 0 : aucune pause. Par défaut : 5 secondes.": "The delay allowed for the modem between the end of sending one SMS and the start of the next. 0: no pause. Default: 5 seconds.",
         "Délai maximum entre deux tentatives (s)": "Maximum time between two attempts (s)",
         "Délai minimal entre la réception d'un SMS et l'envoi d'une réponse. Une réponse trop rapide laisse le SMS de l'expéditeur en « envoi en cours » sur son téléphone. 0 : aucun. Par défaut : 3 secondes.": "Minimum delay between receiving a text message and sending a reply. If a reply is sent too quickly, the sender's text message remains in the \"sending\" status on their phone. 0: none. Default: 3 seconds.",
         "Démon": "Demon",

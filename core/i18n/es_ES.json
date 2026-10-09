@@ -154,7 +154,7 @@
         "Durée pendant laquelle le plugin retente l'envoi d'un SMS qui n'a pas pu partir (modem déconnecté, absence de réseau...). Passé ce délai, l'envoi est abandonné et le statut passe à « Expiré ». Minimum : 1 minute. Par défaut : 60 minutes.": "Tiempo durante el cual el complemento vuelve a intentar enviar un SMS que no se ha podido enviar (módem desconectado, falta de cobertura, etc.). Transcurrido este tiempo, se abandona el envío y el estado pasa a «Caducado». Mínimo: 1 minuto. Por defecto: 60 minutos.",
         "Délai avant l'envoi d'une réponse (s)": "Plazo para enviar una respuesta (s)",
         "Délai avant la première tentative (s)": "Tiempo de espera antes del primer intento (s)",
-        "Délai laissé au modem entre la fin de l'envoi d'un SMS et le début du suivant. 0 : aucune pause (par défaut).": "Tiempo de espera del módem entre el final del envío de un SMS y el inicio del siguiente. 0: sin pausa (por defecto).",
+        "Délai laissé au modem entre la fin de l'envoi d'un SMS et le début du suivant. 0 : aucune pause. Par défaut : 5 secondes.": "Tiempo de espera del módem entre el final del envío de un SMS y el inicio del siguiente. 0: sin pausa. Por defecto: 5 segundos.",
         "Délai maximum entre deux tentatives (s)": "Tiempo máximo entre dos intentos (s)",
         "Délai minimal entre la réception d'un SMS et l'envoi d'une réponse. Une réponse trop rapide laisse le SMS de l'expéditeur en « envoi en cours » sur son téléphone. 0 : aucun. Par défaut : 3 secondes.": "Tiempo mínimo entre la recepción de un SMS y el envío de una respuesta. Una respuesta demasiado rápida hace que el SMS del remitente quede en «enviándose» en su teléfono. 0: ninguno. Por defecto: 3 segundos.",
         "Démon": "Demonio",

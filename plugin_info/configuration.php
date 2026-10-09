@@ -218,7 +218,7 @@ if (!isConnect('admin')) {
             <div class="form-group">
                 <label class="col-lg-3 control-label">{{Pause entre deux SMS (s)}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
-                    <sup><i class="fas fa-question-circle tooltips" title="{{Délai laissé au modem entre la fin de l'envoi d'un SMS et le début du suivant. 0 : aucune pause (par défaut).}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Délai laissé au modem entre la fin de l'envoi d'un SMS et le début du suivant. 0 : aucune pause. Par défaut : 5 secondes.}}"></i></sup>
                 </label>
                 <div class="col-lg-1">
                     <input class="configKey form-control" data-l1key="messagePause" />

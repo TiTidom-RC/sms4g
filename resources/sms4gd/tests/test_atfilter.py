@@ -38,6 +38,12 @@ ALLOWED = [
     ('AT+CFUN=1,1', 'AT+CFUN=1,1'),
     ('AT+CRESET', 'AT+CRESET'),
     ('at+cfun=1,1', 'AT+CFUN=1,1'),
+    # read-only access to the SIM file of the delivery reports (EF_SMSR)
+    ('AT+CRSM=192,28487', 'AT+CRSM=192,28487'),
+    ('AT+CRSM=192,28487,0,0,0,,"7FFF"', 'AT+CRSM=192,28487,0,0,0,,"7FFF"'),
+    ('AT+CRSM=178,28487,1,4,30', 'AT+CRSM=178,28487,1,4,30'),
+    ('at+crsm=178, 28487, 12, 4, 30', 'AT+CRSM=178,28487,12,4,30'),
+    ('AT+CRSM=176,28487,0,0,30', 'AT+CRSM=176,28487,0,0,30'),
 ]
 
 REFUSED = [
@@ -68,6 +74,13 @@ REFUSED = [
     ('AT+CFUN=0,1', 'not allowed'),
     ('AT+CFUN=1,1,1', 'not allowed'),
     ('AT+CRESET=1', 'not allowed'),
+    ('AT+CRSM=214,28487,0,0,1,"00"', 'not allowed'),  # writes to the SIM
+    ('AT+CRSM=220,28487,1,4,30,"00"', 'not allowed'),
+    ('AT+CRSM=178,28423,1,4,9', 'not allowed'),  # any other file (IMSI, ICCID...)
+    ('AT+CRSM=176,28487,0,0,30,"00"', 'not allowed'),  # data given
+    ('AT+CRSM=242', 'not allowed'),
+    ('AT+CRSM=178', 'not allowed'),
+    ('AT+CRSM=192,28487;', 'single printable'),
     ('AT+CFUN=0', 'PIN'),
     ('AT+CFUN=7', 'not allowed'),
     ('AT+COPS=0', 'not allowed'),

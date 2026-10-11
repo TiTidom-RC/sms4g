@@ -62,6 +62,8 @@ _ALLOWED_WRITES = (
     # way out of some states of the modem (no delivery report anymore) that the radio alone does not clear.
     re.compile(r'^AT\+CFUN=1,1$'),
     re.compile(r'^AT\+CRESET$'),
+    # Reads of the SIM file of the delivery reports (EF_SMSR, 6F47 = 28487): 192 = size, 176/178 = read. Never 214/220 (writes).
+    re.compile(r'^AT\+CRSM=(176|178|192),28487(,\d{1,3},\d{1,3},\d{1,3}(,,"[0-9A-F]{4,8}")?)?$'),
 )
 
 _EXTENDED = re.compile(r'^AT\+([A-Z0-9]+)(\?|=\?|=(.*))?$')

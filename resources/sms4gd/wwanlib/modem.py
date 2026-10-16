@@ -16,7 +16,7 @@ from .exceptions import (CommandError, IncorrectPinError, NotConnectedError, Pdu
 from .executor import Executor, Priority, Transaction
 from .inbox import Inbox, Reassembler
 from .outbox import Outbox
-from .profiles import DIRECT_REPORTS, GENERIC, Profile, detectProfile
+from .profiles import GENERIC, Profile, detectProfile
 from .receipts import ReceiptTracker
 from .selftest import SelfTest
 from .sms import SmsSender, normalizeNumber
@@ -693,12 +693,11 @@ class Modem:
         they would never come, so the ones where the network gives them straight (<ds>=1) go first. """
         candidates = list(profile.cnmiCandidates)
         if srSlots > 0:
-            return candidates + [DIRECT_REPORTS]
+            return candidates
         keptInMemory = [cnmi for cnmi in candidates if cnmi.split(',')[3:4] == ['2']]
         if keptInMemory:
-            log.info('The SR memory has no room for delivery reports: they are asked straight from the network (AT+CNMI=%s)',
-                     DIRECT_REPORTS)
-        return [cnmi for cnmi in candidates if cnmi not in keptInMemory] + [DIRECT_REPORTS] + keptInMemory
+            log.info('The SR memory has no room for delivery reports: the sets that get them straight from the network come first')
+        return [cnmi for cnmi in candidates if cnmi not in keptInMemory] + keptInMemory
 
     @staticmethod
     def _setupNotifications(run: Callable[..., list[str]], profile: Profile, srSlots: int) -> None:

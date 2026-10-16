@@ -953,11 +953,15 @@ class sms4g extends eqLogic {
 			'a test is already running' => __('un test est déjà en cours', __FILE__),
 			'the SMS stayed in the queue' => __('le SMS n\'a pas pu partir', __FILE__),
 			'the SIM does not know its number' => __('la carte SIM ne connaît pas son numéro', __FILE__),
+			'the modem did not answer' => __('le modem n\'a pas répondu', __FILE__),
 		);
 		foreach ($known as $text => $translation) {
 			if (strpos($reason, $text) === 0) {
 				return $translation;
 			}
+		}
+		if (preg_match('/^the modem refused the command \((.*)\)$/', $reason, $match)) {
+			return __('le modem a refusé la commande', __FILE__) . ' (' . secureXSS($match[1]) . ')';
 		}
 		if (preg_match('/^the SMS could not be (?:sent|queued) \((.*)\)$/', $reason, $match)) {
 			return __('le SMS n\'a pas pu partir', __FILE__) . ' (' . secureXSS($match[1]) . ')';
@@ -1027,8 +1031,10 @@ class sms4g extends eqLogic {
 	 * Numéro de la SIM lu par le démon : poussé à la page de configuration (`sms4g::ownNumber`) qui remplit son champ.
 	 */
 	public static function onOwnNumber($_message) {
+		$status = isset($_message['status']) ? (string) $_message['status'] : '';
 		$number = (isset($_message['number']) && preg_match('/^\+?[0-9]{3,20}$/', (string) $_message['number'])) ? $_message['number'] : '';
-		$reason = ($number == '') ? self::translateReason(isset($_message['reason']) ? $_message['reason'] : '') : '';
+		// Seul le statut `error` porte un message d'erreur : une SIM qui ne connaît pas son numéro (`unknown`) n'en est pas une
+		$reason = ($number == '' && $status == 'error') ? self::translateReason(isset($_message['reason']) ? $_message['reason'] : '') : '';
 		event::add('sms4g::ownNumber', array('number' => $number, 'reason' => $reason));
 	}
 

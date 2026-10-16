@@ -494,6 +494,8 @@ if (!isConnect('admin')) {
             ownNumberInput.value = data.number
             ownNumberInput.dispatchEvent(new Event('change', { bubbles: true }))
             jeedomUtils.showAlert({ message: '{{Numéro de la SIM détecté}} : ' + data.number, level: 'success' })
+        } else if (data.reason) {
+            jeedomUtils.showAlert({ message: '{{Numéro de la SIM non détecté}} : ' + data.reason, level: 'warning' })
         } else {
             jeedomUtils.showAlert({ message: '{{La carte SIM ne connaît pas son numéro : saisissez-le à la main}}', level: 'warning' })
         }
@@ -517,7 +519,7 @@ if (!isConnect('admin')) {
                 }
                 ownNumberTimeout = setTimeout(() => {
                     btn.disabled = false
-                    jeedomUtils.showAlert({ message: '{{Pas de réponse du démon}}', level: 'warning' })
+                    jeedomUtils.showAlert({ message: '{{Pas de réponse du démon : est-il démarré ?}}', level: 'warning' })
                 }, 15000)
             }
         })

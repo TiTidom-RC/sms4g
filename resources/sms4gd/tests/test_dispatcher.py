@@ -344,7 +344,7 @@ class DispatcherTest(unittest.TestCase):
     def testTheNumberOfTheSimIsRead(self):
         event, logs = self.ownNumber(['+CNUM: "Messagerie","+33767923801",145', 'OK'])
         self.assertEqual(self.modem.calls, [('AT+CNUM', 15.0, False)])
-        self.assertEqual(event, {'type': 'ownNumber', 'number': '+33767923801', 'reason': ''})
+        self.assertEqual(event, {'type': 'ownNumber', 'status': 'read', 'number': '+33767923801', 'reason': ''})
         self.assertNotIn('33767923801', logs)  # masked in the log
 
     def testTheFirstNumberIsTaken(self):
@@ -356,12 +356,23 @@ class DispatcherTest(unittest.TestCase):
             self.out.events.clear()
             self.modem.future = Future()
             event, _ = self.ownNumber(lines)
-            self.assertEqual((event['number'], event['reason']), (None, 'the SIM does not know its number'))
+            self.assertEqual((event['status'], event['number'], event['reason']), ('unknown', None, 'the SIM does not know its number'))
 
     def testANumberThatCannotBeReadIsExplained(self):
         event, _ = self.ownNumber(error=NotConnectedError('Modem not connected (state: restarting)'))
-        self.assertEqual(event['number'], None)
-        self.assertIn('NotConnectedError', event['reason'])
+        self.assertEqual((event['status'], event['number'], event['reason']), ('error', None, 'modem not connected'))
+
+    def testAModemThatDoesNotAnswerIsExplained(self):
+        event, _ = self.ownNumber(error=TimeoutException())
+        self.assertEqual((event['status'], event['number'], event['reason']), ('error', None, 'the modem did not answer'))
+
+    def testAModemThatRefusesTheCommandIsExplained(self):
+        for lines, shown in ((['+CME ERROR: 30'], '+CME ERROR: 30'), (['ERROR'], 'ERROR'), (['+CMS ERROR: 500'], '+CMS ERROR: 500')):
+            self.out.events.clear()
+            self.modem.future = Future()
+            event, _ = self.ownNumber(lines)
+            self.assertEqual((event['status'], event['number'], event['reason']),
+                             ('error', None, f'the modem refused the command ({shown})'))
 
     def testThreadHandlesMessagesAndStopsAtOnce(self):
         self.dispatcher.start()

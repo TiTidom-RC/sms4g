@@ -9,6 +9,7 @@ the transactions, the timeouts and the connection logic of the library.
 import threading
 import time
 import unittest
+from collections.abc import Callable
 from unittest import mock
 
 import serial
@@ -17,6 +18,7 @@ from wwanlib import (ConnectionState, Modem, ModemIdentified, ModemOptions, Netw
                     StateChanged)
 from wwanlib.exceptions import CmsError, CommandError, NotConnectedError, PinRequiredError, TimeoutException
 from wwanlib.executor import CTRL_Z, Executor, Priority, Step, Transaction
+from wwanlib.profiles import HUAWEI
 from wwanlib.transport import LineClassifier, LineKind, Transport
 
 
@@ -24,7 +26,7 @@ class FakeSerial:
     """ In-memory replacement of serial.Serial. ``behavior(fake, data)`` is called on every write. """
 
     instances: list['FakeSerial'] = []
-    behavior = None
+    behavior: Callable[['FakeSerial', bytes], object] | None = None
 
     def __init__(self, **kwargs):
         self._rx = bytearray()
@@ -337,7 +339,7 @@ def simcomTable(**overrides) -> dict:
         'AT+CPMS="ME"': '+CPMS: 3,23,0,100,0,100\r\nOK\r\n', 'AT+CPMS="SM"': '+CPMS: 0,100,0,100,0,100\r\nOK\r\n',
         'AT+CPMS="SR"': '+CPMS: 1,50,0,100,0,100\r\nOK\r\n',
         'AT+CPMS="SM","SM","SM"': '+CPMS: 0,100,0,100,0,100\r\nOK\r\n',
-        'AT+CNMI=1,1,0,1': 'ERROR\r\n', 'AT+CNMI=0,1,0,1': 'OK\r\n', 'AT+CNMP=38': 'OK\r\n',
+        'AT+CNMI=1,1,0,1': 'ERROR\r\n', 'AT+CNMI=0,1,0,1': 'OK\r\n', 'AT+CNMP?': '+CNMP: 2\r\nOK\r\n', 'AT+CNMP=38': 'OK\r\n', 'AT+CNMP=2': 'OK\r\n',
         'AT+CSQ': '+CSQ: 20,99\r\nOK\r\n',
         'AT+CREG?': '+CREG: 0,1\r\nOK\r\n', 'AT+CEREG?': '+CEREG: 0,1\r\nOK\r\n', 'AT+COPS?': '+COPS: 0,0,"Free Free",7\r\nOK\r\n',
     }
@@ -385,6 +387,131 @@ class ModemTest(unittest.TestCase):
         self.assertIn('AT+CPMS="SM","SM","SM"', commands)
         self.assertIn('AT+CNMP=38', commands)
         self.assertEqual(modem.command('AT+CSQ').result(2), ['+CSQ: 20,99', 'OK'])
+
+    def connectWithNetworkMode(self, force4g: bool, **table) -> list[str]:
+        FakeSerial.instances.clear()
+        FakeSerial.behavior = answer(simcomTable(**table), echo=True)
+        modem = self.makeModem(force4g=force4g)
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        return FakeSerial.instances[0].commands()
+
+    NETWORK_MODES = {
+        # manufacturer: (identity, query command, answer in automatic mode, answer in LTE only, LTE only command, automatic command)
+        'simcom': ({}, 'AT+CNMP?', '+CNMP: 2', '+CNMP: 38', 'AT+CNMP=38', 'AT+CNMP=2'),
+        'huawei': ({'AT+CGMI': 'huawei\r\nOK\r\n', 'AT+CNMI=2,1,0,2': 'OK\r\n'}, 'AT^SYSCFGEX?',
+                   '^SYSCFGEX: "00",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,', '^SYSCFGEX: "03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,',
+                   'AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF', 'AT^SYSCFGEX="00",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF'),
+        'quectel': ({'AT+CGMI': 'Quectel\r\nOK\r\n', 'AT+CNMI=2,1,0,2': 'OK\r\n'}, 'AT+QCFG="nwscanmode"',
+                    '+QCFG: "nwscanmode",0', '+QCFG: "nwscanmode",3', 'AT+QCFG="nwscanmode",3,1', 'AT+QCFG="nwscanmode",0,1'),
+    }
+
+    def networkModeTable(self, manufacturer: str, current: str) -> dict:
+        identity, query = self.NETWORK_MODES[manufacturer][:2]
+        writes = {command: 'OK\r\n' for command in self.NETWORK_MODES[manufacturer][4:]}
+        return {**identity, **writes, query: f'{current}\r\nOK\r\n'}
+
+    def testLteOnlyIsWrittenWhenTheModemIsInAutomaticMode(self):
+        for manufacturer, (_, _, auto, _, lteOnlyCommand, autoCommand) in self.NETWORK_MODES.items():
+            with self.subTest(manufacturer):
+                commands = self.connectWithNetworkMode(True, **self.networkModeTable(manufacturer, auto))
+                self.assertIn(lteOnlyCommand, commands)
+                self.assertNotIn(autoCommand, commands)
+
+    def testLteOnlyIsNotWrittenAgainWhenAlreadyActive(self):
+        for manufacturer, (_, _, _, lteOnly, lteOnlyCommand, autoCommand) in self.NETWORK_MODES.items():
+            with self.subTest(manufacturer):
+                commands = self.connectWithNetworkMode(True, **self.networkModeTable(manufacturer, lteOnly))
+                self.assertNotIn(lteOnlyCommand, commands)
+                self.assertNotIn(autoCommand, commands)
+
+    def testAutomaticModeIsRestoredWhenLteOnlyIsNoLongerAsked(self):
+        for manufacturer, (_, _, _, lteOnly, lteOnlyCommand, autoCommand) in self.NETWORK_MODES.items():
+            with self.subTest(manufacturer):
+                commands = self.connectWithNetworkMode(False, **self.networkModeTable(manufacturer, lteOnly))
+                self.assertIn(autoCommand, commands)
+                self.assertNotIn(lteOnlyCommand, commands)
+
+    def testNothingIsWrittenInAutomaticModeWhenLteOnlyIsNotAsked(self):
+        for manufacturer, (_, _, auto, _, lteOnlyCommand, autoCommand) in self.NETWORK_MODES.items():
+            with self.subTest(manufacturer):
+                commands = self.connectWithNetworkMode(False, **self.networkModeTable(manufacturer, auto))
+                self.assertNotIn(lteOnlyCommand, commands)
+                self.assertNotIn(autoCommand, commands)
+
+    def testAnotherModeSetByTheUserIsLeftAlone(self):
+        commands = self.connectWithNetworkMode(False, **self.networkModeTable('simcom', '+CNMP: 14'))
+        self.assertFalse([c for c in commands if c.startswith('AT+CNMP=')])
+
+    def testLteOnlyIsWrittenBlindlyWhenTheModeCannotBeRead(self):
+        commands = self.connectWithNetworkMode(True, **{'AT+CNMP?': 'ERROR\r\n'})
+        self.assertIn('AT+CNMP=38', commands)
+
+    def testUnknownManufacturerIsNeverGivenNetworkModeCommands(self):
+        with self.assertLogs('wwanlib', level='WARNING') as logs:
+            commands = self.connectWithNetworkMode(True, **{'AT+CGMI': 'ACME\r\nOK\r\n', 'AT+CNMI=2,1,0,2': 'OK\r\n'})
+        self.assertFalse([c for c in commands if c.startswith(('AT+CNMP', 'AT^SYSCFGEX', 'AT+QCFG'))])
+        self.assertIn('not available on this modem', '\n'.join(logs.output))
+
+    def testWarnsWhenTheModemKeepsItsModeAfterTheWrite(self):
+        with self.assertLogs('wwanlib', level='WARNING') as logs:  # the fake modem keeps answering "automatic"
+            self.connectWithNetworkMode(True, **self.networkModeTable('simcom', '+CNMP: 2'))
+        self.assertIn('accepted AT+CNMP=38 but still reports', '\n'.join(logs.output))
+
+    def testWarnsWhenTheModeCannotBeRead(self):
+        with self.assertLogs('wwanlib', level='WARNING') as logs:
+            self.connectWithNetworkMode(True, **{'AT+CNMP?': 'ERROR\r\n'})
+        self.assertIn('The network mode cannot be read (AT+CNMP?)', '\n'.join(logs.output))
+
+    def testNoWarningWhenAnOldModemCannotReadItsModeAndNothingIsAsked(self):
+        with self.assertNoLogs('wwanlib', level='WARNING'):
+            commands = self.connectWithNetworkMode(False, **{'AT+CNMP?': 'ERROR\r\n'})
+        self.assertFalse([c for c in commands if c.startswith('AT+CNMP=')])
+
+    def testQuectelSmsDoneAppliesTheSmsSettingsAgain(self):
+        for urc in (b'\r\n+QIND: SMS DONE\r\n', b'\r\n+QIND: "SMS DONE"\r\n'):
+            with self.subTest(urc):
+                FakeSerial.instances.clear()
+                FakeSerial.behavior = answer(simcomTable(**self.networkModeTable('quectel', '+QCFG: "nwscanmode",0')), echo=True)
+                modem = self.makeModem()
+                modem.start()
+                self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+                port = FakeSerial.instances[0]
+                port.feed(urc)
+                self.assertTrue(waitFor(lambda: port.commands().count('AT+CNMI=2,1,0,2') == 2))
+                modem.stop()
+
+    def testHuaweiPreferredModeIsNotLteOnly(self):
+        preferred = '^SYSCFGEX: "0302",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,'  # LTE then 3G: the 3G fallback stays
+        table = self.networkModeTable('huawei', preferred)
+        commands = self.connectWithNetworkMode(False, **table)
+        self.assertFalse([c for c in commands if c.startswith('AT^SYSCFGEX=')])  # left alone
+        commands = self.connectWithNetworkMode(True, **table)
+        self.assertIn('AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF', commands)
+
+    def testUnsupportedNetworkModeCommandKeepsTheConnection(self):
+        table = {**self.NETWORK_MODES['huawei'][0], 'AT^SYSCFGEX?': 'COMMAND NOT SUPPORT\r\n',
+                 'AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF': 'COMMAND NOT SUPPORT\r\n'}
+        with self.assertLogs('wwanlib', level='WARNING') as logs:  # LTE only asked: the old key is told
+            commands = self.connectWithNetworkMode(True, **table)
+        self.assertIn('AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF', commands)
+        self.assertIn('Failed to set the network mode', '\n'.join(logs.output))
+        with self.assertNoLogs('wwanlib', level='WARNING'):  # nothing asked: nothing to tell
+            commands = self.connectWithNetworkMode(False, **table)
+        self.assertFalse([c for c in commands if c.startswith('AT^SYSCFGEX=')])
+
+    def testLostLinkDuringTheModeChangeIsAWarningNotAFailure(self):
+        modem = self.makeModem(force4g=True)
+
+        def run(command, **kwargs):
+            if command == HUAWEI.networkMode.query:
+                return ['^SYSCFGEX: "00",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,', 'OK']
+            raise NotConnectedError('port lost')
+
+        with self.assertLogs('wwanlib', level='WARNING') as logs:
+            modem._setupNetworkMode(run, HUAWEI)
+        self.assertIn('Connection lost while setting the network mode', '\n'.join(logs.output))
+        self.assertNotIn('Failed to set', '\n'.join(logs.output))
 
     def connectWithSmsc(self, smsc, **table):
         FakeSerial.behavior = answer(simcomTable(**table), echo=True)
@@ -469,6 +596,7 @@ class ModemTest(unittest.TestCase):
         modem.start()
         self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
         session = modem._session
+        assert session is not None
         modem._session = None  # disconnected
         modem._onSmsDone(session)
         time.sleep(0.3)

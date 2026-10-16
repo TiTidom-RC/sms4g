@@ -50,8 +50,19 @@ _FORBIDDEN_BASIC = (
 )
 
 # Commands run without parameter that only give information
-_INFORMATIVE = {'AT', 'AT+CGMI', 'AT+CGMM', 'AT+CGMR', 'AT+CSQ', 'AT+CNUM'}
+_INFORMATIVE = {'AT', 'AT+CGMI', 'AT+CGMM', 'AT+CGMR', 'AT+CSQ', 'AT+CNUM',
+                # Huawei
+                'AT^SYSINFO', 'AT^SYSINFOEX', 'AT^HWVER',
+                # Quectel
+                'AT+QNWINFO', 'AT+QCSQ', 'AT+QSPN', 'AT+QCCID', 'AT+QGMR', 'AT+QTEMP'}
 _INFORMATIVE_PATTERN = re.compile(r'^ATI\d{0,2}$')
+
+# Reads that have the form of a write: Quectel AT+QCFG="item" with the item alone reads it, with a value it sets it.
+# Only these exact forms (any case, the item is a fixed name) are allowed, never AT+QCFG with a value.
+_ALLOWED_READS = (
+    re.compile(r'^AT\+QCFG="(NWSCANMODE|NWSCANSEQ|IOTOPMODE|BAND)"$', re.IGNORECASE),
+    re.compile(r'^AT\+QENG="SERVINGCELL"$', re.IGNORECASE),
+)
 
 # Allowed writes: the whole normalized command must match
 _ALLOWED_WRITES = (
@@ -127,7 +138,7 @@ def checkAtCommand(command: object, pinConfigured: bool = True) -> AtVerdict:
 
     if normalized in _INFORMATIVE or _INFORMATIVE_PATTERN.match(normalized):
         return AtVerdict(True, '', normalized)
-    if any(pattern.match(normalized) for pattern in _ALLOWED_WRITES):
+    if any(pattern.match(normalized) for pattern in _ALLOWED_READS + _ALLOWED_WRITES):
         return AtVerdict(True, '', normalized)
     if normalized == 'AT+CFUN=0':
         if pinConfigured:

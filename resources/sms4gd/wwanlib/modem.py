@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 class ModemOptions:
     deliveryReport: bool = False  # ask the SMS center for delivery reports
     smsc: str | None = None  # SMS center number, None to keep the one of the SIM
-    force4g: bool = False  # LTE only (SimCom modems only)
+    force4g: bool = False  # LTE only (SimCom, Huawei and Quectel modems)
     reconnectBaseDelay: float = 5.0
     reconnectMaxDelay: float = 300.0
     reconnectMaxAttempts: int = 10
@@ -381,7 +381,7 @@ class Modem:
         """ Called by the Reader thread: it must never block nor fail """
         self._dispatcher.post(UnsolicitedNotification(lines))
         session = self._session
-        if session is not None and any(line.strip() == 'SMS DONE' for line in lines):
+        if session is not None and any(line.replace('"', '').strip() in ('SMS DONE', '+QIND: SMS DONE') for line in lines):
             self._onSmsDone(session)
         if session is not None and session.smsReady:
             try:
@@ -456,12 +456,7 @@ class Modem:
         with session.lock:
             seen = session.smsDone
         self._setupSms(session)
-        if self.options.force4g and session.profile.supportsForce4g:
-            try:
-                run('AT+CNMP=38')
-                log.info('LTE-only network mode forced (AT+CNMP=38)')
-            except WwanException as e:
-                log.error('Failed to force the LTE-only network mode (AT+CNMP=38): %s', e)
+        self._setupNetworkMode(run, session.profile)
         # An "SMS DONE" received while the sequence ran may have wiped the SMS settings: they are applied again
         for _ in range(3):
             with session.lock:
@@ -472,6 +467,48 @@ class Modem:
             self._setupSms(session)
         with session.lock:
             session.initialized = True
+
+    def _setupNetworkMode(self, run: Callable[..., list[str]], profile: Profile) -> None:
+        """ LTE only when asked; when not, only a modem left in LTE only goes back to automatic (any other mode is the user's) """
+        mode = profile.networkMode
+        force = self.options.force4g
+        if mode is None:
+            if force:
+                log.warning('Forcing the LTE-only network mode is not available on this modem (profile %s)', profile.name)
+            return
+        try:
+            lines: list[str] | None
+            try:
+                lines = run(mode.query)
+            except CommandError as e:
+                lines = None  # the mode cannot be read: written blindly if LTE only is asked, left alone otherwise
+                # Older modems have no such command: nothing to report when LTE only is not asked
+                log.log(logging.WARNING if force else logging.DEBUG, 'The network mode cannot be read (%s): %s', mode.query, e)
+            isLteOnly = None if lines is None else any(mode.lteOnly.match(line) for line in lines)
+            log.debug('Network mode read (%s): %s, LTE only: %s, LTE only asked: %s', mode.query, lines, isLteOnly, force)
+            if force and not isLteOnly:
+                command, wantLteOnly = mode.lteOnlyCommand, True
+            elif not force and isLteOnly:
+                command, wantLteOnly = mode.autoCommand, False
+            else:
+                if force:
+                    log.info('LTE-only network mode already active')
+                return
+            run(command, timeout=30.0)
+            log.info('Network mode set to %s (%s)', 'LTE only' if wantLteOnly else 'automatic', command)
+            if lines is not None:
+                try:
+                    after = run(mode.query)
+                except CommandError as e:
+                    log.warning('The network mode could not be read back after %s: %s', command, e)
+                else:
+                    if any(mode.lteOnly.match(line) for line in after) != wantLteOnly:
+                        log.warning('The modem accepted %s but still reports: %s', command, after)
+        except NotConnectedError as e:
+            # The modem may restart by itself when its mode changes: the mode is read again at the next connection
+            log.warning('Connection lost while setting the network mode: %s', e)
+        except WwanException as e:
+            log.error('Failed to set the network mode: %s', e)
 
     def _setupSms(self, session: _Session) -> None:
         """ Everything the modem needs to send and receive SMS (the settings are lost when its SMS service restarts) """

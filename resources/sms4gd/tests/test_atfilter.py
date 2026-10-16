@@ -4,6 +4,7 @@ python -m unittest discover -s tests -t . """
 import unittest
 
 from atfilter import MAX_LENGTH, checkAtCommand, normalize
+from wwanlib.profiles import HUAWEI, QUECTEL, SIMCOM
 
 ALLOWED = [
     # (what is typed, what is sent)
@@ -28,6 +29,16 @@ ALLOWED = [
     ('AT+CSCA?', 'AT+CSCA?'),
     ('AT+CSMS?', 'AT+CSMS?'),
     ('AT^SYSINFO?', 'AT^SYSINFO?'),
+    # Huawei and Quectel read-only diagnostics
+    ('AT^SYSINFO', 'AT^SYSINFO'),
+    ('AT^SYSINFOEX', 'AT^SYSINFOEX'),
+    ('AT^SYSCFGEX?', 'AT^SYSCFGEX?'),
+    ('AT+QNWINFO', 'AT+QNWINFO'),
+    ('at+qcsq', 'AT+QCSQ'),
+    ('AT+QCFG="nwscanmode"', 'AT+QCFG="nwscanmode"'),
+    ('AT+QCFG = "iotopmode"', 'AT+QCFG="iotopmode"'),
+    ('AT+QCFG="band"', 'AT+QCFG="band"'),
+    ('AT+QENG="servingcell"', 'AT+QENG="servingcell"'),
     # whitelisted writes
     ('AT+CNMI=2,1,0,2', 'AT+CNMI=2,1,0,2'),
     ('AT+CNMI=1,1,0,1,0', 'AT+CNMI=1,1,0,1,0'),
@@ -95,7 +106,13 @@ REFUSED = [
     ('AT+CMGR=0', 'not allowed'),
     ('AT+CSQ=1', 'not allowed'),
     ('ATV1', 'not allowed'),
-    ('AT^SYSINFO', 'not allowed'),
+    ('AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF', 'not allowed'),  # the plugin sets the network mode itself
+    ('AT+QCFG="nwscanmode",3,1', 'not allowed'),
+    ('AT+QCFG="usbnet"', 'not allowed'),  # only the listed items are read
+    ('AT+QCFG="usbnet",1', 'not allowed'),
+    ('AT+QCFG="band",0,1,1', 'not allowed'),
+    ('AT+QENG="servingcell",1', 'not allowed'),
+    ('AT+QENG="neighbourcell"', 'not allowed'),
     ('HELLO', 'not an AT command'),
 ]
 
@@ -137,6 +154,17 @@ class AtFilterTest(unittest.TestCase):
     def testNotAString(self):
         for value in (None, 123, b'AT+CSQ', ['AT'], {}):
             self.assertFalse(checkAtCommand(value).allowed, repr(value))
+
+    def testProfileCommandsMatchTheConsole(self):
+        # What the daemon logs at each connection can be asked again from the console, but the network mode cannot be set from it
+        for profile in (SIMCOM, HUAWEI, QUECTEL):
+            for command in profile.diagnosticCommands:
+                self.assertTrue(checkAtCommand(command).allowed, f'{profile.name}: {command}')
+            mode = profile.networkMode
+            assert mode is not None, profile.name
+            self.assertTrue(checkAtCommand(mode.query).allowed, profile.name)
+            for command in (mode.lteOnlyCommand, mode.autoCommand):
+                self.assertFalse(checkAtCommand(command).allowed, f'{profile.name}: {command}')
 
     def testLongestAllowedCommand(self):
         command = 'AT+CNMI=' + ','.join(['2'] * 5)

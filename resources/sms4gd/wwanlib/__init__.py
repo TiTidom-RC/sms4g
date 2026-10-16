@@ -5,7 +5,7 @@ Public API (everything else is internal):
 * ``Modem`` / ``ModemOptions`` (``modem.py``): ``start()`` (non blocking), ``command()``, ``stop()``,
   ``onEvent()``, ``state``, ``profile``.
 * ``Modem.sendSms()``: queues an SMS (``outbox.py``, ``sms.py``); the result comes as an event.
-  ``maskNumber()``: a phone number as it may appear in a log.
+  ``maskNumber()``, ``maskPduNumbers()``: a phone number, and a PDU, as they may appear in a log.
 * ``Modem.selfTest()`` and the ``selfTestInterval`` option (``selftest.py``): the modem sends an SMS to its own SIM and
   checks that it comes back with its delivery report.
 * Received SMS (``inbox.py``): read as soon as the modem announces them, long ones reassembled; the result comes as
@@ -30,13 +30,13 @@ from .exceptions import (CmeError, CmsError, CommandError, EncodingError, Incorr
                          SmsQueueFullError, TimeoutException, WwanException)
 from .modem import Modem, ModemOptions
 from .profiles import Profile
-from .sms import maskNumber
+from .sms import maskNumber, maskPduNumbers
 
 __all__ = [
     'Modem', 'ModemOptions', 'Profile', 'ConnectionState', 'Registration', 'StateChanged', 'ModemIdentified',
     'SignalChanged', 'NetworkChanged', 'UnsolicitedNotification',
     'WwanException', 'CommandError', 'CmeError', 'CmsError', 'TimeoutException', 'NotConnectedError',
     'PinRequiredError', 'IncorrectPinError', 'PukRequiredError', 'SmscNumberUnknownError', 'EncodingError',
-    'maskNumber', 'PduModeNotSupportedError', 'SmsQueueFullError', 'SmsQueued', 'SmsSent', 'SmsFailed', 'SmsExpired',
+    'maskNumber', 'maskPduNumbers', 'PduModeNotSupportedError', 'SmsQueueFullError', 'SmsQueued', 'SmsSent', 'SmsFailed', 'SmsExpired',
     'SmsReceived', 'SmsIncomplete', 'SmsDelivery', 'SelfTestResult',
 ]

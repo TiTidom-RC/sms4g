@@ -75,6 +75,35 @@ def maskNumber(number: str) -> str:
     return number if len(number) <= 6 else number[:4] + 'X' * (len(number) - 6) + number[-2:]
 
 
+def maskPduNumbers(pdu: str) -> str:
+    """ The PDU of an SMS-SUBMIT, SMS-DELIVER or SMS-STATUS-REPORT with the middle digits of its address replaced by
+    zeros, the same digits being kept as by ``maskNumber`` (``+336`` and the last 2, or the first 4 and the last 2 of a
+    national number): the frame stays valid (it still decodes and replays). A sender name, a short number and anything
+    that does not read as such a PDU are returned untouched. """
+    try:
+        position = 2 + 2 * int(pdu[0:2], 16)  # first octet, after the SMS center
+        messageType = int(pdu[position:position + 2], 16) & 0x03
+        position += 2
+        if messageType in (1, 2):  # SUBMIT and STATUS-REPORT carry the TP-MR before the address
+            position += 2
+        elif messageType != 0:
+            return pdu
+        digits = int(pdu[position:position + 2], 16)
+        addressType = int(pdu[position + 2:position + 4], 16)
+    except ValueError:
+        return pdu
+    start = position + 4  # after the length and the type of the address
+    end = start + 2 * ((digits + 1) // 2)
+    kept = 3 if addressType & 0x70 == 0x10 else 4  # international: the "+" is not stored, but counts in the text form
+    if end > len(pdu) or addressType & 0x70 == 0x50 or digits <= kept + 2:  # 0x50: alphanumeric sender
+        return pdu
+    swapped = ''.join(pdu[i + 1] + pdu[i] for i in range(start, end, 2))  # the digits are stored swapped, two by two
+    number = swapped[:digits]
+    masked = number[:kept] + '0' * (digits - kept - 2) + number[-2:]
+    padded = masked + 'F' * (digits % 2)  # an odd number ends with the filler F
+    return pdu[:start] + ''.join(padded[i + 1] + padded[i] for i in range(0, len(padded), 2)) + pdu[end:]
+
+
 def usesUcs2(text: str) -> bool:
     """ Whether the text has a character outside the GSM-7 alphabet: the whole message is then sent in UCS-2, with
     70 characters per SMS (67 per part when split) instead of 160 (153) """

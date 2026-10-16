@@ -41,6 +41,7 @@ class Config:
     concatPartsTtl: float = 300.0
     smsTtl: float = 3600.0  # seconds an SMS waits in the queue before it expires
     diagnostic: bool = False  # AT commands from Jeedom allowed (diagnostic mode)
+    maskPdu: bool = False  # the middle digits of the numbers in the raw PDU of the logs are replaced by zeros
     messagePause: float = 0.0  # seconds between the end of an SMS and the start of the next one
     replyDelay: float = 0.0  # seconds after an SMS was received before an SMS may be sent
     selfTest: float = 0.0  # hours between two self-tests (the modem sends an SMS to its own SIM), 0 = none
@@ -75,6 +76,7 @@ class Config:
         parser.add_argument("--concatpartsttl", help="Max age (s) of incomplete concatenated SMS parts before they are discarded", type=str)
         parser.add_argument("--smsttl", help="Seconds an SMS waits in the queue before it expires", type=str)
         parser.add_argument("--diagnostic", help="Allow the AT commands sent from Jeedom (yes / no)", type=str)
+        parser.add_argument("--maskpdu", help="Replace the middle digits of the numbers by zeros in the raw PDU of the logs (yes / no)", type=str)
         parser.add_argument("--messagepause", help="Seconds between the end of an SMS and the start of the next one", type=str)
         parser.add_argument("--replydelay", help="Seconds after a received SMS before an SMS may be sent", type=str)
         parser.add_argument("--selftest", help="Hours between two self-tests of the SMS service (0 = none)", type=str)
@@ -118,6 +120,8 @@ class Config:
             config.smsTtl = float(args.smsttl)
         if args.diagnostic:
             config.diagnostic = args.diagnostic == 'yes'
+        if args.maskpdu:
+            config.maskPdu = args.maskpdu == 'yes'
         if args.messagepause:
             config.messagePause = max(0.0, float(args.messagepause))
         if args.replydelay:

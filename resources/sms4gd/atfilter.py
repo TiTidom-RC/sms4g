@@ -51,17 +51,22 @@ _FORBIDDEN_BASIC = (
 
 # Commands run without parameter that only give information
 _INFORMATIVE = {'AT', 'AT+CGMI', 'AT+CGMM', 'AT+CGMR', 'AT+CSQ', 'AT+CNUM',
+                # 3GPP: last error cause, LTE signal quality, activity status, commands the modem knows
+                'AT+CEER', 'AT+CESQ', 'AT+CPAS', 'AT+CLAC',
+                # SimCom
+                'AT+CPMUTEMP', 'AT+CSUB',
                 # Huawei
-                'AT^SYSINFO', 'AT^SYSINFOEX', 'AT^HWVER',
+                'AT^SYSINFO', 'AT^SYSINFOEX', 'AT^HWVER', 'AT^CARDMODE', 'AT^GETPORTMODE', 'AT^FHVER',
                 # Quectel
-                'AT+QNWINFO', 'AT+QCSQ', 'AT+QSPN', 'AT+QCCID', 'AT+QGMR', 'AT+QTEMP'}
+                'AT+QNWINFO', 'AT+QCSQ', 'AT+QSPN', 'AT+QCCID', 'AT+QGMR', 'AT+QTEMP', 'AT+QINISTAT'}
 _INFORMATIVE_PATTERN = re.compile(r'^ATI\d{0,2}$')
 
-# Reads that have the form of a write: Quectel AT+QCFG="item" with the item alone reads it, with a value it sets it.
+# Reads that have the form of a write: Quectel AT+QCFG="item" (same for QENG, QURCCFG) with the item alone reads it, with a value it sets it.
 # Only these exact forms (any case, the item is a fixed name) are allowed, never AT+QCFG with a value.
 _ALLOWED_READS = (
-    re.compile(r'^AT\+QCFG="(NWSCANMODE|NWSCANSEQ|IOTOPMODE|BAND)"$', re.IGNORECASE),
-    re.compile(r'^AT\+QENG="SERVINGCELL"$', re.IGNORECASE),
+    re.compile(r'^AT\+QCFG="(NWSCANMODE|NWSCANSEQ|IOTOPMODE|BAND|SERVICEDOMAIN|ROAMSERVICE)"$', re.IGNORECASE),
+    re.compile(r'^AT\+QENG="(SERVINGCELL|NEIGHBOURCELL)"$', re.IGNORECASE),
+    re.compile(r'^AT\+QURCCFG="URCPORT"$', re.IGNORECASE),
 )
 
 # Allowed writes: the whole normalized command must match

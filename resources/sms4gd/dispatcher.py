@@ -224,7 +224,8 @@ class Dispatcher:
 
     def _readOwnNumber(self, message: dict[str, Any]) -> None:
         """ Reads the number the SIM knows for itself (`AT+CNUM`, read only: not a command of the user). The answer is an
-        `ownNumber` message: `number` (null when the SIM does not know it, `reason` says why). """
+        `ownNumber` message: `status` (`read`, `unknown`: the SIM keeps no number, `error`), `number` (null unless `read`)
+        and `reason` (text to show, empty when `read`). """
         future = self._modem.command('AT+CNUM', DEFAULT_AT_TIMEOUT, False)
         future.add_done_callback(self._ownNumberDone)
 
@@ -232,15 +233,33 @@ class Dispatcher:
         number = None
         error = done.exception()
         if error is not None:
-            reason = f'{type(error).__name__}: {error}'
+            status, reason = 'error', self._ownNumberError(error)
         else:
-            number = next((match.group(1) for match in map(CNUM_LINE.match, done.result()) if match), None)
-            reason = '' if number else 'the SIM does not know its number'
+            lines = done.result()
+            number = next((match.group(1) for match in map(CNUM_LINE.match, lines) if match), None)
+            status, reason = ('read', '') if number else self._noOwnNumber(lines)
         if number:
             log.info('Number of the SIM read: %s', maskNumber(number))
         else:
             log.warning('Number of the SIM not read (%s)', reason)
-        self._out.event({'type': 'ownNumber', 'number': number, 'reason': reason})
+        self._out.event({'type': 'ownNumber', 'status': status, 'number': number, 'reason': reason})
+
+    @staticmethod
+    def _ownNumberError(error: BaseException) -> str:
+        if isinstance(error, NotConnectedError):
+            return 'modem not connected'
+        if isinstance(error, TimeoutException):
+            return 'the modem did not answer'
+        return f'{type(error).__name__}: {error}'
+
+    @staticmethod
+    def _noOwnNumber(lines: list[str]) -> tuple[str, str]:
+        """ Why no number was read, as (status, reason): the SIM keeps none (+CME ERROR: 100 included), or the modem
+        answered with another error """
+        error = next((line for line in lines if line == 'ERROR' or line.startswith(('+CME ERROR', '+CMS ERROR'))), None)
+        if error is not None and error != '+CME ERROR: 100':
+            return 'error', f'the modem refused the command ({error})'
+        return 'unknown', 'the SIM does not know its number'
 
     def _atCommand(self, message: dict[str, Any]) -> None:
         requestId = message.get('id')

@@ -55,6 +55,11 @@ class PhoneNumberTest(unittest.TestCase):
                 'write: AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF'):
             self.assertEqual(masked(line), line)
 
+    def testTheSmsCenterStaysReadableInTheConnectionDiagnostic(self):
+        self.assertEqual(masked('Diagnostic AT+CSCA? : +CSCA: "+33695000695",145'), 'Diagnostic AT+CSCA? : +CSCA: "+33695000695",145')
+        self.assertEqual(masked('Diagnostic AT+CNUM : +CNUM: "","+33612345678",145'), 'Diagnostic AT+CNUM : +CNUM: "","+336XXXXXX78",145')
+        self.assertEqual(masked('response: [\'+CSCA: "+33695000695",145\', \'OK\']'), 'response: [\'+CSCA: "+336XXXXXX95",145\', \'OK\']')
+
     def testApiKeyAndPin(self):
         self.assertEqual(masked('GET /x?apikey=abc123 HTTP/1.1'), 'GET /x?apikey=sEcReT HTTP/1.1')
         self.assertEqual(masked('write: AT+CPIN="1234"'), 'write: AT+CPIN="****"')

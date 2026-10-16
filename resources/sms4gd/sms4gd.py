@@ -80,6 +80,8 @@ class SecretMaskFilter(logging.Filter):
     # Les commandes, les réponses et les notifications portent le PDU du SMS, et le numéro avec (voir l'option maskPdu)
     _PDU_LINE = re.compile(r'^(?:write|response): |^Notification: ')
     _HEX_RUN = re.compile(r'(?<![0-9A-Za-z])[0-9A-Fa-f]{24,}(?![0-9A-Za-z])')
+    # Le centre SMS est celui de l'opérateur, pas un numéro personnel : il reste lisible dans le diagnostic de connexion
+    _SMSC_LINE = 'Diagnostic AT+CSCA? : '
 
     def __init__(self, maskPdu: bool = False):
         super().__init__()
@@ -87,6 +89,8 @@ class SecretMaskFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()
+        if message.startswith(self._SMSC_LINE):
+            return True
         redacted = message
         for pattern, repl in self._RULES:
             redacted = pattern.sub(repl, redacted)

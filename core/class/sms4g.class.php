@@ -1435,8 +1435,7 @@ class sms4g extends eqLogic {
 	/**
 	 * Texte d'un SMS écrit dans un log : entre guillemets, une seule ligne (un retour à la ligne devient \n : un
 	 * expéditeur ne peut pas fabriquer de fausses lignes de log), sans autre transformation (accents, apostrophes, emoji
-	 * et balises restent tels quels : le visualiseur de logs du Core échappe lui-même le HTML). Comme 
-epr dans le
+	 * et balises restent tels quels : le visualiseur de logs du Core échappe lui-même le HTML). Comme repr() dans le
 	 * log du démon. Ne pas utiliser pour une valeur affichée dans une page (widget, message) : secureXSS.
 	 *
 	 * @param string $_text
@@ -1457,9 +1456,15 @@ epr dans le
 	 * Masque les numéros de téléphone d'un texte de log (même règle que le démon : 4 premiers et 2 derniers caractères).
 	 */
 	private static function maskPhoneNumbers($_text) {
-		return preg_replace_callback('/\+\d{6,15}/', function ($match) {
+		$mask = function ($match) {
 			return substr($match[0], 0, 4) . str_repeat('X', strlen($match[0]) - 6) . substr($match[0], -2);
-		}, $_text);
+		};
+		// Avec "+", puis format national (avec ou sans séparateurs) et chiffres internationaux sans "+" : jamais au milieu d'un mot
+		$patterns = array('/\+\d{6,15}/', '/(?<![\w.+])0\d{8,14}(?!\w)/', '/(?<![\w.+])0\d(?:[ .-]\d{2}){4}(?!\w)/', '/(?<![\w.+])33[1-9]\d{8}(?!\w)/');
+		foreach ($patterns as $pattern) {
+			$_text = preg_replace_callback($pattern, $mask, $_text);
+		}
+		return $_text;
 	}
 
 	/*     * *********************Méthode d'instance************************* */

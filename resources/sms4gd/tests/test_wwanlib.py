@@ -575,6 +575,16 @@ class ModemTest(unittest.TestCase):
         self.assertTrue(waitFor(lambda: port.commands().count('AT+CMGL=4') == 2))  # what arrived meanwhile is read
         self.assertEqual(len(FakeSerial.instances), 1)  # no reconnection
 
+    def testLteOnlyIsAskedAgainWhenTheModemRestartedWithoutLosingItsPort(self):
+        modem = self.makeModem(force4g=True)
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        port = FakeSerial.instances[0]
+        self.assertEqual(port.commands().count('AT+CNMP=38'), 1)
+        port.feed(b'\r\nSMS DONE\r\n')  # the modem restarted: it is back in automatic mode (the fake one always answers so)
+        self.assertTrue(waitFor(lambda: port.commands().count('AT+CNMP=38') == 2))
+        self.assertEqual(len(FakeSerial.instances), 1)
+
     def testSmsDoneDuringTheInitializationIsNotLost(self):
         sent = []
 

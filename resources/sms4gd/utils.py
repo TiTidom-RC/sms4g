@@ -67,7 +67,7 @@ class Config:
         parser.add_argument("--serialrate", help="Serial rate of device", type=str)
         parser.add_argument("--pin", help="Pin sim code", type=str)
         parser.add_argument("--smsc", help="Smsc number", type=str)
-        parser.add_argument("--force4g", help="Force LTE-only network mode (SimCom modems only)", type=str)
+        parser.add_argument("--force4g", help="Force LTE-only network mode (SimCom, Huawei and Quectel modems)", type=str)
         parser.add_argument("--deliveryreport", help="Request SMS delivery status report", type=str)
         parser.add_argument("--reconnectbasedelay", help="Base delay (s) before first reconnect attempt", type=str)
         parser.add_argument("--reconnectmaxdelay", help="Max delay (s) between reconnect attempts", type=str)

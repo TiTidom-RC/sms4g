@@ -1,11 +1,21 @@
-""" Manufacturer-specific behaviours (generic, SimCom, Huawei).
+""" Manufacturer-specific behaviors (generic, SimCom, Huawei, Quectel).
 
 A profile is plain data: the Modem picks it from the manufacturer name returned by ``AT+CGMI``
 and the other modules read it. Voice / USSD / call-related settings of the former gsmmodem are
 intentionally not carried over (see the documentation, reference E).
 """
 
+import re
 from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class NetworkMode:
+    """ How a modem is read and set to "LTE only" and back to automatic (some modems forget it when they restart) """
+    query: str  # command that reads the current mode
+    lteOnly: re.Pattern[str]  # matches a line of the answer when the mode is LTE only
+    lteOnlyCommand: str
+    autoCommand: str
 
 
 @dataclass(frozen=True)
@@ -16,8 +26,8 @@ class Profile:
     cnmiCandidates: tuple[str, ...]
     # Line prefixes that are always spontaneous notifications for this manufacturer
     urcPrefixes: tuple[str, ...] = ()
-    # Whether AT+CNMP=38 (LTE only) is available
-    supportsForce4g: bool = False
+    # LTE only / automatic, None when the modem cannot be driven this way
+    networkMode: NetworkMode | None = None
     # Commands the daemon runs for the diagnostic logged at each connection
     diagnosticCommands: tuple[str, ...] = ()
 
@@ -29,16 +39,30 @@ GENERIC = Profile(name='generic', cnmiCandidates=('2,1,0,2',))
 SIMCOM = Profile(
     name='simcom',
     cnmiCandidates=('1,1,0,1', '0,1,0,1', '2,1,2,1', '2,1,0,2'),
-    supportsForce4g=True,
+    networkMode=NetworkMode('AT+CNMP?', re.compile(r'^\+CNMP: 38\b'), 'AT+CNMP=38', 'AT+CNMP=2'),
     diagnosticCommands=('AT+CPSI?',),
 )
 
-# The former code had no SMS-specific Huawei behaviour besides the ^ notifications and the
-# "COMMAND NOT SUPPORT" end code (recognized for every profile). Not testable at the moment.
+# E3372 in "stick" (AT) mode. ^SYSCFGEX=<acqorder>,<band>,<roam>,<srvdomain>,<lteband>: "03" = LTE only, "00" = automatic.
 HUAWEI = Profile(
     name='huawei',
     cnmiCandidates=('2,1,0,2',),
     urcPrefixes=('^RSSI', '^BOOT', '^MODE', '^HCSQ', '^SIMST', '^SRVST', '^STIN', '^DSFLOWRPT'),
+    networkMode=NetworkMode(
+        'AT^SYSCFGEX?', re.compile(r'^\^SYSCFGEX: "03"'),
+        'AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF', 'AT^SYSCFGEX="00",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF'),
+    diagnosticCommands=('AT^SYSCFGEX?', 'AT^SYSINFOEX'),
+)
+
+# AT+QCFG="nwscanmode",<mode>,<effect>: mode 3 = LTE only, 0 = automatic; effect 1 = without restarting the modem.
+QUECTEL = Profile(
+    name='quectel',
+    cnmiCandidates=('2,1,0,2',),
+    urcPrefixes=('+QIND:',),
+    networkMode=NetworkMode(
+        'AT+QCFG="nwscanmode"', re.compile(r'^\+QCFG: "nwscanmode",3\b'),
+        'AT+QCFG="nwscanmode",3,1', 'AT+QCFG="nwscanmode",0,1'),
+    diagnosticCommands=('AT+QNWINFO', 'AT+QCSQ', 'AT+QCFG="nwscanmode"'),
 )
 
 
@@ -49,4 +73,6 @@ def detectProfile(manufacturer: str) -> Profile:
         return SIMCOM
     if 'huawei' in name:
         return HUAWEI
+    if 'quectel' in name:
+        return QUECTEL
     return GENERIC

@@ -16,7 +16,7 @@ from .exceptions import (CommandError, IncorrectPinError, NotConnectedError, Pdu
 from .executor import Executor, Priority, Transaction
 from .inbox import Inbox, Reassembler
 from .outbox import Outbox
-from .profiles import GENERIC, Profile, detectProfile
+from .profiles import DIRECT_REPORTS, GENERIC, Profile, detectProfile
 from .receipts import ReceiptTracker
 from .selftest import SelfTest
 from .sms import SmsSender, normalizeNumber
@@ -516,8 +516,9 @@ class Modem:
         self._setupSmsFormat(run)
         self._setupSmsCenter(run)
         session.smsReady = False
-        if self._selectSmsMemory(run):
-            self._setupNotifications(run, session.profile)
+        ready, srSlots = self._selectSmsMemory(run)
+        if ready:
+            self._setupNotifications(run, session.profile, srSlots)
             session.smsReady = True
 
     def _onSmsDone(self, session: _Session) -> None:
@@ -641,9 +642,10 @@ class Modem:
             run(f'AT+CSCA="{smsc}"')
 
     @staticmethod
-    def _selectSmsMemory(run: Callable[..., list[str]]) -> bool:
+    def _selectSmsMemory(run: Callable[..., list[str]]) -> tuple[bool, int]:
         """ Selects SM (100 slots on SIM7600, against 23 for ME) for reading, writing and receiving, else ME.
-        Nothing is purged here: SMS received while the daemon was stopped are still stored. """
+        Nothing is purged here: SMS received while the daemon was stopped are still stored.
+        :return: whether the SMS can be read, and the number of slots of the SR memory (0 when it is missing) """
         try:
             cpms = lineStartingWith('+CPMS', run('AT+CPMS=?'))
         except CommandError:
@@ -659,15 +661,17 @@ class Modem:
             chosen.append(memory)
         if not chosen:
             log.warning('SMS memory selection not supported by the modem (%s): SMS reading unavailable', cpms)
-            return False
-        Modem._logSmsMemoryUsage(run, groups[0])
+            return False, 0
+        srSlots = Modem._logSmsMemoryUsage(run, groups[0])
         run('AT+CPMS=' + ','.join(f'"{memory}"' for memory in chosen))
-        return True
+        return True, srSlots
 
     @staticmethod
-    def _logSmsMemoryUsage(run: Callable[..., list[str]], readableMemories: str) -> None:
-        """ Logs how full each SMS memory is (ME, SM, SR). Selecting a memory has no side effect: the final selection follows. """
+    def _logSmsMemoryUsage(run: Callable[..., list[str]], readableMemories: str) -> int:
+        """ Logs how full each SMS memory is (ME, SM, SR). Selecting a memory has no side effect: the final selection follows.
+        :return: the number of slots of the SR memory, where the delivery reports may be kept (0 when it is missing) """
         usage = []
+        srSlots = 0
         for memory in ('ME', 'SM', 'SR'):
             if f'"{memory}"' not in readableMemories:
                 continue
@@ -677,20 +681,32 @@ class Modem:
                 continue
             if counts:
                 usage.append(f'{memory} {counts.group(1)}/{counts.group(2)}')
+                if memory == 'SR':
+                    srSlots = int(counts.group(2))
         if usage:
             log.info('SMS memory usage: %s', ', '.join(usage))
+        return srSlots
 
     @staticmethod
-    def _setupNotifications(run: Callable[..., list[str]], profile: Profile) -> None:
-        for cnmi in profile.cnmiCandidates:
+    def _notificationCandidates(profile: Profile, srSlots: int) -> list[str]:
+        """ The AT+CNMI parameter sets to try, in order. <ds>=2 keeps the delivery reports in the SR memory: with no slot in it
+        they would never come, so the ones where the network gives them straight (<ds>=1) go first. """
+        candidates = list(profile.cnmiCandidates)
+        if srSlots > 0:
+            return candidates + [DIRECT_REPORTS]
+        keptInMemory = [cnmi for cnmi in candidates if cnmi.split(',')[3:4] == ['2']]
+        if keptInMemory:
+            log.info('The SR memory has no room for delivery reports: they are asked straight from the network (AT+CNMI=%s)',
+                     DIRECT_REPORTS)
+        return [cnmi for cnmi in candidates if cnmi not in keptInMemory] + [DIRECT_REPORTS] + keptInMemory
+
+    @staticmethod
+    def _setupNotifications(run: Callable[..., list[str]], profile: Profile, srSlots: int) -> None:
+        for cnmi in Modem._notificationCandidates(profile, srSlots):
             try:
                 run('AT+CNMI=' + cnmi)
                 log.info('Message notifications set with AT+CNMI=%s', cnmi)
                 return
             except CommandError:
                 continue
-        try:
-            run('AT+CNMI=2,1,0,1,0')
-            log.info('Message notifications set with AT+CNMI=2,1,0,1,0')
-        except CommandError:
-            log.warning('Incoming SMS notifications not supported by the modem: SMS receiving unavailable')
+        log.warning('Incoming SMS notifications not supported by the modem: SMS receiving unavailable')

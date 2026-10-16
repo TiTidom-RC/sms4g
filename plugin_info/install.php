@@ -96,6 +96,9 @@ function sms4g_install() {
 	if (config::byKey('selfTestRestart', 'sms4g') == '') {
 		config::save('selfTestRestart', '0', 'sms4g');
 	}
+	if (config::byKey('maskPdu', 'sms4g') == '') {
+		config::save('maskPdu', '0', 'sms4g');
+	}
 
 	// Équipement virtuel Modem (connexion, signal, réseau, commande AT de diagnostic)
 	try {
@@ -196,6 +199,9 @@ function sms4g_update() {
 	}
 	if (config::byKey('selfTestRestart', 'sms4g') == '') {
 		config::save('selfTestRestart', '0', 'sms4g');
+	}
+	if (config::byKey('maskPdu', 'sms4g') == '') {
+		config::save('maskPdu', '0', 'sms4g');
 	}
 
 	// Le mode texte n'existe plus : les SMS sont toujours envoyés et reçus en PDU

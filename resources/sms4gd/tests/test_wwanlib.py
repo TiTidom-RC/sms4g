@@ -18,7 +18,7 @@ from wwanlib import (ConnectionState, Modem, ModemIdentified, ModemOptions, Netw
                     StateChanged)
 from wwanlib.exceptions import CmsError, CommandError, NotConnectedError, PinRequiredError, TimeoutException
 from wwanlib.executor import CTRL_Z, Executor, Priority, Step, Transaction
-from wwanlib.profiles import HUAWEI
+from wwanlib.profiles import GENERIC, HUAWEI, SIMCOM
 from wwanlib.transport import LineClassifier, LineKind, Transport
 
 
@@ -480,6 +480,37 @@ class ModemTest(unittest.TestCase):
                 port.feed(urc)
                 self.assertTrue(waitFor(lambda: port.commands().count('AT+CNMI=2,1,0,2') == 2))
                 modem.stop()
+
+    def srTable(self, srAnswer: str, **extra) -> dict:
+        """ A Quectel (<ds>=2 first) whose SR memory answers ``srAnswer`` """
+        return {**self.networkModeTable('quectel', '+QCFG: "nwscanmode",0'), 'AT+CPMS="SR"': srAnswer, **extra}
+
+    def testDeliveryReportsAreAskedStraightWhenTheSrMemoryHasNoRoom(self):
+        table = self.srTable('+CPMS: 0,0,0,23,0,23\r\nOK\r\n', **{'AT+CNMI=2,1,0,1,0': 'OK\r\n'})  # the BG96: SR 0/0
+        with self.assertLogs('wwanlib', level='INFO') as logs:
+            commands = self.connectWithNetworkMode(False, **table)
+        self.assertEqual([c for c in commands if c.startswith('AT+CNMI=')], ['AT+CNMI=2,1,0,1,0'])
+        self.assertIn('The SR memory has no room for delivery reports', '\n'.join(logs.output))
+
+    def testProfileOrderIsKeptWhenTheSrMemoryHasRoom(self):
+        commands = self.connectWithNetworkMode(False, **self.srTable('+CPMS: 1,50,0,100,0,100\r\nOK\r\n'))
+        self.assertEqual([c for c in commands if c.startswith('AT+CNMI=')], ['AT+CNMI=2,1,0,2'])
+
+    def testProfileIsTriedAgainWhenDirectReportsAreRefused(self):
+        table = self.srTable('+CPMS: 0,0,0,23,0,23\r\nOK\r\n', **{'AT+CNMI=2,1,0,1,0': 'ERROR\r\n'})
+        commands = self.connectWithNetworkMode(False, **table)
+        self.assertEqual([c for c in commands if c.startswith('AT+CNMI=')], ['AT+CNMI=2,1,0,1,0', 'AT+CNMI=2,1,0,2'])
+
+    def testAnSrMemoryThatCannotBeReadIsTakenForOneWithoutRoom(self):
+        table = self.srTable('+CMS ERROR: 303\r\n', **{'AT+CNMI=2,1,0,1,0': 'OK\r\n'})
+        commands = self.connectWithNetworkMode(False, **table)
+        self.assertEqual([c for c in commands if c.startswith('AT+CNMI=')], ['AT+CNMI=2,1,0,1,0'])
+
+    def testNotificationCandidatesOrder(self):
+        self.assertEqual(Modem._notificationCandidates(SIMCOM, 5), ['1,1,0,1', '0,1,0,1', '2,1,2,1', '2,1,0,2', '2,1,0,1,0'])
+        self.assertEqual(Modem._notificationCandidates(SIMCOM, 0), ['1,1,0,1', '0,1,0,1', '2,1,2,1', '2,1,0,1,0', '2,1,0,2'])
+        self.assertEqual(Modem._notificationCandidates(GENERIC, 0), ['2,1,0,1,0', '2,1,0,2'])
+        self.assertEqual(Modem._notificationCandidates(GENERIC, 23), ['2,1,0,2', '2,1,0,1,0'])
 
     def testHuaweiPreferredModeIsNotLteOnly(self):
         preferred = '^SYSCFGEX: "0302",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,'  # LTE then 3G: the 3G fallback stays

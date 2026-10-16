@@ -35,7 +35,7 @@ from typing import Optional
 from dispatcher import Dispatcher, selfTestMessage, smsInboxMessage, smsStatusMessage
 from utils import Config
 from wwanlib import (ConnectionState, Modem, ModemIdentified, ModemOptions, NetworkChanged, Registration, SignalChanged,
-                     StateChanged, WwanException, maskNumber)
+                     StateChanged, WwanException, maskNumber, maskPduNumbers)
 
 try:
     from jeedom.jeedom import jeedom_publisher, jeedom_socket, jeedom_utils, JEEDOM_SOCKET_MESSAGE
@@ -53,7 +53,8 @@ socketServer: Optional[jeedom_socket] = None
 _stopEvent = threading.Event()
 _finalStatePublished = False  # la lib a déjà publié disconnected (avec sa cause) : ne pas la remplacer à l'arrêt
 _identity: Optional[ModemIdentified] = None
-_DIAGNOSTIC_COMMANDS = ('AT+CSQ', 'AT+CREG?', 'AT+COPS?', 'AT+CPMS?', 'AT+CNMI?', 'AT+CSMS?')
+_DIAGNOSTIC_COMMANDS = ('AT+CSQ', 'AT+CESQ', 'AT+CREG?', 'AT+CEREG?', 'AT+COPS?', 'AT+CSCA?', 'AT+CSMP?', 'AT+CPMS?', 'AT+CNMI?',
+                        'AT+CSMS?', 'AT+CNMI=?', 'AT+CPMS=?')
 
 
 class SecretMaskFilter(logging.Filter):
@@ -70,13 +71,27 @@ class SecretMaskFilter(logging.Filter):
         (re.compile(r'(["\']?apikey["\']?\s*[:=]\s*["\']?)[^"\'&\s]+', re.IGNORECASE), r'\1sEcReT'),
         (re.compile(r'(AT\+CPIN=")[^"]+(")', re.IGNORECASE), r'\1****\2'),
         (re.compile(r'\+\d{6,15}'), _maskPhone),
+        # Sans le "+" : format national (0377324755, 03 77 32 47 55), préfixe 00 et chiffres internationaux seuls. Jamais
+        # au milieu d'un mot, d'un nombre décimal ou d'un chemin : les identifiants, les heures et les numéros de série restent lisibles.
+        (re.compile(r'(?<![\w.+])0\d{8,14}(?!\w)'), _maskPhone),
+        (re.compile(r'(?<![\w.+])0\d(?:[ .-]\d{2}){4}(?!\w)'), _maskPhone),
+        (re.compile(r'(?<![\w.+])33[1-9]\d{8}(?!\w)'), _maskPhone),
     ]
+    # Les commandes, les réponses et les notifications portent le PDU du SMS, et le numéro avec (voir l'option maskPdu)
+    _PDU_LINE = re.compile(r'^(?:write|response): |^Notification: ')
+    _HEX_RUN = re.compile(r'(?<![0-9A-Za-z])[0-9A-Fa-f]{24,}(?![0-9A-Za-z])')
+
+    def __init__(self, maskPdu: bool = False):
+        super().__init__()
+        self._maskPdu = maskPdu
 
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()
         redacted = message
         for pattern, repl in self._RULES:
             redacted = pattern.sub(repl, redacted)
+        if self._maskPdu and self._PDU_LINE.match(redacted):
+            redacted = self._HEX_RUN.sub(lambda m: maskPduNumbers(m.group(0)), redacted)
         if redacted != message:
             record.msg = redacted
             record.args = ()
@@ -187,7 +202,7 @@ def main():
     config = Config.fromArgs()
     jeedom_utils.set_log_level(config.logLevel)
 
-    secretFilter = SecretMaskFilter()
+    secretFilter = SecretMaskFilter(config.maskPdu)
     for logHandler in logging.root.handlers:
         logHandler.addFilter(secretFilter)
 
@@ -210,6 +225,7 @@ def main():
     logging.info('Concat parts TTL : %s s', config.concatPartsTtl)
     logging.info('SMS lifetime in the queue : %s s', config.smsTtl)
     logging.info('Diagnostic mode (AT commands from Jeedom) : %s', config.diagnostic)
+    logging.info('Middle digits of the numbers set to zero in the raw PDU : %s', config.maskPdu)
     logging.info('Pause between two SMS : %s s', config.messagePause)
     logging.info('Delay before a reply : %s s', config.replyDelay)
     logging.info('Self-test every : %s h (0 = none)', config.selfTestInterval / 3600)

@@ -39,6 +39,21 @@ ALLOWED = [
     ('AT+QCFG = "iotopmode"', 'AT+QCFG="iotopmode"'),
     ('AT+QCFG="band"', 'AT+QCFG="band"'),
     ('AT+QENG="servingcell"', 'AT+QENG="servingcell"'),
+    ('AT+QENG="neighbourcell"', 'AT+QENG="neighbourcell"'),
+    ('AT+QCFG="servicedomain"', 'AT+QCFG="servicedomain"'),
+    ('AT+QCFG = "roamservice"', 'AT+QCFG="roamservice"'),
+    ('at+qurccfg="urcport"', 'AT+QURCCFG="urcport"'),
+    ('AT+QINISTAT', 'AT+QINISTAT'),
+    ('AT^CARDMODE', 'AT^CARDMODE'),
+    ('at^getportmode', 'AT^GETPORTMODE'),
+    ('AT^FHVER', 'AT^FHVER'),
+    # SimCom and 3GPP read-only diagnostics
+    ('AT+CPMUTEMP', 'AT+CPMUTEMP'),
+    ('AT+CSUB', 'AT+CSUB'),
+    ('AT+CEER', 'AT+CEER'),
+    ('at+cesq', 'AT+CESQ'),
+    ('AT+CPAS', 'AT+CPAS'),
+    ('AT+CLAC', 'AT+CLAC'),
     # whitelisted writes
     ('AT+CNMI=2,1,0,2', 'AT+CNMI=2,1,0,2'),
     ('AT+CNMI=1,1,0,1,0', 'AT+CNMI=1,1,0,1,0'),
@@ -112,7 +127,16 @@ REFUSED = [
     ('AT+QCFG="usbnet",1', 'not allowed'),
     ('AT+QCFG="band",0,1,1', 'not allowed'),
     ('AT+QENG="servingcell",1', 'not allowed'),
-    ('AT+QENG="neighbourcell"', 'not allowed'),
+    ('AT+QENG="neighbourcell",1', 'not allowed'),
+    ('AT+QURCCFG="urcport","uart1"', 'not allowed'),  # sets the port of the notifications
+    ('AT+QURCCFG="usbat"', 'not allowed'),
+    ('AT+QCFG="servicedomain",1,1', 'not allowed'),
+    ('AT+QCFG="roamservice",2,1', 'not allowed'),
+    ('AT^SETPORT="FF;10,12"', 'not allowed'),  # changes the USB mode of the modem
+    ('AT+CEER=1', 'not allowed'),
+    ('AT+CLAC=1', 'not allowed'),
+    ('AT+QPOWD', 'not allowed'),
+    ('AT+CPOF', 'not allowed'),
     ('HELLO', 'not an AT command'),
 ]
 

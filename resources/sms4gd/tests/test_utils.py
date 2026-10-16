@@ -47,6 +47,11 @@ class ConfigTest(unittest.TestCase):
     def testNoSimNumberIsTheTextNone(self):
         self.assertIsNone(Config.fromArgs(['--ownnumber', 'None']).ownNumber)
 
+    def testMaskPduOption(self):
+        self.assertFalse(Config.fromArgs([]).maskPdu)
+        self.assertTrue(Config.fromArgs(['--maskpdu', 'yes']).maskPdu)
+        self.assertFalse(Config.fromArgs(['--maskpdu', 'no']).maskPdu)
+
     def testPinAndSmscAreKeptWhenGiven(self):
         config = Config.fromArgs(['--pin', '1234', '--smsc', '+33695000695', '--diagnostic', 'no'])
         self.assertEqual((config.pin, config.smsc, config.diagnostic), ('1234', '+33695000695', False))

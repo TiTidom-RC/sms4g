@@ -282,6 +282,7 @@ class sms4g extends eqLogic {
 		$cmd .= ' --smsc ' . config::byKey('smsc', 'sms4g', 'None');
 		$cmd .= ' --force4g ' . ((config::byKey('force4gOnly', 'sms4g') == 1) ? 'yes' : 'no');
 		$cmd .= ' --diagnostic ' . ((config::byKey('diagMode', 'sms4g', 0) == 1) ? 'yes' : 'no');
+		$cmd .= ' --maskpdu ' . ((config::byKey('maskPdu', 'sms4g', 0) == 1) ? 'yes' : 'no');
 		$cmd .= ' --cycle ' . config::byKey('cycle', 'sms4g');
 		$cmd .= ' --deliveryreport ' . ((config::byKey('deliveryReport', 'sms4g', 0) == 1) ? 'yes' : 'no');
 		$cmd .= ' --reconnectbasedelay ' . config::byKey('reconnectBaseDelay', 'sms4g', 5);
@@ -990,7 +991,7 @@ class sms4g extends eqLogic {
 				$text = __('OK', __FILE__);
 				break;
 			case 'noReception':
-				$text = __('Échec : le SMS envoyé à la SIM n\'est pas revenu', __FILE__);
+				$text = __('Échec : le SMS envoyé à la SIM n\'est pas revenu', __FILE__) . ' (' . __('vérifiez que le numéro de la SIM est le bon ; certains opérateurs ne livrent pas un SMS qu\'on s\'adresse à soi-même', __FILE__) . ')';
 				$failed = true;
 				break;
 			case 'noReceipt':
@@ -1008,7 +1009,7 @@ class sms4g extends eqLogic {
 			$text .= ' — ' . __('modem redémarré', __FILE__);
 		}
 		if ($failed && strpos($reason, 'intervention needed') !== false) {
-			$text .= ' — ' . __('intervention nécessaire', __FILE__);
+			$text .= ' — ' . __('intervention nécessaire', __FILE__) . ' (' . __('le modem a déjà été redémarré récemment sans effet : il ne sera pas redémarré de nouveau avant une heure', __FILE__) . ')';
 		}
 		$_modem->checkAndUpdateCmd('self_test_result', $text, $_time);
 		if ($failed) {
@@ -1434,7 +1435,8 @@ class sms4g extends eqLogic {
 	/**
 	 * Texte d'un SMS écrit dans un log : entre guillemets, une seule ligne (un retour à la ligne devient \n : un
 	 * expéditeur ne peut pas fabriquer de fausses lignes de log), sans autre transformation (accents, apostrophes, emoji
-	 * et balises restent tels quels : le visualiseur de logs du Core échappe lui-même le HTML). Comme epr dans le
+	 * et balises restent tels quels : le visualiseur de logs du Core échappe lui-même le HTML). Comme 
+epr dans le
 	 * log du démon. Ne pas utiliser pour une valeur affichée dans une page (widget, message) : secureXSS.
 	 *
 	 * @param string $_text

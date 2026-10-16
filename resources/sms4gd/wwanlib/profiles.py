@@ -32,6 +32,10 @@ class Profile:
     diagnosticCommands: tuple[str, ...] = ()
 
 
+# AT+CNMI with <ds>=1: the delivery reports come straight from the network (+CDS), not through the SR memory.
+# Tried by the Modem after the candidates of the profile, or before the <ds>=2 ones when the SR memory has no slot.
+DIRECT_REPORTS = '2,1,0,1,0'
+
 GENERIC = Profile(name='generic', cnmiCandidates=('2,1,0,2',))
 
 # SimCom (SIM7600...): <ds>=1 (direct +CDS) avoids the SR-memory read bug of some firmwares but may be
@@ -51,7 +55,7 @@ HUAWEI = Profile(
     networkMode=NetworkMode(
         'AT^SYSCFGEX?', re.compile(r'^\^SYSCFGEX: "03"'),
         'AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF', 'AT^SYSCFGEX="00",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF'),
-    diagnosticCommands=('AT^SYSCFGEX?', 'AT^SYSINFOEX'),
+    diagnosticCommands=('AT^SYSCFGEX?', 'AT^SYSINFOEX', 'AT^GETPORTMODE'),
 )
 
 # AT+QCFG="nwscanmode",<mode>,<effect>: mode 3 = LTE only, 0 = automatic; effect 1 = without restarting the modem.
@@ -62,7 +66,8 @@ QUECTEL = Profile(
     networkMode=NetworkMode(
         'AT+QCFG="nwscanmode"', re.compile(r'^\+QCFG: "nwscanmode",3\b'),
         'AT+QCFG="nwscanmode",3,1', 'AT+QCFG="nwscanmode",0,1'),
-    diagnosticCommands=('AT+QNWINFO', 'AT+QCSQ', 'AT+QCFG="nwscanmode"'),
+    diagnosticCommands=('AT+QNWINFO', 'AT+QCSQ', 'AT+QCFG="nwscanmode"', 'AT+QINISTAT', 'AT+QURCCFG="urcport"',
+                        'AT+QCFG="servicedomain"'),
 )
 
 

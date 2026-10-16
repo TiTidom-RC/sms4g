@@ -542,7 +542,7 @@ class Modem:
                 wasReady = session.smsReady
                 try:
                     self._setupSms(session)
-                    self._setupNetworkMode(session.run, session.profile)  # forgotten by some modems (SimCom) when they restart
+                    self._setupNetworkMode(session.run, session.profile)  # the mode may not survive a restart of the modem
                     self._inbox.reset()
                     if session.smsReady:
                         self._inbox.catchUp()

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class NetworkMode:
-    """ How a modem is read and set to "LTE only" and back to automatic (some modems forget it when they restart) """
+    """ How a modem is read and set to "LTE only" and back to automatic (it may not survive a restart of the modem) """
     query: str  # command that reads the current mode
     lteOnly: re.Pattern[str]  # matches a line of the answer when the mode is LTE only
     lteOnlyCommand: str

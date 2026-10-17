@@ -1,4 +1,6 @@
 
+# Derived from gsmmodem/pdu.py of python-gsmmodem (https://github.com/faucamp/python-gsmmodem),
+# Copyright (C) 2013 Francois Aucamp and contributors, GNU Lesser General Public License v3 or later.
 """ SMS PDU encoding methods """
 
 import codecs

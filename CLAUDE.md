@@ -11,12 +11,12 @@
 
 ## Contexte du projet
 
-`sms4g` est un plugin **Jeedom** pour l'envoi/réception de SMS via un modem GSM/4G (clé USB Huawei ou modem SimCom type SIM7600G-H). Fork indépendant (non lié au dépôt communautaire officiel Jeedom) intégrant : conversion robuste des numéros, gestion des SMS rapprochés, réassemblage des SMS concaténés (y compris via les notifications temps réel `+CMTI` des modems SimCom/LTE), harmonisation des logs.
+`sms4g` est un plugin **Jeedom** pour l'envoi/réception de SMS via un modem GSM/4G (clé USB Huawei, modem SimCom type SIM7600G-H ou modem Quectel type BG96). Fork indépendant (non lié au dépôt communautaire officiel Jeedom), issu d'une réécriture du plugin SMS officiel, intégrant : conversion robuste des numéros, gestion des SMS rapprochés, réassemblage des SMS concaténés (y compris via les notifications temps réel `+CMTI` des modems SimCom/LTE), harmonisation des logs.
 
 ### Architecture
 
 - **PHP** ([core/class/sms4g.class.php](core/class/sms4g.class.php) — étend `eqLogic`/`cmd`) : cycle de vie du démon (`deamon_info`/`deamon_start`/`deamon_stop`), configuration des contacts, envoi de SMS via socket TCP vers le démon.
-- **Démon Python** ([resources/sms4gd/sms4gd.py](resources/sms4gd/sms4gd.py)) : pilote le modem en commandes AT via port série, s'appuie sur la lib modem `wwanlib` ([resources/sms4gd/wwanlib/](resources/sms4gd/wwanlib/), réécriture en cours : plan dans `../Documentation/_docs/sms4g/rewrite/`) et sur la lib démon Jeedom ([resources/sms4gd/jeedom/jeedom.py](resources/sms4gd/jeedom/jeedom.py)) : copie **propre à ce plugin** (jamais re-synchronisée), nettoyée du code inutilisé et dont l'envoi vers Jeedom (`jeedom_publisher`, file ordonnée, lots, `id` / `time`) remplace `jeedom_com` (DEC-30). Le démon est monté en modules testables : `dispatcher.py` (messages de PHP), `atfilter.py` (filtre des commandes AT du mode diagnostic), `utils.py` (`Config`).
+- **Démon Python** ([resources/sms4gd/sms4gd.py](resources/sms4gd/sms4gd.py)) : à base de threads (pas d'asyncio), pilote le modem en commandes AT via port série, s'appuie sur la lib modem `wwanlib` ([resources/sms4gd/wwanlib/](resources/sms4gd/wwanlib/), réécriture terminée et mergée dans `dev` en octobre 2026 : historique et décisions dans `../Documentation/_docs/sms4g/rewrite/`) et sur la lib démon Jeedom ([resources/sms4gd/jeedom/jeedom.py](resources/sms4gd/jeedom/jeedom.py)) : copie **propre à ce plugin** (jamais re-synchronisée), nettoyée du code inutilisé et dont l'envoi vers Jeedom (`jeedom_publisher`, file ordonnée, lots, `id` / `time`) remplace `jeedom_com` (DEC-30). Le démon est monté en modules testables : `dispatcher.py` (messages de PHP), `atfilter.py` (filtre des commandes AT du mode diagnostic), `utils.py` (`Config`).
 - **Callback HTTP** ([core/php/jeesms4g.php](core/php/jeesms4g.php)) : point d'entrée appelé par le démon pour remonter messages reçus, accusés de réception, état de connexion. Contrôle d'accès via `jeedom::apiAccess(init('apikey'), 'sms4g')`.
 - **Ajax / UI** : [core/ajax/sms4g.ajax.php](core/ajax/sms4g.ajax.php), [desktop/php/sms4g.php](desktop/php/sms4g.php), [desktop/js/sms4g.js](desktop/js/sms4g.js), configuration plugin dans [plugin_info/configuration.php](plugin_info/configuration.php).
 - **Communication** :
@@ -38,7 +38,7 @@ Le workspace contient, à côté de ce dépôt, des dépôts voisins directement
   | NUT_Free | `../NUT_Free` | Démon Python récent (`nutfreed` + `utils.py`), supervision d'équipement, intégration SSH-Manager |
   | Monitoring | `../Monitoring` | PHP pur (pas de démon) : structure `eqLogic`/`cmd`, UI desktop, configuration, logs, CI PHP/JS |
   | SSH-Manager | `../SSH-Manager` | PHP pur : plugin passerelle utilisé par d'autres plugins, templates de commandes |
-  | Discordlink | `../Discordlink` | Démon **Node.js** (pas Python), envoi de messages, interactions Jeedom — utile pour le routage des messages reçus vers les interactions |
+  | Discordlink | `../plugin-discordlink` | Démon **Node.js** (pas Python), envoi de messages, interactions Jeedom — utile pour le routage des messages reçus vers les interactions |
   | mcpIA | `../mcpIA` | Démon Python **asyncio** (MCP) : architecture différente, à ne pas prendre comme modèle de démon pour `sms4g` ; il a son propre `CLAUDE.md` |
 
   Règles d'usage :
@@ -72,7 +72,7 @@ Le workspace contient, à côté de ce dépôt, des dépôts voisins directement
 - Indentation : tabulations en PHP (style Core Jeedom), 4 espaces en Python.
 - PHP **8.2 minimum, sans repli 7.4** (Debian 12 est la cible minimum supportée). Les syntaxes 8.0+ (`match`, `str_contains`/`str_starts_with`, named arguments, `enum`, `readonly`, union types) sont utilisables librement, sans commentaire `// TODO: PHP X.Y`. Ne pas utiliser de syntaxe > 8.2 (la CI teste 8.2).
 - Python : **3.12**, Ruff uniquement pour le lint, pas de flake8/black. Ne pas reformater massivement les fichiers existants.
-- `resources/sms4gd/wwanlib/pdu.py` est repris du fork `python-gsmmodem` : modifications ciblées et minimales, en conservant le style d'origine. Tests de `wwanlib` (faux port série) : `python -m unittest discover -s tests -t .` depuis `resources/sms4gd`.
+- Tests du démon et de `wwanlib` (faux port série) : `python -m unittest discover -s tests -t .` depuis `resources/sms4gd`.
 - Nouveaux termes techniques (commandes AT, noms d'options) : les ajouter à `cSpell.words` dans [.vscode/settings.json](.vscode/settings.json) si besoin.
 
 ## Patterns Jeedom à respecter

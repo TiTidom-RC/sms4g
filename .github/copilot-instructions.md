@@ -2,11 +2,11 @@
 
 ## Contexte du projet
 
-`sms4g` est un plugin **Jeedom** pour l'envoi/réception de SMS via un modem GSM/4G (clé USB Huawei ou modem SimCom type SIM7600G-H). Fork indépendant (non lié au dépôt communautaire officiel Jeedom) intégrant : conversion robuste des numéros, gestion des SMS rapprochés, réassemblage des SMS concaténés (y compris via les notifications temps réel `+CMTI` des modems SimCom/LTE), harmonisation des logs.
+`sms4g` est un plugin **Jeedom** pour l'envoi/réception de SMS via un modem GSM/4G (clé USB Huawei, modem SimCom type SIM7600G-H ou modem Quectel type BG96). Fork indépendant (non lié au dépôt communautaire officiel Jeedom), issu d'une réécriture du plugin SMS officiel, intégrant : conversion robuste des numéros, gestion des SMS rapprochés, réassemblage des SMS concaténés (y compris via les notifications temps réel `+CMTI` des modems SimCom/LTE), harmonisation des logs.
 
 ### Architecture
 - **PHP** (`core/class/sms4g.class.php` — étend `eqLogic`/`cmd`) : gère le cycle de vie du démon (`deamon_start`/`deamon_stop`), la configuration des contacts, l'envoi de SMS via socket TCP vers le démon.
-- **Démon Python** (`resources/sms4gd/sms4gd.py`) : boucle asyncio, pilote le modem en AT commands via port série, fork de `python-gsmmodem` (`resources/sms4gd/gsmmodem/`).
+- **Démon Python** (`resources/sms4gd/sms4gd.py`) : à base de threads (pas d'asyncio), pilote le modem en AT commands via port série grâce à la lib `wwanlib` (`resources/sms4gd/wwanlib/`).
 - **Callback HTTP** (`core/php/jeesms4g.php`) : point d'entrée appelé par le démon Python pour remonter messages reçus, accusés de réception, état de connexion.
 - **Communication** : PHP → Python via socket TCP (`sendToDaemon`) ; Python → PHP via POST HTTP vers `jeesms4g.php`.
 

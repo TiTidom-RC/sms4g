@@ -336,6 +336,15 @@ if (!isConnect('admin')) {
                     <input type="checkbox" class="configKey" data-l1key="diagMode" />
                 </div>
             </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Masquer les numéros dans les trames brutes (PDU)}}
+                    <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{En niveau Debug, le journal du démon montre les SMS tels que le modem les échange (trames PDU), qui contiennent le numéro de téléphone sous une forme codée. Cette option remplace les chiffres du milieu du numéro par des zéros dans ces trames (comme dans le reste du journal, les premiers et les deux derniers chiffres restent visibles) : elles restent valides (elles peuvent être décodées ou rejouées). À cocher avant de partager un journal.}}"></i></sup>
+                </label>
+                <div class="col-lg-1">
+                    <input type="checkbox" class="configKey" data-l1key="maskPdu" />
+                </div>
+            </div>
         </div>
     </fieldset>
 </form>
@@ -485,6 +494,8 @@ if (!isConnect('admin')) {
             ownNumberInput.value = data.number
             ownNumberInput.dispatchEvent(new Event('change', { bubbles: true }))
             jeedomUtils.showAlert({ message: '{{Numéro de la SIM détecté}} : ' + data.number, level: 'success' })
+        } else if (data.reason) {
+            jeedomUtils.showAlert({ message: '{{Numéro de la SIM non détecté}} : ' + data.reason, level: 'warning' })
         } else {
             jeedomUtils.showAlert({ message: '{{La carte SIM ne connaît pas son numéro : saisissez-le à la main}}', level: 'warning' })
         }
@@ -508,7 +519,7 @@ if (!isConnect('admin')) {
                 }
                 ownNumberTimeout = setTimeout(() => {
                     btn.disabled = false
-                    jeedomUtils.showAlert({ message: '{{Pas de réponse du démon}}', level: 'warning' })
+                    jeedomUtils.showAlert({ message: '{{Pas de réponse du démon : est-il démarré ?}}', level: 'warning' })
                 }, 15000)
             }
         })

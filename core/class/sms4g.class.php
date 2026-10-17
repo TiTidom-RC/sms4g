@@ -282,6 +282,7 @@ class sms4g extends eqLogic {
 		$cmd .= ' --smsc ' . config::byKey('smsc', 'sms4g', 'None');
 		$cmd .= ' --force4g ' . ((config::byKey('force4gOnly', 'sms4g') == 1) ? 'yes' : 'no');
 		$cmd .= ' --diagnostic ' . ((config::byKey('diagMode', 'sms4g', 0) == 1) ? 'yes' : 'no');
+		$cmd .= ' --maskpdu ' . ((config::byKey('maskPdu', 'sms4g', 0) == 1) ? 'yes' : 'no');
 		$cmd .= ' --cycle ' . config::byKey('cycle', 'sms4g');
 		$cmd .= ' --deliveryreport ' . ((config::byKey('deliveryReport', 'sms4g', 0) == 1) ? 'yes' : 'no');
 		$cmd .= ' --reconnectbasedelay ' . config::byKey('reconnectBaseDelay', 'sms4g', 5);
@@ -952,11 +953,15 @@ class sms4g extends eqLogic {
 			'a test is already running' => __('un test est déjà en cours', __FILE__),
 			'the SMS stayed in the queue' => __('le SMS n\'a pas pu partir', __FILE__),
 			'the SIM does not know its number' => __('la carte SIM ne connaît pas son numéro', __FILE__),
+			'the modem did not answer' => __('le modem n\'a pas répondu', __FILE__),
 		);
 		foreach ($known as $text => $translation) {
 			if (strpos($reason, $text) === 0) {
 				return $translation;
 			}
+		}
+		if (preg_match('/^the modem refused the command \((.*)\)$/', $reason, $match)) {
+			return __('le modem a refusé la commande', __FILE__) . ' (' . secureXSS($match[1]) . ')';
 		}
 		if (preg_match('/^the SMS could not be (?:sent|queued) \((.*)\)$/', $reason, $match)) {
 			return __('le SMS n\'a pas pu partir', __FILE__) . ' (' . secureXSS($match[1]) . ')';
@@ -990,7 +995,7 @@ class sms4g extends eqLogic {
 				$text = __('OK', __FILE__);
 				break;
 			case 'noReception':
-				$text = __('Échec : le SMS envoyé à la SIM n\'est pas revenu', __FILE__);
+				$text = __('Échec : le SMS envoyé à la SIM n\'est pas revenu', __FILE__) . ' (' . __('vérifiez que le numéro de la SIM est le bon ; certains opérateurs ne livrent pas un SMS qu\'on s\'adresse à soi-même', __FILE__) . ')';
 				$failed = true;
 				break;
 			case 'noReceipt':
@@ -1008,7 +1013,7 @@ class sms4g extends eqLogic {
 			$text .= ' — ' . __('modem redémarré', __FILE__);
 		}
 		if ($failed && strpos($reason, 'intervention needed') !== false) {
-			$text .= ' — ' . __('intervention nécessaire', __FILE__);
+			$text .= ' — ' . __('intervention nécessaire', __FILE__) . ' (' . __('le modem a déjà été redémarré récemment sans effet : il ne sera pas redémarré de nouveau avant une heure', __FILE__) . ')';
 		}
 		$_modem->checkAndUpdateCmd('self_test_result', $text, $_time);
 		if ($failed) {
@@ -1026,8 +1031,10 @@ class sms4g extends eqLogic {
 	 * Numéro de la SIM lu par le démon : poussé à la page de configuration (`sms4g::ownNumber`) qui remplit son champ.
 	 */
 	public static function onOwnNumber($_message) {
+		$status = isset($_message['status']) ? (string) $_message['status'] : '';
 		$number = (isset($_message['number']) && preg_match('/^\+?[0-9]{3,20}$/', (string) $_message['number'])) ? $_message['number'] : '';
-		$reason = ($number == '') ? self::translateReason(isset($_message['reason']) ? $_message['reason'] : '') : '';
+		// Seul le statut `error` porte un message d'erreur : une SIM qui ne connaît pas son numéro (`unknown`) n'en est pas une
+		$reason = ($number == '' && $status == 'error') ? self::translateReason(isset($_message['reason']) ? $_message['reason'] : '') : '';
 		event::add('sms4g::ownNumber', array('number' => $number, 'reason' => $reason));
 	}
 
@@ -1434,7 +1441,7 @@ class sms4g extends eqLogic {
 	/**
 	 * Texte d'un SMS écrit dans un log : entre guillemets, une seule ligne (un retour à la ligne devient \n : un
 	 * expéditeur ne peut pas fabriquer de fausses lignes de log), sans autre transformation (accents, apostrophes, emoji
-	 * et balises restent tels quels : le visualiseur de logs du Core échappe lui-même le HTML). Comme epr dans le
+	 * et balises restent tels quels : le visualiseur de logs du Core échappe lui-même le HTML). Comme repr() dans le
 	 * log du démon. Ne pas utiliser pour une valeur affichée dans une page (widget, message) : secureXSS.
 	 *
 	 * @param string $_text
@@ -1455,9 +1462,15 @@ class sms4g extends eqLogic {
 	 * Masque les numéros de téléphone d'un texte de log (même règle que le démon : 4 premiers et 2 derniers caractères).
 	 */
 	private static function maskPhoneNumbers($_text) {
-		return preg_replace_callback('/\+\d{6,15}/', function ($match) {
+		$mask = function ($match) {
 			return substr($match[0], 0, 4) . str_repeat('X', strlen($match[0]) - 6) . substr($match[0], -2);
-		}, $_text);
+		};
+		// Avec "+", puis format national (avec ou sans séparateurs) et chiffres internationaux sans "+" : jamais au milieu d'un mot
+		$patterns = array('/\+\d{6,15}/', '/(?<![\w.+])0\d{8,14}(?!\w)/', '/(?<![\w.+])0\d(?:[ .-]\d{2}){4}(?!\w)/', '/(?<![\w.+])33[1-9]\d{8}(?!\w)/');
+		foreach ($patterns as $pattern) {
+			$_text = preg_replace_callback($pattern, $mask, $_text);
+		}
+		return $_text;
 	}
 
 	/*     * *********************Méthode d'instance************************* */

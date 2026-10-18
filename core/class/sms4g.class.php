@@ -492,7 +492,7 @@ class sms4g extends eqLogic {
 			$orderCmd++;
 		}
 
-		// restart_modem (action/other) : redémarre le modem (AT+CRESET) ; masquée par défaut, avec confirmation dans l'interface
+		// restart_modem (action/other) : redémarre le modem (commande propre au fabricant, AT+CFUN=1,1 en repli) ; masquée par défaut, avec confirmation dans l'interface
 		$cmd = $modem->getCmd(null, 'restart_modem');
 		if (!is_object($cmd)) {
 			$cmd = new sms4gCmd();
@@ -959,6 +959,9 @@ class sms4g extends eqLogic {
 			if (strpos($reason, $text) === 0) {
 				return $translation;
 			}
+		}
+		if (preg_match('/^the modem has no working restart command \((.*)\)$/', $reason, $match)) {
+			return __('ce modem n\'accepte aucune commande de redémarrage', __FILE__) . ' (' . secureXSS($match[1]) . ')';
 		}
 		if (preg_match('/^the modem refused the command \((.*)\)$/', $reason, $match)) {
 			return __('le modem a refusé la commande', __FILE__) . ' (' . secureXSS($match[1]) . ')';

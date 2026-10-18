@@ -12,7 +12,7 @@ from typing import Any
 from .events import (ConnectionState, EventDispatcher, ModemIdentified, NetworkChanged, Registration, SignalChanged,
                      SmsReceived, StateChanged, UnsolicitedNotification)
 from .exceptions import (CommandError, IncorrectPinError, NotConnectedError, PduModeNotSupportedError, PinRequiredError,
-                         PukRequiredError, SmscNumberUnknownError, TimeoutException, WwanException)
+                         PukRequiredError, RestartRefusedError, SmscNumberUnknownError, TimeoutException, WwanException)
 from .executor import Executor, Priority, Transaction
 from .inbox import Inbox, Reassembler
 from .outbox import Outbox
@@ -87,8 +87,8 @@ class Modem:
     """
 
     MIN_MONITOR_INTERVAL = 5.0  # seconds
-    RESTART_COMMANDS = ('AT+CRESET', 'AT+CFUN=1,1')  # the first one the modem accepts is used
     RESTART_TIMEOUT = 60.0  # seconds after which a modem that is still connected is taken for not restarted
+    RESTART_WAIT = 30.0  # seconds the self-test waits to know whether the modem accepted a restart command
 
     def __init__(self, port: str, baudrate: int = 115200, pin: str | None = None, options: ModemOptions | None = None):
         self.port = port
@@ -122,7 +122,7 @@ class Modem:
             log.error('Self-test disabled: the number of the SIM is missing or is not a phone number')
         self._selfTest = SelfTest(
             self._outbox.submit, self._dispatcher.post, lambda: self._state == ConnectionState.CONNECTED,
-            lambda: self.restart('selfTest'), ownNumber, self._receipts is not None,
+            self._restartForSelfTest, ownNumber, self._receipts is not None,
             interval=self.options.selfTestInterval if ownNumber else 0.0, autoRestart=self.options.selfTestRestart)
 
     def _publish(self, event: Any) -> None:
@@ -183,12 +183,13 @@ class Modem:
         return session.executor.submit(command, timeout, Priority.CONSOLE, parseError)
 
     def restart(self, reason: str = 'requested') -> Future:
-        """ Restarts the modem (``AT+CRESET``, ``AT+CFUN=1,1`` if refused): the connection is lost on purpose, the state is
-        ``restarting`` meanwhile and the library connects again by itself when the port comes back. The SMS waiting in
-        the queue are kept; one whose parts are partly sent fails. Does not block.
+        """ Restarts the modem with the first restart command of its profile that it accepts (``AT+CRESET`` for a SimCom,
+        then ``AT+CFUN=1,1``...): the connection is lost on purpose, the state is ``restarting`` meanwhile and the
+        library connects again by itself when the port comes back. The SMS waiting in the queue are kept; one whose
+        parts are partly sent fails. Does not block.
         :param reason: published with the state (``requested``, ``auto``...)
         :raise NotConnectedError: the modem is not connected, or is already restarting
-        :return: a Future that resolves once the modem accepted the command, or fails with ``CommandError`` """
+        :return: a Future that resolves once the modem accepted the command, or fails with ``RestartRefusedError`` """
         session = self._session
         if self._state not in (ConnectionState.CONNECTED, ConnectionState.SEARCHING) or session is None:
             raise NotConnectedError(f'Modem not connected (state: {self._state})')
@@ -198,20 +199,31 @@ class Modem:
         threading.Thread(target=self._runRestart, args=(session, reason, result), name='wwanlib-restart', daemon=True).start()
         return result
 
+    def _restartForSelfTest(self) -> None:
+        """ Restarts the modem and waits for its answer, so that a refusal is not reported as a restart. A restart still
+        going on after ``RESTART_WAIT`` counts as begun. :raise WwanException: not connected, or every command refused """
+        try:
+            self.restart('selfTest').result(self.RESTART_WAIT)
+        except TimeoutError:
+            pass
+
     def _runRestart(self, session: _Session, reason: str, result: Future) -> None:
         log.warning('Restarting the modem (%s)', reason)
         error: Exception | None = None
-        for command in self.RESTART_COMMANDS:
+        commands = session.profile.restartCommands
+        for command in commands:
             try:
                 session.executor.submit(command, 5.0, Priority.CONTROL).result()
+                log.warning('Restart command accepted: %s', command)
                 error = None
                 break
             except (TimeoutException, NotConnectedError):
-                error = None  # no answer, or the port already gone: the modem is most probably restarting
+                log.warning('Restart command sent: %s (no answer, the modem is most probably restarting)', command)
+                error = None
                 break
             except CommandError as e:
-                error = e
-                log.warning('%s refused by the modem (%s)', command, e)
+                error = RestartRefusedError(commands)
+                log.warning('Restart command refused by the modem: %s%s', command, f' ({e})' if e.code is not None else '')
             except Exception as e:
                 error = e
                 break

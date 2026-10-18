@@ -26,8 +26,8 @@ from .events import (ConnectionState, ModemIdentified, NetworkChanged, Registrat
                      SmsDelivery, SmsFailed, SmsIncomplete, SmsQueued, SmsReceived, SmsSent, StateChanged,
                      UnsolicitedNotification)
 from .exceptions import (CmeError, CmsError, CommandError, EncodingError, IncorrectPinError, NotConnectedError,
-                         PduModeNotSupportedError, PinRequiredError, PukRequiredError, SmscNumberUnknownError,
-                         SmsQueueFullError, TimeoutException, WwanException)
+                         PduModeNotSupportedError, PinRequiredError, PukRequiredError, RestartRefusedError,
+                         SmscNumberUnknownError, SmsQueueFullError, TimeoutException, WwanException)
 from .modem import Modem, ModemOptions
 from .profiles import Profile
 from .sms import maskNumber, maskPduNumbers
@@ -35,7 +35,7 @@ from .sms import maskNumber, maskPduNumbers
 __all__ = [
     'Modem', 'ModemOptions', 'Profile', 'ConnectionState', 'Registration', 'StateChanged', 'ModemIdentified',
     'SignalChanged', 'NetworkChanged', 'UnsolicitedNotification',
-    'WwanException', 'CommandError', 'CmeError', 'CmsError', 'TimeoutException', 'NotConnectedError',
+    'WwanException', 'CommandError', 'CmeError', 'CmsError', 'TimeoutException', 'NotConnectedError', 'RestartRefusedError',
     'PinRequiredError', 'IncorrectPinError', 'PukRequiredError', 'SmscNumberUnknownError', 'EncodingError',
     'maskNumber', 'maskPduNumbers', 'PduModeNotSupportedError', 'SmsQueueFullError', 'SmsQueued', 'SmsSent', 'SmsFailed', 'SmsExpired',
     'SmsReceived', 'SmsIncomplete', 'SmsDelivery', 'SelfTestResult',

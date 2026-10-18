@@ -63,6 +63,10 @@ ALLOWED = [
     ('AT+CFUN=4', 'AT+CFUN=4'),
     ('AT+CFUN=1,1', 'AT+CFUN=1,1'),
     ('AT+CRESET', 'AT+CRESET'),
+    ('AT+QRST=1', 'AT+QRST=1'),
+    ('at+qrst = 1', 'AT+QRST=1'),
+    ('AT^RESET', 'AT^RESET'),
+    ('at^reset', 'AT^RESET'),
     ('at+cfun=1,1', 'AT+CFUN=1,1'),
     # read-only access to the SIM file of the delivery reports (EF_SMSR)
     ('AT+CRSM=192,28487', 'AT+CRSM=192,28487'),
@@ -100,6 +104,10 @@ REFUSED = [
     ('AT+CFUN=0,1', 'not allowed'),
     ('AT+CFUN=1,1,1', 'not allowed'),
     ('AT+CRESET=1', 'not allowed'),
+    ('AT+QRST=0', 'not allowed'),
+    ('AT+QRST=1,1', 'not allowed'),
+    ('AT+QRST', 'not allowed'),
+    ('AT^RESET=1', 'not allowed'),
     ('AT+CRSM=214,28487,0,0,1,"00"', 'not allowed'),  # writes to the SIM
     ('AT+CRSM=220,28487,1,4,30,"00"', 'not allowed'),
     ('AT+CRSM=178,28423,1,4,9', 'not allowed'),  # any other file (IMSI, ICCID...)

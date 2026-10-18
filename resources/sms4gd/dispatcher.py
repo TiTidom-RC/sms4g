@@ -27,8 +27,8 @@ from concurrent.futures import Future
 from typing import Any, Protocol
 
 from atfilter import checkAtCommand
-from wwanlib import (NotConnectedError, SelfTestResult, SmsDelivery, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued,
-                     SmsQueueFullError, SmsReceived, SmsSent, TimeoutException, maskNumber)
+from wwanlib import (NotConnectedError, RestartRefusedError, SelfTestResult, SmsDelivery, SmsExpired, SmsFailed, SmsIncomplete,
+                     SmsQueued, SmsQueueFullError, SmsReceived, SmsSent, TimeoutException, maskNumber)
 
 log = logging.getLogger(__name__)
 
@@ -210,6 +210,9 @@ class Dispatcher:
 
     def _restartDone(self, done: Future) -> None:
         error = done.exception()
+        if isinstance(error, RestartRefusedError):
+            self._restartResult('refused', f'the modem has no working restart command ({error})')
+            return
         self._restartResult('ok' if error is None else 'refused', '' if error is None else f'{type(error).__name__}: {error}')
 
     def _restartResult(self, status: str, reason: str) -> None:

@@ -61,6 +61,14 @@ class CommandError(WwanException):
             super(CommandError, self).__init__()
 
 
+class RestartRefusedError(CommandError):
+    """ Every restart command of the profile was refused: the modem has none that works (``commands`` = those tried) """
+
+    def __init__(self, commands):
+        super().__init__(', '.join(commands))
+        self.commands = tuple(commands)
+
+
 class CmeError(CommandError):
     """ ME error result code : +CME ERROR: <error>
 

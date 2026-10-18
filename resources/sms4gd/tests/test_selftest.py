@@ -5,6 +5,8 @@ delivery report. Run from resources/sms4gd:  python -m unittest discover -s test
 import threading
 import time
 import unittest
+from concurrent.futures import Future
+from typing import Any
 from unittest import mock
 
 from tests.test_inbox import FakeSim, deliverPdus, simBehavior, statusReportPdu
@@ -59,7 +61,7 @@ class SelfTestUnitTest(unittest.TestCase):
         self.restarts += 1
 
     def make(self, **kwargs) -> SelfTest:
-        options = dict(ownNumber=OWN, expectReceipt=True, timeout=0.4, sendTimeout=0.4, minRestartInterval=3600.0)
+        options: dict[str, Any] = dict(ownNumber=OWN, expectReceipt=True, timeout=0.4, sendTimeout=0.4, minRestartInterval=3600.0)
         options.update(kwargs)
         self.selfTest = SelfTest(self.submit, self.results.append, lambda: self.connected, self.restart, **options)
         self.addCleanup(self.selfTest.stop)
@@ -282,6 +284,31 @@ class ModemSelfTestTest(unittest.TestCase):
         states = [event.state for event in self.events if isinstance(event, StateChanged)]
         self.assertIn('restarting', states)
         self.assertEqual(states[-1], 'connected')
+
+    def testARefusedRestartIsNotReportedAsDone(self):
+        self.scenario = Scenario(received=False)
+        accepted = FakeSerial.behavior
+        assert accepted is not None
+
+        def refusing(fake, data):
+            command = data.decode().rstrip('\r')
+            if command in ('AT+CRESET', 'AT+CFUN=1,1'):
+                fake.feed(command.encode() + b'\r\nERROR\r\n')
+            else:
+                accepted(fake, data)
+
+        FakeSerial.behavior = refusing
+        modem = self.start(selfTestRestart=True)
+        with self.assertLogs('wwanlib', level='WARNING') as logs:
+            result = modem.selfTest().result(8)
+        self.assertEqual((result.status, result.restarted), ('noReception', False))
+        self.assertTrue(any('could not be restarted' in line for line in logs.output))
+        self.assertEqual((len(FakeSerial.instances), modem.state), (1, ConnectionState.CONNECTED))
+
+    def testARestartStillGoingOnCountsAsBegun(self):
+        modem = self.start()
+        with mock.patch.object(modem, 'restart', return_value=Future()), mock.patch.object(Modem, 'RESTART_WAIT', 0.05):
+            self.assertIsNone(modem._restartForSelfTest())
 
     def testWithoutNumberTheTestIsSkipped(self):
         with self.assertLogs('wwanlib', level='ERROR') as logs:

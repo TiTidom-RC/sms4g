@@ -8,7 +8,7 @@ import unittest
 from concurrent.futures import Future
 
 from dispatcher import MAX_RESPONSE_CHARS, Dispatcher, selfTestMessage, smsInboxMessage, smsStatusMessage
-from wwanlib import (CmeError, NotConnectedError, SelfTestResult, SignalChanged, SmsDelivery, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError,
+from wwanlib import (CmeError, NotConnectedError, RestartRefusedError, SelfTestResult, SignalChanged, SmsDelivery, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError,
                     SmsReceived, SmsSent, TimeoutException)
 
 
@@ -314,6 +314,13 @@ class DispatcherTest(unittest.TestCase):
             self.dispatch(cmd='restartModem')
             self.modem.restartFuture.set_exception(CmeError('AT+CRESET', 100))
         self.assertEqual((self.out.events[0]['status'], self.out.events[0]['reason'].split(':')[0]), ('refused', 'CmeError'))
+
+    def testRestartRefusedByEveryCommandNamesThemAll(self):
+        with self.assertLogs('dispatcher', level='WARNING'):
+            self.dispatch(cmd='restartModem')
+            self.modem.restartFuture.set_exception(RestartRefusedError(('AT+QRST=1', 'AT+CFUN=1,1')))
+        self.assertEqual(self.out.events, [{'type': 'restartResult', 'status': 'refused',
+                                            'reason': 'the modem has no working restart command (AT+QRST=1, AT+CFUN=1,1)'}])
 
     def testRestartAndSelfTestDoNotNeedTheDiagnosticMode(self):
         self.dispatcher = Dispatcher(self.messages, self.modem, self.out, 'KEY', diagnostic=False)

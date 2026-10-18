@@ -29,6 +29,9 @@ class Profile:
     urcPrefixes: tuple[str, ...] = ()
     # LTE only / automatic, None when the modem cannot be driven this way
     networkMode: NetworkMode | None = None
+    # Commands that restart the modem, strongest first: the first one the modem accepts is used.
+    # AT+CFUN=1,1 (3GPP) restarts the radio stack only on some modems (SimCom: it does not clear the delivery-report bug).
+    restartCommands: tuple[str, ...] = ('AT+CFUN=1,1',)
     # Commands the daemon runs for the diagnostic logged at each connection
     diagnosticCommands: tuple[str, ...] = ()
 
@@ -45,6 +48,7 @@ SIMCOM = Profile(
     name='simcom',
     cnmiCandidates=('1,1,0,1', '0,1,0,1', '2,1,2,1', '2,1,0,2', '2,1,0,1'),
     networkMode=NetworkMode('AT+CNMP?', re.compile(r'^\+CNMP: 38\b'), 'AT+CNMP=38', 'AT+CNMP=2'),
+    restartCommands=('AT+CRESET', 'AT+CFUN=1,1'),
     diagnosticCommands=('AT+CPSI?',),
 )
 
@@ -56,6 +60,7 @@ HUAWEI = Profile(
     networkMode=NetworkMode(
         'AT^SYSCFGEX?', re.compile(r'^\^SYSCFGEX: "03"'),
         'AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF', 'AT^SYSCFGEX="00",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF'),
+    restartCommands=('AT^RESET', 'AT+CFUN=1,1'),
     diagnosticCommands=('AT^SYSCFGEX?', 'AT^SYSINFOEX', 'AT^GETPORTMODE'),
 )
 
@@ -68,6 +73,7 @@ QUECTEL = Profile(
     networkMode=NetworkMode(
         'AT+QCFG="nwscanmode"', re.compile(r'^\+QCFG: "nwscanmode",3\b'),
         'AT+QCFG="nwscanmode",3,1', 'AT+QCFG="nwscanmode",0,1'),
+    restartCommands=('AT+QRST=1', 'AT+CFUN=1,1'),
     diagnosticCommands=('AT+QNWINFO', 'AT+QCSQ', 'AT+QCFG="nwscanmode"', 'AT+QINISTAT', 'AT+QURCCFG="urcport"',
                         'AT+QCFG="servicedomain"'),
 )

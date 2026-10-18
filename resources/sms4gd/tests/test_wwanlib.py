@@ -16,7 +16,7 @@ import serial
 
 from wwanlib import (ConnectionState, Modem, ModemIdentified, ModemOptions, NetworkChanged, Registration, SignalChanged,
                     StateChanged)
-from wwanlib.exceptions import CmsError, CommandError, NotConnectedError, PinRequiredError, TimeoutException
+from wwanlib.exceptions import CmsError, CommandError, NotConnectedError, PinRequiredError, RestartRefusedError, TimeoutException
 from wwanlib.executor import CTRL_Z, Executor, Priority, Step, Transaction
 from wwanlib.profiles import GENERIC, HUAWEI, QUECTEL, SIMCOM
 from wwanlib.transport import LineClassifier, LineKind, Transport
@@ -691,12 +691,86 @@ class ModemTest(unittest.TestCase):
         modem = self.makeModem()
         modem.start()
         self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
-        with self.assertRaises(CommandError):
+        with self.assertRaises(RestartRefusedError) as raised:
             modem.restart().result(3)
+        self.assertEqual(raised.exception.commands, ('AT+CRESET', 'AT+CFUN=1,1'))
         self.assertTrue(waitFor(lambda: self.states()[-1:] == ['connected']))
         self.assertEqual(modem.state, ConnectionState.CONNECTED)
         self.assertEqual(len(FakeSerial.instances), 1)
         self.assertEqual(modem.command('AT+CSQ').result(2), ['+CSQ: 20,99', 'OK'])  # still usable
+
+    def testRestartLogsTheCommandsRefusedAndTheOneAccepted(self):
+        for refusal, expected in (('ERROR\r\n', 'refused by the modem: AT+CRESET'),
+                                  ('+CME ERROR: 100\r\n', 'refused by the modem: AT+CRESET (CME 100')):
+            with self.subTest(refusal):
+                FakeSerial.instances.clear()
+                modem = self.connectedModem({'AT+CRESET': refusal, 'AT+CFUN=1,1': self.restartsTheModem})
+                with self.assertLogs('wwanlib.modem', level='WARNING') as logs:
+                    modem.restart().result(3)
+                text = '\n'.join(logs.output)
+                self.assertIn(expected, text)
+                self.assertNotIn('AT+CRESET (AT+CRESET)', text)
+                self.assertIn('Restart command accepted: AT+CFUN=1,1', text)
+                self.assertTrue(waitFor(lambda: len(FakeSerial.instances) == 2 and modem.state == ConnectionState.CONNECTED))
+                modem.stop()
+
+    def testRestartThatLosesThePortBeforeAnsweringIsASuccess(self):
+        FakeSerial.behavior = answer(simcomTable(**{'AT+CRESET': 'ERROR\r\n', 'AT+CFUN=1,1': lambda fake: fake.unplug()}), echo=True)
+        modem = self.makeModem()
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        self.assertIsNone(modem.restart().result(3))
+        self.assertTrue(waitFor(lambda: len(FakeSerial.instances) == 2 and modem.state == ConnectionState.CONNECTED))
+
+    # manufacturer: (identity, restart commands of its profile)
+    RESTART_PROFILES = {
+        'huawei': ({'AT+CGMI': 'huawei\r\nOK\r\n', 'AT+CNMI=2,1,0,2': 'OK\r\n'}, ('AT^RESET', 'AT+CFUN=1,1')),
+        'quectel': ({'AT+CGMI': 'Quectel\r\nOK\r\n', 'AT+CNMI=2,1,0,1': 'OK\r\n'}, ('AT+QRST=1', 'AT+CFUN=1,1')),
+        'generic': ({'AT+CGMI': 'Acme\r\nOK\r\n', 'AT+CNMI=2,1,0,2': 'OK\r\n'}, ('AT+CFUN=1,1',)),
+    }
+
+    def restartTable(self, manufacturer: str, **overrides) -> dict:
+        identity, _ = self.RESTART_PROFILES[manufacturer]
+        modes = self.networkModeTable(manufacturer, self.NETWORK_MODES[manufacturer][2]) if manufacturer in self.NETWORK_MODES else {}
+        return {**identity, **modes, **overrides}
+
+    def connectedModem(self, table: dict) -> Modem:
+        FakeSerial.behavior = answer(simcomTable(**table), echo=True)
+        modem = self.makeModem()
+        modem.start()
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        return modem
+
+    def testRestartUsesTheStrongestCommandOfTheProfile(self):
+        for manufacturer, (_, commands) in self.RESTART_PROFILES.items():
+            with self.subTest(manufacturer):
+                FakeSerial.instances.clear()
+                modem = self.connectedModem(self.restartTable(manufacturer, **{commands[0]: self.restartsTheModem}))
+                self.assertEqual(modem.profile.restartCommands, commands)
+                self.assertIsNone(modem.restart().result(3))
+                self.assertTrue(waitFor(lambda: len(FakeSerial.instances) == 2 and modem.state == ConnectionState.CONNECTED))
+                sent = [c for c in FakeSerial.instances[0].commands() if c in ('AT+CRESET', 'AT^RESET', 'AT+QRST=1', 'AT+CFUN=1,1')]
+                self.assertEqual(sent, [commands[0]])
+                modem.stop()
+
+    def testRestartFallsBackOnCfunWhenTheVendorCommandIsRefused(self):
+        for manufacturer in ('huawei', 'quectel'):
+            with self.subTest(manufacturer):
+                FakeSerial.instances.clear()
+                commands = self.RESTART_PROFILES[manufacturer][1]
+                modem = self.connectedModem(self.restartTable(manufacturer, **{commands[0]: 'ERROR\r\n', 'AT+CFUN=1,1': self.restartsTheModem}))
+                modem.restart().result(3)
+                self.assertTrue(waitFor(lambda: len(FakeSerial.instances) == 2 and modem.state == ConnectionState.CONNECTED))
+                sent = [c for c in FakeSerial.instances[0].commands() if c in ('AT^RESET', 'AT+QRST=1', 'AT+CFUN=1,1')]
+                self.assertEqual(sent[-2:], list(commands))
+                modem.stop()
+
+    def testRestartOfAGenericModemThatRefusesCfunSaysSo(self):
+        modem = self.connectedModem(self.restartTable('generic', **{'AT+CFUN=1,1': 'ERROR\r\n'}))
+        with self.assertRaises(RestartRefusedError) as raised:
+            modem.restart().result(3)
+        self.assertEqual(raised.exception.commands, ('AT+CFUN=1,1',))
+        self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
 
     def testRestartIsRefusedWhenNotConnected(self):
         modem = self.makeModem()

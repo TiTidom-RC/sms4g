@@ -404,6 +404,26 @@ class sms4g extends eqLogic {
 			$cmd->setType('info');
 			$cmd->setSubType('numeric');
 			$cmd->setIsVisible(1);
+			$cmd->setConfiguration('minValue', -1);
+			$cmd->setConfiguration('maxValue', 31);
+			$cmd->setTemplate('dashboard', 'core::tile');
+			$cmd->setTemplate('mobile', 'core::tile');
+			$cmd->setOrder($orderCmd++);
+			$cmd->save();
+		} else {
+			$orderCmd++;
+		}
+
+		// signal_quality (info/string) : description du signal (excellent, bon, moyen, faible, aucun signal)
+		$cmd = $modem->getCmd(null, 'signal_quality');
+		if (!is_object($cmd)) {
+			$cmd = new sms4gCmd();
+			$cmd->setName(__('Qualité du signal', __FILE__));
+			$cmd->setEqLogic_id($modem->getId());
+			$cmd->setLogicalId('signal_quality');
+			$cmd->setType('info');
+			$cmd->setSubType('string');
+			$cmd->setIsVisible(1);
 			$cmd->setTemplate('dashboard', 'core::tile');
 			$cmd->setTemplate('mobile', 'core::tile');
 			$cmd->setOrder($orderCmd++);
@@ -465,6 +485,8 @@ class sms4g extends eqLogic {
 			$cmd->setIsHistorized(1);
 			// Chaque changement d'état est historisé, même à valeur identique (plusieurs tentatives de reconnexion)
 			$cmd->setConfiguration('repeatEventManagement', 'always');
+			$cmd->setConfiguration('minValue', 0);
+			$cmd->setConfiguration('maxValue', 4);
 			$cmd->setTemplate('dashboard', 'core::tile');
 			$cmd->setTemplate('mobile', 'core::tile');
 			$cmd->setOrder($orderCmd++);
@@ -589,6 +611,26 @@ class sms4g extends eqLogic {
 	}
 
 	/**
+	 * Qualité du signal en toutes lettres, à partir de la valeur CSQ (0 à 31, -1 si aucun signal) :
+	 * seuils usuels des fabricants de modems.
+	 */
+	public static function getSignalQuality($_csq) {
+		if ($_csq < 0 || $_csq > 31) {
+			return __('aucun signal', __FILE__);
+		}
+		if ($_csq >= 20) {
+			return __('excellent', __FILE__);
+		}
+		if ($_csq >= 15) {
+			return __('bon', __FILE__);
+		}
+		if ($_csq >= 10) {
+			return __('moyen', __FILE__);
+		}
+		return __('faible', __FILE__);
+	}
+
+	/**
 	 * Résumé de l'état du modem pour le bouton « Vérifier » de la page de configuration : connexion, enregistrement
 	 * sur le réseau et qualité du signal, à partir des commandes de l'équipement virtuel Modem (tenues à jour par le
 	 * démon : pas d'interrogation du modem).
@@ -626,24 +668,17 @@ class sms4g extends eqLogic {
 			$message = __('Modem non disponible pour le moment', __FILE__) . ' : ' . $connection;
 			return array('level' => 'warning', 'message' => $message, 'network' => array('status' => 'warn', 'label' => $connection), 'signal' => $signal);
 		}
-		// Signal : CSQ de 0 à 31, -113 dBm + 2 dBm par point (norme GSM) ; seuils usuels des fabricants de modems
+		// Signal : CSQ de 0 à 31, -113 dBm + 2 dBm par point (norme GSM)
 		$level = 'info';
 		if ($csq < 0 || $csq > 31) {
-			$signal = array('status' => 'warn', 'label' => __('Signal inconnu', __FILE__));
+			$signal = array('status' => 'warn', 'label' => __('Aucun signal', __FILE__));
 			$signalMessage = $signal['label'];
 			$level = 'warning';
 		} else {
-			if ($csq >= 20) {
-				$quality = __('excellent', __FILE__);
-			} elseif ($csq >= 15) {
-				$quality = __('bon', __FILE__);
-			} elseif ($csq >= 10) {
-				$quality = __('moyen', __FILE__);
-			} else {
-				$quality = __('faible', __FILE__);
-			}
-			$signalMessage = __('Signal', __FILE__) . ' : ' . $csq . '/31 (' . (-113 + 2 * $csq) . ' dBm, ' . $quality . ')';
-			$signal = array('status' => ($csq >= 10) ? 'ok' : 'warn', 'label' => $csq . '/31 (' . $quality . ')');
+			$quality = self::getSignalQuality($csq);
+			$detail = $csq . '/31 (' . (-113 + 2 * $csq) . ' dBm, ' . $quality . ')';
+			$signalMessage = __('Signal', __FILE__) . ' : ' . $detail;
+			$signal = array('status' => ($csq >= 10) ? 'ok' : 'warn', 'label' => $detail);
 			if ($csq < 10) {
 				$level = 'warning';
 			}
@@ -1185,6 +1220,8 @@ class sms4g extends eqLogic {
 	public static function onSignal($_modem, $_message, $_time) {
 		$value = isset($_message['value']) ? (int) $_message['value'] : -1;
 		$_modem->checkAndUpdateCmd('signal', $value, $_time);
+		$quality = self::getSignalQuality($value);
+		$_modem->checkAndUpdateCmd('signal_quality', mb_strtoupper(mb_substr($quality, 0, 1)) . mb_substr($quality, 1), $_time);
 	}
 
 	public static function onNetwork($_modem, $_message, $_time) {
@@ -1563,7 +1600,7 @@ class sms4gCmd extends cmd {
 		// commandes signal / connexion des équipements SMS se suppriment à la main)
 		$eqLogic = $this->getEqLogic();
 		if (is_object($eqLogic) && $eqLogic->getLogicalId() == 'modem') {
-			return in_array($this->getLogicalId(), array('signal', 'operator', 'connection', 'connection_state', 'online', 'at_status', 'at_response', 'at_command', 'restart_modem', 'self_test', 'self_test_result'));
+			return in_array($this->getLogicalId(), array('signal', 'signal_quality', 'operator', 'connection', 'connection_state', 'online', 'at_status', 'at_response', 'at_command', 'restart_modem', 'self_test', 'self_test_result'));
 		}
 		if (str_starts_with($this->getLogicalId(), 'delivery_status_') || str_starts_with($this->getLogicalId(), 'delivery_success_')) {
 			return true;

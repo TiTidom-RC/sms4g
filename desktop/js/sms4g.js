@@ -48,6 +48,14 @@ function addCmdToTable(_cmd) {
     ? '<a class="btn btn-default btn-xs cmdAction" data-action="configure"><i class="fas fa-cogs"></i></a> <a class="btn btn-default btn-xs cmdAction" data-action="test"><i class="fas fa-rss"></i> {{Tester}}</a>'
     : ''
 
+  const rangeInputs = _cmd.type == 'info' && _cmd.subType == 'numeric'
+    ? `<div style="margin-top:4px;">
+        <input class="tooltips cmdAttr form-control input-sm" data-l1key="configuration" data-l2key="minValue" placeholder="{{Min}}" title="{{Valeur minimum}}" style="width:30%;max-width:70px;display:inline-block;margin-right:2px;">
+        <input class="tooltips cmdAttr form-control input-sm" data-l1key="configuration" data-l2key="maxValue" placeholder="{{Max}}" title="{{Valeur maximum}}" style="width:30%;max-width:70px;display:inline-block;margin-right:2px;">
+        <input class="tooltips cmdAttr form-control input-sm" data-l1key="unite" placeholder="{{Unité}}" title="{{Unité}}" style="width:30%;max-width:70px;display:inline-block;">
+      </div>`
+    : ''
+
   const rowHtml = `<td>
       <input class="cmdAttr form-control input-sm" data-l1key="id" style="display : none;">
       <div class="input-group">
@@ -62,6 +70,7 @@ function addCmdToTable(_cmd) {
     <td>
       <label class="checkbox-inline"><input type="checkbox" class="cmdAttr" data-l1key="isVisible" checked/>{{Afficher}}</label>
       <label class="checkbox-inline"><input type="checkbox" class="cmdAttr" data-l1key="isHistorized" checked/>{{Historiser}}</label>
+      ${rangeInputs}
     </td>
     <td><span class="cmdAttr" data-l1key="htmlstate"></span></td>
     <td>

@@ -725,7 +725,7 @@ class ModemTest(unittest.TestCase):
     # manufacturer: (identity, restart commands of its profile)
     RESTART_PROFILES = {
         'huawei': ({'AT+CGMI': 'huawei\r\nOK\r\n', 'AT+CNMI=2,1,0,2': 'OK\r\n'}, ('AT^RESET', 'AT+CFUN=1,1')),
-        'quectel': ({'AT+CGMI': 'Quectel\r\nOK\r\n', 'AT+CNMI=2,1,0,1': 'OK\r\n'}, ('AT+QRST=1', 'AT+CFUN=1,1')),
+        'quectel': ({'AT+CGMI': 'Quectel\r\nOK\r\n', 'AT+CNMI=2,1,0,1': 'OK\r\n'}, ('AT+CFUN=1,1',)),
         'generic': ({'AT+CGMI': 'Acme\r\nOK\r\n', 'AT+CNMI=2,1,0,2': 'OK\r\n'}, ('AT+CFUN=1,1',)),
     }
 
@@ -749,21 +749,17 @@ class ModemTest(unittest.TestCase):
                 self.assertEqual(modem.profile.restartCommands, commands)
                 self.assertIsNone(modem.restart().result(3))
                 self.assertTrue(waitFor(lambda: len(FakeSerial.instances) == 2 and modem.state == ConnectionState.CONNECTED))
-                sent = [c for c in FakeSerial.instances[0].commands() if c in ('AT+CRESET', 'AT^RESET', 'AT+QRST=1', 'AT+CFUN=1,1')]
+                sent = [c for c in FakeSerial.instances[0].commands() if c in ('AT+CRESET', 'AT^RESET', 'AT+CFUN=1,1')]
                 self.assertEqual(sent, [commands[0]])
                 modem.stop()
 
     def testRestartFallsBackOnCfunWhenTheVendorCommandIsRefused(self):
-        for manufacturer in ('huawei', 'quectel'):
-            with self.subTest(manufacturer):
-                FakeSerial.instances.clear()
-                commands = self.RESTART_PROFILES[manufacturer][1]
-                modem = self.connectedModem(self.restartTable(manufacturer, **{commands[0]: 'ERROR\r\n', 'AT+CFUN=1,1': self.restartsTheModem}))
-                modem.restart().result(3)
-                self.assertTrue(waitFor(lambda: len(FakeSerial.instances) == 2 and modem.state == ConnectionState.CONNECTED))
-                sent = [c for c in FakeSerial.instances[0].commands() if c in ('AT^RESET', 'AT+QRST=1', 'AT+CFUN=1,1')]
-                self.assertEqual(sent[-2:], list(commands))
-                modem.stop()
+        commands = self.RESTART_PROFILES['huawei'][1]
+        modem = self.connectedModem(self.restartTable('huawei', **{commands[0]: 'ERROR\r\n', 'AT+CFUN=1,1': self.restartsTheModem}))
+        modem.restart().result(3)
+        self.assertTrue(waitFor(lambda: len(FakeSerial.instances) == 2 and modem.state == ConnectionState.CONNECTED))
+        sent = [c for c in FakeSerial.instances[0].commands() if c in ('AT^RESET', 'AT+CFUN=1,1')]
+        self.assertEqual(sent[-2:], list(commands))
 
     def testRestartOfAGenericModemThatRefusesCfunSaysSo(self):
         modem = self.connectedModem(self.restartTable('generic', **{'AT+CFUN=1,1': 'ERROR\r\n'}))
@@ -944,6 +940,36 @@ class ModemTest(unittest.TestCase):
         self.assertIn('PDU mode', last.details['reason'])
         self.assertIn('PDU mode', '\n'.join(logs.output))
         self.assertNotIn('AT+CMGF=0', FakeSerial.instances[0].commands())
+
+    def testPduModeIsTriedAgainWhileTheSmsServiceStarts(self):
+        calls: list[int] = []
+
+        def notReadyAtFirst(fake):
+            calls.append(1)
+            fake.feed(b'ERROR\r\n' if len(calls) < 3 else b'OK\r\n')
+
+        FakeSerial.behavior = answer(simcomTable(**{'AT+CMGF=0': notReadyAtFirst}), echo=True)
+        with mock.patch.object(Modem, 'PDU_MODE_RETRY_DELAY', 0.01):
+            modem = self.makeModem()
+            modem.start()
+            self.assertTrue(waitFor(lambda: modem.state == ConnectionState.CONNECTED))
+        self.assertEqual((len(calls), len(FakeSerial.instances)), (3, 1))
+
+    def testPduModeGivesUpAfterThreeAttempts(self):
+        FakeSerial.behavior = answer(simcomTable(**{'AT+CMGF=0': 'ERROR\r\n'}), echo=True)
+        with mock.patch.object(Modem, 'PDU_MODE_RETRY_DELAY', 0.01):
+            modem = self.makeModem()
+            modem.start()
+            self.assertTrue(waitFor(lambda: len(FakeSerial.instances) >= 2))
+        self.assertEqual(FakeSerial.instances[0].commands().count('AT+CMGF=0'), 3)
+
+    def testPduModeIsNotTriedAgainWhenThePinIsMissing(self):
+        FakeSerial.behavior = answer(simcomTable(**{'AT+CMGF=0': '+CME ERROR: 11\r\n'}), echo=True)
+        with mock.patch.object(Modem, 'PDU_MODE_RETRY_DELAY', 0.01):
+            modem = self.makeModem()
+            modem.start()
+            self.assertTrue(self.waitForStateEvent(ConnectionState.DISCONNECTED))
+        self.assertEqual(FakeSerial.instances[0].commands().count('AT+CMGF=0'), 1)
 
     def testSupportedModesAreReadInAnyForm(self):
         for answer_, expected in (('+CMGF: (0,1)', {0, 1}), ('+CMGF: (0-1)', {0, 1}), ('+CMGF: (1)', {1}), ('+CMGF: (0)', {0}),

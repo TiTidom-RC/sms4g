@@ -58,6 +58,7 @@
         "Veuillez vérifier la configuration": "Please check the configuration",
         "auto-test": "self-test",
         "bon": "okay",
+        "ce modem n\\'accepte aucune commande de redémarrage": "This modem does not accept any restart commands",
         "excellent": "excellent",
         "faible": "low",
         "intervention nécessaire": "service required",

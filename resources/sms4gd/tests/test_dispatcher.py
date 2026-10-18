@@ -318,9 +318,9 @@ class DispatcherTest(unittest.TestCase):
     def testRestartRefusedByEveryCommandNamesThemAll(self):
         with self.assertLogs('dispatcher', level='WARNING'):
             self.dispatch(cmd='restartModem')
-            self.modem.restartFuture.set_exception(RestartRefusedError(('AT+QRST=1', 'AT+CFUN=1,1')))
+            self.modem.restartFuture.set_exception(RestartRefusedError(('AT+CRESET', 'AT+CFUN=1,1')))
         self.assertEqual(self.out.events, [{'type': 'restartResult', 'status': 'refused',
-                                            'reason': 'the modem has no working restart command (AT+QRST=1, AT+CFUN=1,1)'}])
+                                            'reason': 'the modem has no working restart command (AT+CRESET, AT+CFUN=1,1)'}])
 
     def testRestartAndSelfTestDoNotNeedTheDiagnosticMode(self):
         self.dispatcher = Dispatcher(self.messages, self.modem, self.out, 'KEY', diagnostic=False)

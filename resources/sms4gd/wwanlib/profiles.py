@@ -73,7 +73,7 @@ QUECTEL = Profile(
     networkMode=NetworkMode(
         'AT+QCFG="nwscanmode"', re.compile(r'^\+QCFG: "nwscanmode",3\b'),
         'AT+QCFG="nwscanmode",3,1', 'AT+QCFG="nwscanmode",0,1'),
-    restartCommands=('AT+QRST=1', 'AT+CFUN=1,1'),
+    restartCommands=('AT+CFUN=1,1',),
     diagnosticCommands=('AT+QNWINFO', 'AT+QCSQ', 'AT+QCFG="nwscanmode"', 'AT+QINISTAT', 'AT+QURCCFG="urcport"',
                         'AT+QCFG="servicedomain"'),
 )

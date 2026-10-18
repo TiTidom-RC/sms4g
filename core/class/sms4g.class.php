@@ -676,8 +676,9 @@ class sms4g extends eqLogic {
 			$level = 'warning';
 		} else {
 			$quality = self::getSignalQuality($csq);
-			$signalMessage = __('Signal', __FILE__) . ' : ' . $csq . '/31 (' . (-113 + 2 * $csq) . ' dBm, ' . $quality . ')';
-			$signal = array('status' => ($csq >= 10) ? 'ok' : 'warn', 'label' => $csq . '/31 (' . $quality . ')');
+			$detail = $csq . '/31 (' . (-113 + 2 * $csq) . ' dBm, ' . $quality . ')';
+			$signalMessage = __('Signal', __FILE__) . ' : ' . $detail;
+			$signal = array('status' => ($csq >= 10) ? 'ok' : 'warn', 'label' => $detail);
 			if ($csq < 10) {
 				$level = 'warning';
 			}

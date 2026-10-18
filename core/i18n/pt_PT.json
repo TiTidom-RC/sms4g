@@ -6,6 +6,7 @@
         "Échec de la désactivation de ModemManager — consultez les logs sms4g": "Falha ao desativar o ModemManager — consulte os registos do sms4g"
     },
     "plugins\/sms4g\/core\/class\/sms4g.class.php": {
+        "Aucun signal": "Sem sinal",
         "Auto-test": "Autoteste",
         "Auto-test SMS": "Autoteste por SMS",
         "Commande AT": "Comando AT",
@@ -39,6 +40,7 @@
         "Numéro": "Número",
         "OK": "OK",
         "Opérateur": "Operador",
+        "Qualité du signal": "Qualidade do sinal",
         "Recherche d\\'un opérateur": "Procura de um operador",
         "Recherche opérateur": "Pesquisa de operador",
         "Reconnexion": "Reconexão",
@@ -52,10 +54,10 @@
         "Réponse AT": "Resposta AT",
         "Réseau": "Rede",
         "Signal": "Sinal",
-        "Signal inconnu": "Sinal desconhecido",
         "Statut": "Estado",
         "Statut AT": "Estatuto AT",
         "Veuillez vérifier la configuration": "Por favor, verifique a configuração",
+        "aucun signal": "sem sinal",
         "auto-test": "autoteste",
         "bon": "bom",
         "ce modem n\\'accepte aucune commande de redémarrage": "Este modem não aceita nenhum comando de reinicialização",
@@ -87,9 +89,14 @@
         "Afficher": "Mostrar",
         "Choisir une icône": "Escolher um ícone",
         "Historiser": "Registar no histórico",
+        "Max": "Max",
+        "Min": "Mín.",
         "Nom de la commande": "Nome do comando",
         "Supprimer la commande": "Eliminar o pedido",
-        "Tester": "Testar"
+        "Tester": "Testar",
+        "Unité": "Unidade",
+        "Valeur maximum": "Valor máximo",
+        "Valeur minimum": "Valor mínimo"
     },
     "plugins\/sms4g\/desktop\/php\/sms4g.php": {
         "401 - Accès non autorisé": "401 - Acesso não autorizado",

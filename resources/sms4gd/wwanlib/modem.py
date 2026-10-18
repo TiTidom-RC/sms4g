@@ -89,6 +89,8 @@ class Modem:
     MIN_MONITOR_INTERVAL = 5.0  # seconds
     RESTART_TIMEOUT = 60.0  # seconds after which a modem that is still connected is taken for not restarted
     RESTART_WAIT = 30.0  # seconds the self-test waits to know whether the modem accepted a restart command
+    PDU_MODE_ATTEMPTS = 3  # AT+CMGF=0 (PDU mode) is sometimes refused right after the SIM was unlocked: tried again
+    PDU_MODE_RETRY_DELAY = 1.0  # seconds between two attempts
 
     def __init__(self, port: str, baudrate: int = 115200, pin: str | None = None, options: ModemOptions | None = None):
         self.port = port
@@ -573,11 +575,10 @@ class Modem:
             with session.lock:
                 session.reinitializing = False
 
-    @staticmethod
-    def _setupSmsFormat(run: Callable[..., list[str]]) -> None:
+    def _setupSmsFormat(self, run: Callable[..., list[str]]) -> None:
         """ SMS are always handled in PDU mode (DEC-36). A modem that says it does not offer it cannot be used: the
         connection stops with a clear reason instead of failing at the first SMS. An answer that cannot be read is
-        no obstacle: AT+CMGF=0 tells. """
+        no obstacle: AT+CMGF=0 tells. A refusal is tried again a few times: the SMS service may still be starting. """
         try:
             answer = lineStartingWith('+CMGF', run('AT+CMGF=?'))
         except CommandError:
@@ -585,7 +586,15 @@ class Modem:
         modes = Modem._supportedModes(answer) if answer else None
         if modes is not None and 0 not in modes:
             raise PduModeNotSupportedError(f'The modem does not offer the SMS PDU mode ({answer})')
-        run('AT+CMGF=0')
+        for attempt in range(1, self.PDU_MODE_ATTEMPTS + 1):
+            try:
+                run('AT+CMGF=0')
+                return
+            except CommandError as e:
+                if self._isFatal(e) or attempt == self.PDU_MODE_ATTEMPTS or self._smsStop.wait(self.PDU_MODE_RETRY_DELAY):
+                    raise
+                log.info('AT+CMGF=0 refused by the modem%s, trying again (%d/%d)',
+                         f' ({e})' if e.code is not None else '', attempt, self.PDU_MODE_ATTEMPTS)
 
     @staticmethod
     def _supportedModes(answer: str) -> set[int] | None:

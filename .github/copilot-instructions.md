@@ -15,6 +15,10 @@
 - **OS dev** : Windows 11 + VS Code, terminal **PowerShell uniquement** (jamais de commandes bash/Linux).
 - **OS cible** : Debian **12 (Bookworm) minimum** (via Jeedom), chaîne `pyenv` + `venv` réutilisée de TVRemote/TTSCast (`resources/install_apt.sh`, Python 3.12.14 pinné, venv dans `resources/venv`).
 
+## Workflow Git
+
+- **Commits** : faits exclusivement par l'utilisateur via GitHub Desktop. Ne jamais commiter, pousser ni ouvrir de PR, et ne pas le proposer en fin de tâche : lister simplement les fichiers modifiés.
+
 ## Conventions de code
 
 - Code (variables, clés JSON/config, logicalId) : anglais + camelCase, sauf conventions héritées du Core Jeedom (snake_case toléré, ex. `deamon_start`).

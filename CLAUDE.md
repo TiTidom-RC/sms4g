@@ -1,5 +1,3 @@
-<!-- Créé avec l'assistance de l'IA (Claude Code) -->
-
 # SMS 4G — Instructions Claude Code
 
 ## Règle bloquante — Discussion et validation avant implémentation
@@ -110,7 +108,3 @@ Le workspace contient, à côté de ce dépôt, des dépôts voisins directement
 - Doc utilisateur : `../Documentation/fr_FR/sms4g/index.md`
 - Toujours rédigés pour utilisateurs finaux (pas de jargon technique), voir les instructions du repo `Documentation` pour le format exact (préfixes `[NEW]`/`[UPDATE]`/`[FIX]`/`[SECURITY]`, groupement par thème).
 - Après une évolution fonctionnelle, mettre à jour le changelog beta (et la doc si besoin) directement dans `../Documentation`, sur sa branche `beta` ; commits séparés de ceux de `sms4g`.
-
-## Règle transverse
-
-- Ajouter la mention « Créé avec l'assistance de l'IA » dans les métadonnées des documents ou en commentaire d'en-tête de tout **nouveau** fichier/programme créé.

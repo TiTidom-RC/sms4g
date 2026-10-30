@@ -1,5 +1,3 @@
-<!-- Créé avec l'assistance de l'IA (Claude Code) -->
-
 # SMS 4G — Instructions Claude Code
 
 ## Règle bloquante — Discussion et validation avant implémentation
@@ -61,7 +59,7 @@ Le workspace contient, à côté de ce dépôt, des dépôts voisins directement
   - Python : `ruff check resources/sms4gd/` (config [ruff.toml](ruff.toml), `py312`, règles `E`/`F`).
   - JS : `node --check` sur tous les `.js`.
 - Traductions : générées automatiquement (workflow `translations.yml` sur push `beta`, DeepL) → **ne jamais éditer à la main** `core/i18n/*.json` ni les descriptions traduites de `plugin_info/info.json` ; seul le `fr_FR` est rédigé manuellement.
-- **Commits** : faits exclusivement par l'utilisateur via GitHub Desktop, dans ce dépôt comme dans `../Documentation`. Ne jamais commiter, pousser ni ouvrir de PR, et ne pas le proposer en fin de tâche : lister simplement les fichiers modifiés.
+- **Commits** : faits exclusivement par l'utilisateur via GitHub Desktop, dans ce dépôt comme dans `../Documentation`. Ne jamais commiter, pousser ni ouvrir de PR soi-même. En fin de tâche, lister les fichiers modifiés. Quand c'est utile pour garder des commits propres et séparés (par exemple avant d'enchaîner sur une autre tâche), signaler que c'est le bon moment pour committer, en précisant le périmètre du commit.
 - Messages de commit (si l'utilisateur demande une proposition de message) : anglais, courts, à l'impératif (ex. `Restrict sms4g API mode to localhost`).
 
 ## Conventions de code
@@ -110,7 +108,3 @@ Le workspace contient, à côté de ce dépôt, des dépôts voisins directement
 - Doc utilisateur : `../Documentation/fr_FR/sms4g/index.md`
 - Toujours rédigés pour utilisateurs finaux (pas de jargon technique), voir les instructions du repo `Documentation` pour le format exact (préfixes `[NEW]`/`[UPDATE]`/`[FIX]`/`[SECURITY]`, groupement par thème).
 - Après une évolution fonctionnelle, mettre à jour le changelog beta (et la doc si besoin) directement dans `../Documentation`, sur sa branche `beta` ; commits séparés de ceux de `sms4g`.
-
-## Règle transverse
-
-- Ajouter la mention « Créé avec l'assistance de l'IA » dans les métadonnées des documents ou en commentaire d'en-tête de tout **nouveau** fichier/programme créé.

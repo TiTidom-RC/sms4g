@@ -399,9 +399,10 @@ class ModemTest(unittest.TestCase):
     NETWORK_MODES = {
         # manufacturer: (identity, query command, answer in automatic mode, answer in LTE only, LTE only command, automatic command)
         'simcom': ({}, 'AT+CNMP?', '+CNMP: 2', '+CNMP: 38', 'AT+CNMP=38', 'AT+CNMP=2'),
+        # Answers as read on an E3372s-153 (no space after the colon, 5 fields, its own LTE bands)
         'huawei': ({'AT+CGMI': 'huawei\r\nOK\r\n', 'AT+CNMI=2,1,0,2': 'OK\r\n'}, 'AT^SYSCFGEX?',
-                   '^SYSCFGEX: "00",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,', '^SYSCFGEX: "03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,',
-                   'AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF', 'AT^SYSCFGEX="00",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF'),
+                   '^SYSCFGEX:"00",3FFFFFFF,1,2,800C5', '^SYSCFGEX:"03",3FFFFFFF,1,2,800C5',
+                   'AT^SYSCFGEX="03",40000000,2,4,40000000,,', 'AT^SYSCFGEX="00",40000000,2,4,40000000,,'),
         'quectel': ({'AT+CGMI': 'Quectel\r\nOK\r\n', 'AT+CNMI=2,1,0,1': 'OK\r\n'}, 'AT+QCFG="nwscanmode"',
                     '+QCFG: "nwscanmode",0', '+QCFG: "nwscanmode",3', 'AT+QCFG="nwscanmode",3,1', 'AT+QCFG="nwscanmode",0,1'),
     }
@@ -483,7 +484,7 @@ class ModemTest(unittest.TestCase):
 
     def srTable(self, srAnswer: str, **extra) -> dict:
         """ A Huawei (<ds>=2 first) whose SR memory answers ``srAnswer`` """
-        return {**self.networkModeTable('huawei', '^SYSCFGEX: "00",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,'), 'AT+CPMS="SR"': srAnswer, **extra}
+        return {**self.networkModeTable('huawei', '^SYSCFGEX:"00",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF'), 'AT+CPMS="SR"': srAnswer, **extra}
 
     def testDeliveryReportsAreAskedStraightWhenTheSrMemoryHasNoRoom(self):
         table = self.srTable('+CPMS: 0,0,0,23,0,23\r\nOK\r\n', **{'AT+CNMI=2,1,0,1': 'OK\r\n'})  # SR 0/0
@@ -530,19 +531,43 @@ class ModemTest(unittest.TestCase):
                          ['AT+CNMI=2,1,0,2', 'AT+CNMI=2,1,0,1', 'AT+CNMI=1,1,0,2', 'AT+CNMI=1,1,0,1'])
 
     def testHuaweiPreferredModeIsNotLteOnly(self):
-        preferred = '^SYSCFGEX: "0302",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,'  # LTE then 3G: the 3G fallback stays
+        preferred = '^SYSCFGEX:"0302",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF'  # LTE then 3G: the 3G fallback stays
         table = self.networkModeTable('huawei', preferred)
         commands = self.connectWithNetworkMode(False, **table)
         self.assertFalse([c for c in commands if c.startswith('AT^SYSCFGEX=')])  # left alone
         commands = self.connectWithNetworkMode(True, **table)
-        self.assertIn('AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF', commands)
+        self.assertIn('AT^SYSCFGEX="03",40000000,2,4,40000000,,', commands)
+
+    def testHuaweiLteOnlyIsReadWithOrWithoutASpace(self):
+        for line in ('^SYSCFGEX:"03",3FFFFFFF,1,2,800C5', '^SYSCFGEX: "03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF'):
+            self.assertTrue(HUAWEI.networkMode.lteOnly.match(line), line)
+        for line in ('^SYSCFGEX:"00",3FFFFFFF,1,2,800C5', '^SYSCFGEX:"0302",3FFFFFFF,1,2,800C5'):
+            self.assertFalse(HUAWEI.networkMode.lteOnly.match(line), line)
+
+    def testHuaweiCommandsHaveTheSevenFieldsOfTheSyntax(self):
+        for command in (*HUAWEI.networkMode.lteOnlyCommands, *HUAWEI.networkMode.autoCommands):
+            self.assertEqual(len(command.split(',')), 7, command)
+
+    def testNextNetworkModeCommandIsTriedWhenTheFirstIsRefused(self):
+        for wanted, current, first, second in (
+                (True, self.NETWORK_MODES['huawei'][2],
+                 'AT^SYSCFGEX="03",40000000,2,4,40000000,,', 'AT^SYSCFGEX="03",3FFFFFFF,2,4,7FFFFFFFFFFFFFFF,,'),
+                (False, self.NETWORK_MODES['huawei'][3],
+                 'AT^SYSCFGEX="00",40000000,2,4,40000000,,', 'AT^SYSCFGEX="00",3FFFFFFF,2,4,7FFFFFFFFFFFFFFF,,')):
+            with self.subTest(wanted=wanted):
+                table = {**self.networkModeTable('huawei', current), first: '+CME ERROR: 50\r\n', second: 'OK\r\n'}
+                with self.assertLogs('wwanlib', level='INFO') as logs:
+                    commands = self.connectWithNetworkMode(wanted, **table)
+                self.assertEqual([c for c in commands if c.startswith('AT^SYSCFGEX="')], [first, second])
+                self.assertIn(f'({second})', '\n'.join(logs.output))
+                self.assertNotIn('Failed to set', '\n'.join(logs.output))
 
     def testUnsupportedNetworkModeCommandKeepsTheConnection(self):
         table = {**self.NETWORK_MODES['huawei'][0], 'AT^SYSCFGEX?': 'COMMAND NOT SUPPORT\r\n',
-                 'AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF': 'COMMAND NOT SUPPORT\r\n'}
+                 **{command: 'COMMAND NOT SUPPORT\r\n' for command in HUAWEI.networkMode.lteOnlyCommands}}
         with self.assertLogs('wwanlib', level='WARNING') as logs:  # LTE only asked: the old key is told
             commands = self.connectWithNetworkMode(True, **table)
-        self.assertIn('AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF', commands)
+        self.assertEqual([c for c in commands if c.startswith('AT^SYSCFGEX="')], list(HUAWEI.networkMode.lteOnlyCommands))
         self.assertIn('Failed to set the network mode', '\n'.join(logs.output))
         with self.assertNoLogs('wwanlib', level='WARNING'):  # nothing asked: nothing to tell
             commands = self.connectWithNetworkMode(False, **table)
@@ -553,7 +578,7 @@ class ModemTest(unittest.TestCase):
 
         def run(command, **kwargs):
             if command == HUAWEI.networkMode.query:
-                return ['^SYSCFGEX: "00",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,', 'OK']
+                return ['^SYSCFGEX:"00",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF', 'OK']
             raise NotConnectedError('port lost')
 
         with self.assertLogs('wwanlib', level='WARNING') as logs:

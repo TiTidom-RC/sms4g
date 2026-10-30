@@ -551,9 +551,9 @@ class ModemTest(unittest.TestCase):
     def testNextNetworkModeCommandIsTriedWhenTheFirstIsRefused(self):
         for wanted, current, first, second in (
                 (True, self.NETWORK_MODES['huawei'][2],
-                 'AT^SYSCFGEX="03",40000000,2,4,40000000,,', 'AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,'),
+                 'AT^SYSCFGEX="03",40000000,2,4,40000000,,', 'AT^SYSCFGEX="03",3FFFFFFF,2,4,7FFFFFFFFFFFFFFF,,'),
                 (False, self.NETWORK_MODES['huawei'][3],
-                 'AT^SYSCFGEX="00",40000000,2,4,40000000,,', 'AT^SYSCFGEX="00",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,')):
+                 'AT^SYSCFGEX="00",40000000,2,4,40000000,,', 'AT^SYSCFGEX="00",3FFFFFFF,2,4,7FFFFFFFFFFFFFFF,,')):
             with self.subTest(wanted=wanted):
                 table = {**self.networkModeTable('huawei', current), first: '+CME ERROR: 50\r\n', second: 'OK\r\n'}
                 with self.assertLogs('wwanlib', level='INFO') as logs:

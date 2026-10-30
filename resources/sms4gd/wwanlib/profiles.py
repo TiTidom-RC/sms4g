@@ -54,16 +54,16 @@ SIMCOM = Profile(
 )
 
 # E3372 in "stick" (AT) mode. ^SYSCFGEX=<acqorder>,<band>,<roam>,<srvdomain>,<lteband>,<reserve1>,<reserve2>: "03" = LTE only,
-# "00" = automatic. 40000000,2,4,40000000 leaves the bands, the roaming and the domain as they are; the explicit values come
-# second for a firmware that refuses them (not verified on a modem yet). The E3372 answers ^SYSCFGEX:"00" without a space.
+# "00" = automatic. 40000000,2,4,40000000 leaves the bands, the roaming and the domain as they are; explicit bands come second
+# for a firmware that refuses 40000000 (not verified on a modem yet). The E3372 answers ^SYSCFGEX:"00" without a space.
 HUAWEI = Profile(
     name='huawei',
     cnmiCandidates=('2,1,0,2', '2,1,0,1'),
     urcPrefixes=('^RSSI', '^BOOT', '^MODE', '^HCSQ', '^SIMST', '^SRVST', '^STIN', '^DSFLOWRPT'),
     networkMode=NetworkMode(
         'AT^SYSCFGEX?', re.compile(r'^\^SYSCFGEX:\s*"03"'),
-        ('AT^SYSCFGEX="03",40000000,2,4,40000000,,', 'AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,'),
-        ('AT^SYSCFGEX="00",40000000,2,4,40000000,,', 'AT^SYSCFGEX="00",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,')),
+        ('AT^SYSCFGEX="03",40000000,2,4,40000000,,', 'AT^SYSCFGEX="03",3FFFFFFF,2,4,7FFFFFFFFFFFFFFF,,'),
+        ('AT^SYSCFGEX="00",40000000,2,4,40000000,,', 'AT^SYSCFGEX="00",3FFFFFFF,2,4,7FFFFFFFFFFFFFFF,,')),
     restartCommands=('AT^RESET', 'AT+CFUN=1,1'),
     diagnosticCommands=('AT^SYSCFGEX?', 'AT^SYSINFOEX', 'AT^GETPORTMODE'),
 )

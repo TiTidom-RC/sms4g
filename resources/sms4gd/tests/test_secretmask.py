@@ -52,7 +52,8 @@ class PhoneNumberTest(unittest.TestCase):
                 'SMS to 0377XXXX55 sent',
                 'Self-test every : 4.0 h (0 = none), pause 0.123456789 s',
                 "response: ['+CPMS: 0,23,0,23,0,23', 'OK']",
-                'write: AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF'):
+                'write: AT^SYSCFGEX="03",40000000,2,4,40000000,,',
+                'write: AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,'):
             self.assertEqual(masked(line), line)
 
     def testTheSmsCenterStaysReadableInTheConnectionDiagnostic(self):

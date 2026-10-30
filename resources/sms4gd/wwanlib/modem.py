@@ -501,14 +501,23 @@ class Modem:
             isLteOnly = None if lines is None else any(mode.lteOnly.match(line) for line in lines)
             log.debug('Network mode read (%s): %s, LTE only: %s, LTE only asked: %s', mode.query, lines, isLteOnly, force)
             if force and not isLteOnly:
-                command, wantLteOnly = mode.lteOnlyCommand, True
+                commands, wantLteOnly = mode.lteOnlyCommands, True
             elif not force and isLteOnly:
-                command, wantLteOnly = mode.autoCommand, False
+                commands, wantLteOnly = mode.autoCommands, False
             else:
                 if force:
                     log.info('LTE-only network mode already active')
                 return
-            run(command, timeout=30.0)
+            error: CommandError | None = None
+            for command in commands:
+                try:
+                    run(command, timeout=30.0)
+                    break
+                except CommandError as e:
+                    error = e
+            else:
+                log.error('Failed to set the network mode: %s', error)
+                return
             log.info('Network mode set to %s (%s)', 'LTE only' if wantLteOnly else 'automatic', command)
             if lines is not None:
                 try:

@@ -125,7 +125,7 @@ REFUSED = [
     ('AT+CMGR=0', 'not allowed'),
     ('AT+CSQ=1', 'not allowed'),
     ('ATV1', 'not allowed'),
-    ('AT^SYSCFGEX="03",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF', 'not allowed'),  # the plugin sets the network mode itself
+    ('AT^SYSCFGEX="03",40000000,2,4,40000000,,', 'not allowed'),  # the plugin sets the network mode itself
     ('AT+QCFG="nwscanmode",3,1', 'not allowed'),
     ('AT+QCFG="usbnet"', 'not allowed'),  # only the listed items are read
     ('AT+QCFG="usbnet",1', 'not allowed'),
@@ -191,7 +191,7 @@ class AtFilterTest(unittest.TestCase):
             mode = profile.networkMode
             assert mode is not None, profile.name
             self.assertTrue(checkAtCommand(mode.query).allowed, profile.name)
-            for command in (mode.lteOnlyCommand, mode.autoCommand):
+            for command in (*mode.lteOnlyCommands, *mode.autoCommands):
                 self.assertFalse(checkAtCommand(command).allowed, f'{profile.name}: {command}')
 
     def testLongestAllowedCommand(self):

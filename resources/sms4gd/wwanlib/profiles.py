@@ -53,7 +53,7 @@ SIMCOM = Profile(
     networkMode=NetworkMode('AT+CNMP?', re.compile(r'^\+CNMP: 38\b'), ('AT+CNMP=38',), ('AT+CNMP=2',)),
     restartCommands=('AT+CRESET', 'AT+CFUN=1,1'),
     diagnosticCommands=('AT+CPSI?',),
-    smsServiceCommand='AT+CSMS=1',  # ESSAI : le logiciel acquitte lui-même les accusés
+    # smsServiceCommand='AT+CSMS=1',  # ESSAI : désactivé pour tester CSMS=0 avec AT+CNMA après chaque +CDS
 )
 
 # E3372 in "stick" (AT) mode. ^SYSCFGEX=<acqorder>,<band>,<roam>,<srvdomain>,<lteband>,<reserve1>,<reserve2>: "03" = LTE only,

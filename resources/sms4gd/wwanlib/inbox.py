@@ -194,7 +194,7 @@ class Inbox:
                 self.fetch(match.group(1), int(match.group(2)))
             elif CDS.match(line) and position + 1 < len(lines) and HEX_LINE.match(lines[position + 1]):
                 self._handlePdu(lines[position + 1], None)
-                # self._submit(Transaction([Step('AT+CNMA')], Priority.NETWORK_ACK))  # ESSAI
+                self._submit(Transaction([Step('AT+CNMA')], Priority.NETWORK_ACK))  # ESSAI
 
     def catchUp(self) -> None:
         """ Reads every SMS stored in the memory (received while nobody was listening, or whose notification was

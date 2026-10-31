@@ -35,6 +35,8 @@ class Profile:
     restartCommands: tuple[str, ...] = ('AT+CFUN=1,1',)
     # Commands the daemon runs for the diagnostic logged at each connection
     diagnosticCommands: tuple[str, ...] = ()
+    # Command sent after each +CDS, None when the modem does not need one
+    reportAckCommand: str | None = None
 
 
 # Mode 2 (notifications kept while the port is busy), then mode 1 (dropped meanwhile) for a firmware that refuses mode 2.
@@ -45,12 +47,14 @@ GENERIC = Profile(name='generic', cnmiCandidates=('2,1,0,2', '2,1,0,1', '1,1,0,2
 # SimCom (SIM7600...): <ds>=1 (direct +CDS) avoids the SR-memory read bug of some firmwares but may be
 # rejected for a given <mode>,<mt>,<bm> combination, hence the cascade down to the <ds>=2 known to work.
 # The last set (4 parameters, validated on the BG96) was never tried on a SimCom: the 5-parameter form is refused.
+# Without AT+CNMA after each +CDS, the delivery reports stop at the 31st on the SIM7600G-H (LE20B04SIM7600G22), although it answers CMS 500.
 SIMCOM = Profile(
     name='simcom',
     cnmiCandidates=('1,1,0,1', '0,1,0,1', '2,1,2,1', '2,1,0,2', '2,1,0,1'),
     networkMode=NetworkMode('AT+CNMP?', re.compile(r'^\+CNMP: 38\b'), ('AT+CNMP=38',), ('AT+CNMP=2',)),
     restartCommands=('AT+CRESET', 'AT+CFUN=1,1'),
     diagnosticCommands=('AT+CPSI?',),
+    reportAckCommand='AT+CNMA',
 )
 
 # E3372 in "stick" (AT) mode. ^SYSCFGEX=<acqorder>,<band>,<roam>,<srvdomain>,<lteband>,<reserve1>,<reserve2>: "03" = LTE only,

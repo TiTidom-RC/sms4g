@@ -38,6 +38,7 @@ log = logging.getLogger(__name__)
 CMTI = re.compile(r'^\+CMTI:\s*"?(\w+)"?\s*,\s*(\d+)')
 CDSI = re.compile(r'^\+CDSI:\s*"?(\w+)"?\s*,\s*(\d+)')  # a delivery report kept in the SR memory
 CDS = re.compile(r'^\+CDS:\s*\d+$')  # a delivery report, its PDU is on the next line
+REPORT_ACK_ANSWERS = frozenset({340, 500})
 CMGL_HEADER = re.compile(r'^\+CMGL:\s*(\d+)\s*,\s*(\d+)')
 CMGR_HEADER = re.compile(r'^\+CMGR:')
 CPMS_USAGE = re.compile(r'^\+CPMS:\s*"?\w+"?\s*,\s*(\d+)\s*,\s*(\d+)')
@@ -160,14 +161,16 @@ class Reassembler:
 class Inbox:
     def __init__(self, submit: Callable[[Transaction], Future], publish: Callable[[Any], None],
                  readMemory: Callable[[], str | None], reassembler: Reassembler | None = None,
-                 receipts: ReceiptTracker | None = None):
+                 receipts: ReceiptTracker | None = None, reportAck: Callable[[], str | None] | None = None):
         """ :param submit: submits a transaction to the Executor of the current connection (a failed Future with
             ``NotConnectedError`` when there is none)
         :param publish: receives the events (``SmsReceived``, ``SmsIncomplete``)
         :param readMemory: name of the memory selected for reading and deleting (None if unknown): a notification
             about another memory makes the transaction select it first (and select the usual one back)
-        :param receipts: follows the delivery reports (None: they are not asked, a report that comes is ignored) """
+        :param receipts: follows the delivery reports (None: they are not asked, a report that comes is ignored)
+        :param reportAck: gives the command to send after a ``+CDS`` on the current modem (None: nothing to send) """
         self._receipts = receipts
+        self._reportAck = reportAck
         self._submit = submit
         self._publish = publish
         self._readMemory = readMemory
@@ -194,6 +197,25 @@ class Inbox:
                 self.fetch(match.group(1), int(match.group(2)))
             elif CDS.match(line) and position + 1 < len(lines) and HEX_LINE.match(lines[position + 1]):
                 self._handlePdu(lines[position + 1], None)
+                self._acknowledgeReport()
+
+    def _acknowledgeReport(self) -> None:
+        command = self._reportAck() if self._reportAck is not None else None
+        if command:
+            self._submit(Transaction([Step(command)], Priority.NETWORK_ACK)).add_done_callback(self._reportAcknowledged)
+
+    @staticmethod
+    def _reportAcknowledged(future: Future) -> None:
+        """ The expected answers are errors on the modems tested: CMS 500 in AT+CSMS=0, CMS 340 in AT+CSMS=1 """
+        try:
+            error = future.exception()
+        except CancelledError:
+            return
+        if error is None or isinstance(error, NotConnectedError):
+            return
+        if isinstance(error, CmsError) and error.code in REPORT_ACK_ANSWERS:
+            return
+        log.warning('Unexpected answer to the acknowledgement of a delivery report: %s', error)
 
     def catchUp(self) -> None:
         """ Reads every SMS stored in the memory (received while nobody was listening, or whose notification was

@@ -22,7 +22,7 @@ _FORBIDDEN_ANY = {
     'CMGS': 'sending SMS is not done from the console',
     'CMGW': 'writing SMS is not done from the console',
     'CMSS': 'sending SMS is not done from the console',
-    'CMGD': 'deleting SMS is not done from the console',
+    # 'CMGD': 'deleting SMS is not done from the console',  # ESSAI : voir _ALLOWED_WRITES
     'CLCK': 'locking facilities (SIM, network) is forbidden',
     'CPWD': 'changing passwords is forbidden',
 }
@@ -74,6 +74,7 @@ _ALLOWED_WRITES = (
     re.compile(r'^AT\+CNMI=\d(,\d){0,4}$'),
     re.compile(r'^AT\+CSMS=[01]$'),
     re.compile(r'^AT\+CNMA(=[012])?$'),  # ESSAI : acquittement à la main d'un +CDS
+    re.compile(r'^AT\+CMGD=1,4$'),  # ESSAI : purge de la mémoire au 31e accusé en CSMS=0
     re.compile(r'^AT\+CFUN=[14]$'),
     # Restarting the modem (the USB port disappears and comes back: the daemon reconnects by itself). It is the only
     # way out of some states of the modem (no delivery report anymore) that the radio alone does not clear.

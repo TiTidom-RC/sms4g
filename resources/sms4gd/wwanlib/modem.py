@@ -536,6 +536,8 @@ class Modem:
     def _setupSms(self, session: _Session) -> None:
         """ Everything the modem needs to send and receive SMS (the settings are lost when its SMS service restarts) """
         run = session.run
+        if session.profile.smsServiceCommand:
+            run(session.profile.smsServiceCommand)
         self._setupSmsFormat(run)
         self._setupSmsCenter(run)
         session.smsReady = False

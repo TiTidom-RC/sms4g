@@ -35,6 +35,8 @@ class Profile:
     restartCommands: tuple[str, ...] = ('AT+CFUN=1,1',)
     # Commands the daemon runs for the diagnostic logged at each connection
     diagnosticCommands: tuple[str, ...] = ()
+    # ESSAI : selects the SMS service, before the other SMS settings
+    smsServiceCommand: str | None = None
 
 
 # Mode 2 (notifications kept while the port is busy), then mode 1 (dropped meanwhile) for a firmware that refuses mode 2.
@@ -51,6 +53,7 @@ SIMCOM = Profile(
     networkMode=NetworkMode('AT+CNMP?', re.compile(r'^\+CNMP: 38\b'), ('AT+CNMP=38',), ('AT+CNMP=2',)),
     restartCommands=('AT+CRESET', 'AT+CFUN=1,1'),
     diagnosticCommands=('AT+CPSI?',),
+    smsServiceCommand='AT+CSMS=1',  # ESSAI : le logiciel acquitte lui-même les accusés
 )
 
 # E3372 in "stick" (AT) mode. ^SYSCFGEX=<acqorder>,<band>,<roam>,<srvdomain>,<lteband>,<reserve1>,<reserve2>: "03" = LTE only,

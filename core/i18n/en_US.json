@@ -141,7 +141,7 @@
         "Visible": "Visible"
     },
     "plugins\/sms4g\/plugin_info\/configuration.php": {
-        "0 : désactivé (par défaut). Le modem s'envoie un SMS pour vérifier la réception des SMS et des accusés. Un SMS consommé par test. Minimum : 1 heure.": "0: disabled (default). The modem sends itself an SMS to verify receipt of SMS messages and acknowledgments. One SMS is used per test. Minimum: 1 hour.",
+        "0 : désactivé (par défaut). Le modem s'envoie un SMS pour vérifier la réception des SMS et des accusés. Un SMS consommé par test. Un premier test est lancé 5 minutes après le démarrage du démon. Minimum : 1 heure.": "0: disabled (default). The modem sends itself an SMS to verify receipt of SMS messages and acknowledgments. One SMS is used per test. An initial test is run 5 minutes after the daemon starts. Minimum: 1 hour.",
         "0 = illimité. Certains opérateurs limitent le nombre de SMS pouvant être liés pour former un message long — indique la limite constatée si besoin": "0 = unlimited. Some carriers limit the number of text messages that can be combined to form a long message—specify the observed limit if necessary",
         "115200 convient à la plupart des modems ; 9600 peut être utile avec un modem plus ancien en cas de problème de communication": "115200 is compatible with most modems; 9600 may be useful with an older modem if there are communication issues",
         "401 - Accès non autorisé": "401 - Unauthorized Access",

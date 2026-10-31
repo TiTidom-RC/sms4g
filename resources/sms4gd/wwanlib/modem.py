@@ -538,6 +538,10 @@ class Modem:
         run = session.run
         if session.profile.smsServiceCommand:
             run(session.profile.smsServiceCommand)
+            try:
+                run('AT+CNMA')  # ESSAI : lève un blocage laissé par un +CDS non acquitté (répond CMS 340)
+            except CommandError:
+                pass
         self._setupSmsFormat(run)
         self._setupSmsCenter(run)
         session.smsReady = False

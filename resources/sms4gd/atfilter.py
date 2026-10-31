@@ -73,6 +73,7 @@ _ALLOWED_READS = (
 _ALLOWED_WRITES = (
     re.compile(r'^AT\+CNMI=\d(,\d){0,4}$'),
     re.compile(r'^AT\+CSMS=[01]$'),
+    re.compile(r'^AT\+CNMA(=[012])?$'),  # ESSAI : acquittement à la main d'un +CDS
     re.compile(r'^AT\+CFUN=[14]$'),
     # Restarting the modem (the USB port disappears and comes back: the daemon reconnects by itself). It is the only
     # way out of some states of the modem (no delivery report anymore) that the radio alone does not clear.

@@ -112,7 +112,8 @@ class Modem:
                               stopEvent=self._smsStop, tracker=self._receipts, messagePause=self.options.messagePause,
                               replyDelay=self.options.replyDelay)
         self._inbox = Inbox(self._submitTransaction, self._publish, self._readMemory,
-                            Reassembler(self.options.concatPartsTtl, self.options.maxIncompleteSms), self._receipts)
+                            Reassembler(self.options.concatPartsTtl, self.options.maxIncompleteSms), self._receipts,
+                            reportAck=lambda: self._profile.reportAckCommand)
         self._supervisor = Supervisor(
             connect=self._connect, disconnect=self._disconnect, publish=self._publishState, isFatal=self._isFatal,
             baseDelay=self.options.reconnectBaseDelay, maxDelay=self.options.reconnectMaxDelay,

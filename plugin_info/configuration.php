@@ -309,7 +309,7 @@ if (!isConnect('admin')) {
             <div class="form-group">
                 <label class="col-lg-3 control-label">{{Auto-test des SMS (heures)}}
                     <sup><i class="fas fa-exclamation-triangle tooltips" style="color:var(--al-warning-color)!important;" title="{{Le démon devra être redémarré après la modification de ce paramètre}}"></i></sup>
-                    <sup><i class="fas fa-question-circle tooltips" title="{{0 : désactivé (par défaut). Le modem s'envoie un SMS pour vérifier la réception des SMS et des accusés. Un SMS consommé par test. Minimum : 1 heure.}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{0 : désactivé (par défaut). Le modem s'envoie un SMS pour vérifier la réception des SMS et des accusés. Un SMS consommé par test. Un premier test est lancé 5 minutes après le démarrage du démon. Minimum : 1 heure.}}"></i></sup>
                 </label>
                 <div class="col-lg-1">
                     <input class="configKey form-control" data-l1key="selfTestHours" />

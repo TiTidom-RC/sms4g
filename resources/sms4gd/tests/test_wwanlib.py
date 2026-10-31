@@ -333,7 +333,7 @@ def simcomTable(**overrides) -> dict:
         'AT+CMEE=1': 'OK\r\n', 'AT+CPIN?': '+CPIN: READY\r\nOK\r\n', 'AT+CGMI': 'SIMCOM INCORPORATED\r\nOK\r\n',
         'AT+CGMM': 'SIMCOM_SIM7600G-H\r\nOK\r\n', 'AT+CGMR': '+CGMR: LE20B04SIM7600G22\r\nOK\r\n', 'AT+COPS=3,0': 'OK\r\n',
         'AT+CMGF=?': '+CMGF: (0,1)\r\nOK\r\n', 'AT+CMGF=0': 'OK\r\n', 'AT+CSCA?': '+CSCA: "+33695000695",145\r\nOK\r\n', 'AT+CSMP=17,167,0,0': 'OK\r\n', 'AT+CSMP=49,167,0,0': 'OK\r\n',
-        'AT+CMGL=4': 'OK\r\n',
+        'AT+CMGL=4': 'OK\r\n', 'AT+CNMA': '+CMS ERROR: 500\r\n',
         'AT+CPMS?': '+CPMS: "SM",0,100,"SM",0,100,"SM",0,100\r\nOK\r\n',
         'AT+CPMS=?': '+CPMS: ("ME","MT","SM","SR"),("ME","MT","SM"),("ME","SM")\r\nOK\r\n',
         'AT+CPMS="ME"': '+CPMS: 3,23,0,100,0,100\r\nOK\r\n', 'AT+CPMS="SM"': '+CPMS: 0,100,0,100,0,100\r\nOK\r\n',
@@ -523,6 +523,35 @@ class ModemTest(unittest.TestCase):
         self.assertEqual(Modem._notificationCandidates(SIMCOM, 0), ['1,1,0,1', '0,1,0,1', '2,1,2,1', '2,1,0,1', '2,1,0,2'])
         self.assertEqual(Modem._notificationCandidates(GENERIC, 0), ['2,1,0,1', '1,1,0,1', '2,1,0,2', '1,1,0,2'])
         self.assertEqual(Modem._notificationCandidates(GENERIC, 23), ['2,1,0,2', '2,1,0,1', '1,1,0,2', '1,1,0,1'])
+
+    CDS = b'\r\n+CDS: 26\r\n07913396050056F906C10B913366022396F262011380521340620113805203400000\r\n'  # as read on a SIM7600G-H
+
+    def testSimcomAcknowledgesEachReportWithoutSelectingAService(self):
+        commands = self.connectWithNetworkMode(False)
+        self.assertFalse([c for c in commands if c.startswith('AT+CSMS=')])
+        self.assertNotIn('AT+CNMA', commands)
+        port = FakeSerial.instances[0]
+        with self.assertNoLogs('wwanlib', level='WARNING'):  # it answers CMS 500: nothing to report
+            port.feed(self.CDS)
+            self.assertTrue(waitFor(lambda: port.commands().count('AT+CNMA') == 1))
+            port.feed(self.CDS)
+            self.assertTrue(waitFor(lambda: port.commands().count('AT+CNMA') == 2))
+            time.sleep(0.1)
+
+    def testAnotherAnswerToTheAcknowledgementIsReported(self):
+        self.connectWithNetworkMode(False, **{'AT+CNMA': '+CMS ERROR: 304\r\n'})
+        with self.assertLogs('wwanlib', level='WARNING') as logs:
+            FakeSerial.instances[0].feed(self.CDS)
+            self.assertTrue(waitFor(lambda: 'Unexpected answer' in '\n'.join(logs.output)))
+
+    def testOtherModemsAreNotGivenTheAcknowledgement(self):
+        for manufacturer in ('huawei', 'quectel'):
+            with self.subTest(manufacturer):
+                self.connectWithNetworkMode(False, **self.networkModeTable(manufacturer, self.NETWORK_MODES[manufacturer][2]))
+                port = FakeSerial.instances[0]
+                port.feed(self.CDS)
+                time.sleep(0.2)
+                self.assertNotIn('AT+CNMA', port.commands())
 
     def testGenericModemFallsBackToMode1WhenMode2IsRefused(self):
         refused = {f'AT+CNMI={cnmi}': 'ERROR\r\n' for cnmi in ('2,1,0,2', '2,1,0,1', '1,1,0,2')}

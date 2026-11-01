@@ -187,6 +187,19 @@ class SelfTestUnitTest(unittest.TestCase):
         self.restartError = None
         self.assertTrue(selfTest.execute().restarted)  # it can still be done: the failed one did not use the hour
 
+    def testTheFirstTestDoesNotWaitAWholeInterval(self):
+        selfTest = self.make(interval=30.0, followUp=0.1, timeout=0.2)
+        selfTest.start()
+        self.assertTrue(waitFor(lambda: len(self.results) == 1, 5.0))
+        self.assertEqual(self.results[0].status, 'ok')
+        selfTest.stop()
+
+    def testNoTestRunsWhenTheScheduleIsOff(self):
+        selfTest = self.make(interval=0.0, followUp=0.05)
+        selfTest.start()
+        time.sleep(0.2)
+        self.assertEqual(self.results, [])
+
     def testTheScheduleRunsTheTestAgainAndAgain(self):
         selfTest = self.make(interval=0.1, timeout=0.3)
         selfTest.start()

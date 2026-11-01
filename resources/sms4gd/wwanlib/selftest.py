@@ -94,7 +94,8 @@ class SelfTest:
             thread.join(2.0)
 
     def _loop(self) -> None:
-        delay = self._interval
+        # The first test comes soon after the start: a modem left without its delivery reports must not wait a whole interval
+        delay = min(self._interval, self._followUp)
         while not self._stop.wait(delay):
             try:
                 result = self.execute(scheduled=True)

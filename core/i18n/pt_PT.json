@@ -141,7 +141,7 @@
         "Visible": "Visível"
     },
     "plugins\/sms4g\/plugin_info\/configuration.php": {
-        "0 : désactivé (par défaut). Le modem s'envoie un SMS pour vérifier la réception des SMS et des accusés. Un SMS consommé par test. Minimum : 1 heure.": "0: desativado (por predefinição). O modem envia um SMS a si próprio para verificar a receção de SMS e de confirmações. É consumido um SMS por teste. Mínimo: 1 hora.",
+        "0 : désactivé (par défaut). Le modem s'envoie un SMS pour vérifier la réception des SMS et des accusés. Un SMS consommé par test. Un premier test est lancé 5 minutes après le démarrage du démon. Minimum : 1 heure.": "0: desativado (por predefinição). O modem envia um SMS a si próprio para verificar a receção de SMS e de confirmações. É consumido um SMS por teste. É iniciado um primeiro teste 5 minutos após o arranque do daemon. Mínimo: 1 hora.",
         "0 = illimité. Certains opérateurs limitent le nombre de SMS pouvant être liés pour former un message long — indique la limite constatée si besoin": "0 = ilimitado. Alguns operadores limitam o número de SMS que podem ser agrupados para formar uma mensagem longa — indica o limite verificado, se necessário",
         "115200 convient à la plupart des modems ; 9600 peut être utile avec un modem plus ancien en cas de problème de communication": "115200 é compatível com a maioria dos modems; 9600 pode ser útil com um modem mais antigo, caso haja problemas de comunicação",
         "401 - Accès non autorisé": "401 - Acesso não autorizado",

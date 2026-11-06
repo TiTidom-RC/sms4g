@@ -68,6 +68,14 @@ class PduEncodingTest(unittest.TestCase):
         references = {PduFields(encodeSmsSubmitPdu(NUMBER, 'a' * 400)[0]).concat[0] for _ in range(40)}
         self.assertGreater(len(references), 1)
 
+    def testTypeOfTheDestinationNumber(self):
+        """ A number written without its country code keeps the "unknown" type (0x81), as a phone sends it: with the
+        "national" type (0xA1), some SMS centers refuse a number that starts with its trunk prefix 0 """
+        for number, digits, typeOfAddress in (('+33612345678', 11, 0x91), ('0612345678', 10, 0x81), ('3631', 4, 0x81)):
+            with self.subTest(number):
+                data = bytes(encodeSmsSubmitPdu(number, 'Hello', reference=1)[0].data)
+                self.assertEqual((data[3], data[4]), (digits, typeOfAddress))
+
     def testUcs2(self):
         pdus = encodeSmsSubmitPdu(NUMBER, '\U0001F600 alerte', reference=1)
         self.assertEqual(len(pdus), 1)

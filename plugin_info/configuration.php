@@ -186,6 +186,33 @@ if (!isConnect('admin')) {
                     <input type="checkbox" class="configKey" data-l1key="force4gOnly" />
                 </div>
             </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{APN du modem}}
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Lit l'APN enregistré dans la mémoire du modem et celui attribué par l'opérateur. En 4G, un APN que l'opérateur ne connaît pas (par exemple un modem livré avec l'APN d'un opérateur étranger) empêche le modem de s'enregistrer sur le réseau. L'APN attribué n'existe qu'en 4G.}}"></i></sup>
+                </label>
+                <div class="col-lg-9" style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding-top:4px;">
+                    <button type="button" id="btn_checkApn" class="btn btn-sm btn-info">
+                        <i class="fas fa-stethoscope"></i> {{Vérifier}}
+                    </button>
+                    <span id="apnCheck_memory"><i class="fas fa-question-circle" style="color:var(--al-default-color,#95a5a6)"></i> {{Mémoire}}</span>
+                    <span id="apnCheck_network"><i class="fas fa-question-circle" style="color:var(--al-default-color,#95a5a6)"></i> {{Réseau}}</span>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-lg-3 control-label">{{Changer l'APN}}
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Automatique : l'opérateur fournit son APN, ce qui convient dans la plupart des cas. Personnalisé, exemples : Free « free », Orange « orange », SFR « sl2sfr », Bouygues Telecom « mmsbouygtel.com ». Sauvegardez, puis cliquez sur « Appliquer » : l'APN est enregistré dans le modem, qui le conserve, et le réseau est coupé quelques secondes.}}"></i></sup>
+                </label>
+                <div class="col-lg-9" style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+                    <select class="configKey form-control" data-l1key="apnMode" style="width:auto;">
+                        <option value="auto">{{Automatique (fourni par l'opérateur)}}</option>
+                        <option value="custom">{{Personnalisé}}</option>
+                    </select>
+                    <input class="configKey form-control" data-l1key="apnCustom" style="width:220px;" maxlength="100" placeholder="free" />
+                    <button type="button" id="btn_applyApn" class="btn btn-sm btn-warning">
+                        <i class="fas fa-check"></i> {{Appliquer}}
+                    </button>
+                </div>
+            </div>
         </div>
         <div>
             <legend><i class="fas fa-sms"></i> {{Messages}}</legend>
@@ -463,22 +490,25 @@ if (!isConnect('admin')) {
     let ownNumberTimeout = null
 
     // Le Core envoie les événements des plugins avec jQuery quand il est chargé (4.6.1 : toujours). Depuis 4.6.2 la liste
-    // jeedom.vanillaEvents les envoie en CustomEvent : on y inscrit l'événement. Sinon, le pont jQuery → CustomEvent de TVRemote,
-    // seul endroit du plugin où jQuery intervient.
-    if (typeof jeedom !== 'undefined' && Array.isArray(jeedom.vanillaEvents)) {
-        if (!jeedom.vanillaEvents.includes('sms4g::ownNumber')) {
-            jeedom.vanillaEvents.push('sms4g::ownNumber')
-        }
-    } else if (typeof jQuery !== 'undefined' && !window.sms4gBridgeAttached) {
-        window.sms4gBridgeAttached = true
-        $('body').on('sms4g::ownNumber', function (event, data) {
-            if (event.originalEvent && event.originalEvent.__bridged) {
-                return
+    // jeedom.vanillaEvents les envoie en CustomEvent : on y inscrit les événements. Sinon, le pont jQuery → CustomEvent de TVRemote,
+    // seul endroit du plugin où jQuery intervient (un pont par événement, posé une seule fois).
+    window.sms4gBridges = window.sms4gBridges || {}
+    for (const eventName of ['sms4g::ownNumber', 'sms4g::apn']) {
+        if (typeof jeedom !== 'undefined' && Array.isArray(jeedom.vanillaEvents)) {
+            if (!jeedom.vanillaEvents.includes(eventName)) {
+                jeedom.vanillaEvents.push(eventName)
             }
-            const customEvent = new CustomEvent('sms4g::ownNumber', { detail: data })
-            customEvent.__bridged = true
-            document.body.dispatchEvent(customEvent)
-        })
+        } else if (typeof jQuery !== 'undefined' && !window.sms4gBridges[eventName]) {
+            window.sms4gBridges[eventName] = true
+            $('body').on(eventName, function (event, data) {
+                if (event.originalEvent && event.originalEvent.__bridged) {
+                    return
+                }
+                const customEvent = new CustomEvent(eventName, { detail: data })
+                customEvent.__bridged = true
+                document.body.dispatchEvent(customEvent)
+            })
+        }
     }
 
     if (window.sms4gOwnNumberHandler) {
@@ -522,6 +552,124 @@ if (!isConnect('admin')) {
                     jeedomUtils.showAlert({ message: '{{Pas de réponse du démon : est-il démarré ?}}', level: 'warning' })
                 }, 15000)
             }
+        })
+    })
+
+    // APN : le démon répond plus tard, Jeedom pousse la réponse à la page (événement sms4g::apn). « Appliquer » n'écrit dans
+    // le modem que l'APN sauvegardé : la page envoie aussi les valeurs affichées, pour refuser une modification non sauvegardée.
+    const checkApnButton = document.getElementById('btn_checkApn')
+    const applyApnButton = document.getElementById('btn_applyApn')
+    const apnModeSelect = document.querySelector('.configKey[data-l1key="apnMode"]')
+    const apnCustomInput = document.querySelector('.configKey[data-l1key="apnCustom"]')
+    const APN_PATTERN = /^[A-Za-z0-9.-]{0,100}$/
+    let apnTimeout = null
+
+    const setApnButtons = (enabled) => {
+        if (checkApnButton) {
+            checkApnButton.disabled = !enabled
+        }
+        if (applyApnButton) {
+            applyApnButton.disabled = !enabled
+        }
+    }
+
+    const showApn = (data) => {
+        document.getElementById('apnCheck_memory').innerHTML = modemIndicator(data && data.memory, '{{Mémoire}}')
+        document.getElementById('apnCheck_network').innerHTML = modemIndicator(data && data.network, '{{Réseau}}')
+    }
+
+    // Le champ personnalisé ne sert qu'en mode « Personnalisé » ; une saisie qui n'est pas un APN est signalée (sans rien bloquer :
+    // « Appliquer » la refusera)
+    const refreshApnCustom = () => {
+        if (!apnModeSelect || !apnCustomInput) {
+            return
+        }
+        apnCustomInput.style.display = (apnModeSelect.value === 'custom') ? '' : 'none'
+        const valid = APN_PATTERN.test(apnCustomInput.value.trim())
+        apnCustomInput.style.borderColor = valid ? '' : 'var(--al-danger-color,#e74c3c)'
+        apnCustomInput.title = valid ? '' : '{{Lettres, chiffres, points et tirets uniquement}}'
+    }
+    apnModeSelect?.addEventListener('change', refreshApnCustom)  // aussi déclenché par le Core au chargement des valeurs
+    apnCustomInput?.addEventListener('input', refreshApnCustom)
+    apnCustomInput?.addEventListener('change', refreshApnCustom)
+    refreshApnCustom()
+
+    if (window.sms4gApnHandler) {
+        document.body.removeEventListener('sms4g::apn', window.sms4gApnHandler)
+    }
+    window.sms4gApnHandler = (event) => {
+        clearTimeout(apnTimeout)
+        setApnButtons(true)
+        const data = event.detail || {}
+        if (data.action === 'read') {
+            showApn(data.memory ? data : null)
+        }
+        if (data.message) {
+            jeedomUtils.showAlert({ message: data.message, level: data.level || 'info' })
+        }
+    }
+    document.body.addEventListener('sms4g::apn', window.sms4gApnHandler)
+
+    const waitForApn = () => {
+        setApnButtons(false)
+        apnTimeout = setTimeout(() => {
+            setApnButtons(true)
+            jeedomUtils.showAlert({ message: '{{Pas de réponse du démon : est-il démarré ?}}', level: 'warning' })
+        }, 60000)
+    }
+
+    checkApnButton?.addEventListener('click', () => {
+        setApnButtons(false)
+        domUtils.ajax({
+            type: 'POST',
+            url: AJAX_URL,
+            data: { action: 'readApn' },
+            dataType: 'json',
+            error: (request, status, error) => { handleAjaxError(request, status, error); setApnButtons(true) },
+            success: (data) => {
+                if (data.state !== 'ok') {
+                    jeedomUtils.showAlert({ message: data.result, level: 'danger' })
+                    showApn(null)
+                    setApnButtons(true)
+                    return
+                }
+                waitForApn()
+            }
+        })
+    })
+
+    applyApnButton?.addEventListener('click', () => {
+        jeeDialog.confirm({
+            title: "{{Changer l'APN du modem}}",
+            message: '<div class="alert alert-warning"><i class="fas fa-exclamation-triangle"></i> ' +
+                "{{L'APN sauvegardé va être enregistré dans le modem, qui le conserve. Le réseau sera coupé quelques secondes (les SMS en attente partiront ensuite).}}" +
+                '</div>' + "{{Confirmer le changement ?}}"
+        }, (result) => {
+            if (!result) {
+                return
+            }
+            setApnButtons(false)
+            domUtils.ajax({
+                type: 'POST',
+                url: AJAX_URL,
+                data: { action: 'applyApn', apnMode: apnModeSelect ? apnModeSelect.value : '', apnCustom: apnCustomInput ? apnCustomInput.value : '' },
+                dataType: 'json',
+                error: (request, status, error) => { handleAjaxError(request, status, error); setApnButtons(true) },
+                success: (data) => {
+                    if (data.state !== 'ok') {
+                        jeedomUtils.showAlert({ message: data.result, level: 'danger' })
+                        setApnButtons(true)
+                        return
+                    }
+                    jeedomUtils.showAlert({ message: data.result.message, level: data.result.level })
+                    if (!data.result.sent) {
+                        setApnButtons(true)
+                        return
+                    }
+                    showApn(null)  // ce qui était affiché ne vaut plus : « Vérifier » une fois le réseau revenu
+                    waitForApn()
+                }
+            })
         })
     })
 })()

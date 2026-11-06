@@ -35,7 +35,7 @@ from typing import Optional
 from dispatcher import Dispatcher, selfTestMessage, smsInboxMessage, smsStatusMessage
 from utils import Config
 from wwanlib import (ConnectionState, Modem, ModemIdentified, ModemOptions, NetworkChanged, Registration, SignalChanged,
-                     StateChanged, WwanException, maskNumber, maskPduNumbers)
+                     StateChanged, WwanException, describeContext, maskNumber, maskPduNumbers)
 
 try:
     from jeedom.jeedom import jeedom_publisher, jeedom_socket, jeedom_utils, JEEDOM_SOCKET_MESSAGE
@@ -118,6 +118,26 @@ def runDiagnostic():
                 return
             continue
         logging.info("Diagnostic %s : %s", command, ' | '.join(lines[:-1]))
+    logApn()
+
+
+def logApn():
+    """Journalise l'APN du modem : celui de sa mémoire et celui attribué par le réseau. Un résumé, jamais les réponses
+    brutes de AT+CGDCONT? et AT+CGCONTRDP, qui contiennent des adresses IP."""
+    if modem is None:
+        return
+    try:
+        reading = modem.readApn().result(45)
+    except (WwanException, TimeoutError) as e:
+        logging.warning("Diagnostic APN failed : %s", e)
+        return
+    if reading.network:
+        network = f'"{reading.network}"'
+    elif reading.lte is False:
+        network = 'none (not registered in LTE)'
+    else:
+        network = 'none'
+    logging.info("Diagnostic APN : memory %s, network %s", describeContext(reading.configured), network)
 
 
 def publishState(state: str, **details):

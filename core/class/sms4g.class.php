@@ -23,6 +23,9 @@ class sms4g extends eqLogic {
 
 	const PYTHON3_PATH = __DIR__ . '/../../resources/venv/bin/python3';
 	const PYENV_PATH = '/opt/pyenv/bin/pyenv';
+	// Ce qu'un APN peut contenir (lettres, chiffres, points et tirets) ; vide = fourni par l'opérateur. Rien d'autre ne doit
+	// atteindre la commande AT, où l'APN est écrit entre guillemets (le démon applique la même règle)
+	const APN_PATTERN = '/^[A-Za-z0-9.-]{0,100}$/';
 
 	public static $_encryptConfigKey = array('pin');
 
@@ -975,6 +978,62 @@ class sms4g extends eqLogic {
 	}
 
 	/**
+	 * Sauvegarde de l'APN personnalisé : seuls les espaces autour sont retirés. Une valeur invalide n'est pas refusée
+	 * ici, une exception interromprait la sauvegarde native de la page en plein milieu : c'est « Appliquer » qui la
+	 * refuse (applyApn), et le démon aussi.
+	 */
+	public static function preConfig_apnCustom($_value) {
+		return trim((string) $_value);
+	}
+
+	/**
+	 * Demande au démon l'APN du modem (bouton « Vérifier » de la configuration) : celui de sa mémoire et celui attribué
+	 * par le réseau. La réponse arrive plus tard (onApn) et est poussée à la page par l'événement `sms4g::apn`.
+	 *
+	 * @return bool false si le démon n'a pas pu être joint
+	 */
+	public static function readApn() {
+		return self::sendToDaemon(array('cmd' => 'readApn'));
+	}
+
+	/**
+	 * Écrit dans le modem l'APN **sauvegardé** dans la configuration (bouton « Appliquer »). Les valeurs affichées par la
+	 * page servent seulement à vérifier qu'il ne reste pas de modification non sauvegardée : ce qui part au modem est
+	 * toujours la valeur en base. La réponse du démon arrive plus tard (onApn, événement `sms4g::apn`).
+	 *
+	 * @param string $_mode choix affiché (auto / custom)
+	 * @param string $_custom APN personnalisé affiché
+	 * @return array{sent: bool, level: string, message: string} demande partie ou non, et le message à afficher
+	 */
+	public static function applyApn($_mode, $_custom) {
+		$savedMode = (string) config::byKey('apnMode', 'sms4g', 'auto');
+		$savedCustom = trim((string) config::byKey('apnCustom', 'sms4g', ''));
+		$mode = trim((string) $_mode);
+		// En mode automatique, le champ personnalisé n'est pas utilisé : sa modification ne bloque rien
+		if ($mode !== $savedMode || ($mode === 'custom' && trim((string) $_custom) !== $savedCustom)) {
+			return array('sent' => false, 'level' => 'warning', 'message' => __('Sauvegardez la configuration avant d\'appliquer l\'APN', __FILE__));
+		}
+		$deamonInfo = self::deamon_info();
+		if ($deamonInfo['state'] != 'ok') {
+			return array('sent' => false, 'level' => 'danger', 'message' => __('Le démon n\'est pas démarré', __FILE__));
+		}
+		$apn =($savedMode === 'custom') ? $savedCustom : '';
+		if ($savedMode === 'custom' && $apn === '') {
+			return array('sent' => false, 'level' => 'warning', 'message' => __('Saisissez un APN, ou choisissez « Automatique »', __FILE__));
+		}
+		if (preg_match(self::APN_PATTERN, $apn) !== 1) {
+			log::add('sms4g', 'warning', '[APN] Changement refusé : APN invalide');
+			return array('sent' => false, 'level' => 'danger', 'message' => __('APN invalide : lettres, chiffres, points et tirets uniquement (100 caractères au plus)', __FILE__));
+		}
+		$shown = ($apn === '') ? __('automatique', __FILE__) : $apn;
+		log::add('sms4g', 'info', '[APN] Changement demandé : ' . $shown);
+		if (!self::sendToDaemon(array('cmd' => 'setApn', 'apn' => $apn))) {
+			return array('sent' => false, 'level' => 'danger', 'message' => __('Le démon n\'est pas démarré', __FILE__));
+		}
+		return array('sent' => true, 'level' => 'info', 'message' => __('Changement de l\'APN demandé', __FILE__) . ' (' . htmlspecialchars($shown, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . ')');
+	}
+
+	/**
 	 * Raison donnée par le démon (anglais, courte) en français ; une raison inconnue (texte du modem...) est affichée
 	 * telle quelle, protégée des balises HTML.
 	 */
@@ -989,6 +1048,7 @@ class sms4g extends eqLogic {
 			'the SMS stayed in the queue' => __('le SMS n\'a pas pu partir', __FILE__),
 			'the SIM does not know its number' => __('la carte SIM ne connaît pas son numéro', __FILE__),
 			'the modem did not answer' => __('le modem n\'a pas répondu', __FILE__),
+			'invalid APN' => __('APN invalide', __FILE__),
 		);
 		foreach ($known as $text => $translation) {
 			if (strpos($reason, $text) === 0) {
@@ -1074,6 +1134,73 @@ class sms4g extends eqLogic {
 		// Seul le statut `error` porte un message d'erreur : une SIM qui ne connaît pas son numéro (`unknown`) n'en est pas une
 		$reason = ($number == '' && $status == 'error') ? self::translateReason(isset($_message['reason']) ? $_message['reason'] : '') : '';
 		event::add('sms4g::ownNumber', array('number' => $number, 'reason' => $reason));
+	}
+
+	/**
+	 * APN lu ou écrit par le démon : poussé à la page de configuration (`sms4g::apn`). Les textes sont préparés ici
+	 * (traduits, protégés des balises HTML : ils viennent du modem et du réseau) ; la page n'a qu'à les afficher.
+	 *
+	 * Envoyé à la page : `action` (read / apply), `memory` et `network` (indicateurs : status ok / warn / unknown, label ;
+	 * seulement pour read), `message` et `level` (message à afficher, vide si aucun).
+	 */
+	public static function onApn($_message) {
+		$action = (isset($_message['action']) && $_message['action'] == 'apply') ? 'apply' : 'read';
+		$status = isset($_message['status']) ? (string) $_message['status'] : '';
+		$configured = (isset($_message['configured']) && is_array($_message['configured'])) ? $_message['configured'] : null;
+		$configuredApn = ($configured !== null && isset($configured['apn'])) ? (string) $configured['apn'] : null;
+		$flags = ENT_QUOTES | ENT_SUBSTITUTE;
+		$data = array('action' => $action, 'message' => '', 'level' => 'info');
+
+		if ($status == 'error') {
+			$reason = self::translateReason(isset($_message['reason']) ? $_message['reason'] : '');
+			$data['level'] = 'danger';
+			$data['message'] = (($action == 'apply') ? __('Changement de l\'APN impossible', __FILE__) : __('Lecture de l\'APN impossible', __FILE__)) . ' : ' . $reason;
+			log::add('sms4g', 'warning', '[APN] ' . $data['message']);
+			event::add('sms4g::apn', $data);
+			return;
+		}
+
+		if ($action == 'apply') {
+			$shown = ($configuredApn === null || $configuredApn === '') ? __('automatique', __FILE__) : htmlspecialchars($configuredApn, $flags, 'UTF-8');
+			$radio = isset($_message['radio']) ? (string) $_message['radio'] : '';
+			if ($status == 'unchanged') {
+				$data['message'] = __('Le modem utilisait déjà cet APN', __FILE__) . ' (' . $shown . ')';
+			} elseif ($radio == 'failed') {
+				$data['level'] = 'warning';
+				$data['message'] = __('APN enregistré dans le modem', __FILE__) . ' (' . $shown . '), ' . __('mais il n\'a pas pu se reconnecter au réseau : redémarrez le modem', __FILE__);
+			} else {
+				$data['level'] = 'success';
+				$wait = ($radio == 'restart') ? __('le modem redémarre (environ 30 secondes)', __FILE__) : __('le modem se reconnecte au réseau', __FILE__);
+				$data['message'] = __('APN enregistré dans le modem', __FILE__) . ' (' . $shown . ') : ' . $wait . '. ' . __('Attendez quelques secondes, puis cliquez sur « Vérifier »', __FILE__);
+			}
+			log::add('sms4g', ($data['level'] == 'warning') ? 'warning' : 'info', '[APN] ' . strip_tags($data['message']));
+			event::add('sms4g::apn', $data);
+			return;
+		}
+
+		$network = (isset($_message['network']) && $_message['network'] !== null && $_message['network'] !== '') ? htmlspecialchars((string) $_message['network'], $flags, 'UTF-8') : '';
+		$lte = (isset($_message['lte']) && is_bool($_message['lte'])) ? $_message['lte'] : null;
+		if ($configured === null) {
+			$memory = array('status' => 'warn', 'label' => __('Mémoire : contexte 1 non défini', __FILE__));
+		} else {
+			$value = ($configuredApn === '') ? __('vide (automatique)', __FILE__) : htmlspecialchars((string) $configuredApn, $flags, 'UTF-8');
+			// Un APN en mémoire sans APN attribué par le réseau en 4G : c'est probablement lui que l'opérateur refuse
+			$suspect = ($lte === true && $network === '' && $configuredApn !== '');
+			$memory = array('status' => $suspect ? 'warn' : 'ok', 'label' => __('Mémoire', __FILE__) . ' : ' . $value);
+		}
+		if ($network !== '') {
+			$networkIndicator = array('status' => 'ok', 'label' => __('Réseau', __FILE__) . ' : ' . $network);
+		} elseif ($lte === false) {
+			$networkIndicator = array('status' => 'unknown', 'label' => __('Réseau : non applicable hors 4G', __FILE__));
+		} elseif ($lte === true) {
+			$networkIndicator = array('status' => 'warn', 'label' => __('Réseau : aucun APN attribué', __FILE__));
+		} else {
+			$networkIndicator = array('status' => 'warn', 'label' => __('Réseau : non enregistré', __FILE__));
+		}
+		$data['memory'] = $memory;
+		$data['network'] = $networkIndicator;
+		log::add('sms4g', 'info', '[APN] ' . strip_tags($memory['label'] . ' ; ' . $networkIndicator['label']));
+		event::add('sms4g::apn', $data);
 	}
 
 	/**
@@ -1208,6 +1335,11 @@ class sms4g extends eqLogic {
 
 		if ($state == 'disconnected' && !empty($_message['fatal'])) {
 			$reason = isset($_message['reason']) ? secureXSS($_message['reason']) : '';
+			if (isset($_message['errorType']) && $_message['errorType'] == 'SimNotInsertedError') {
+				// Sans risque pour la SIM : le redémarrage automatique du démon reste actif
+				$reason = __('carte SIM absente ou mal insérée. Insérez-la, puis redémarrez le démon', __FILE__);
+				log::add('sms4g', 'error', '[MODEM] Carte SIM absente ou mal insérée');
+			}
 			message::add('sms4g', __('Erreur du modem', __FILE__) . ' : ' . $reason, '', 'sms4gcmderror');
 			// Un nouveau démarrage ne corrigerait pas ces erreurs (un PIN incorrect répété bloque même la SIM)
 			if (isset($_message['errorType']) && in_array($_message['errorType'], array('PinRequiredError', 'IncorrectPinError', 'PukRequiredError', 'PduModeNotSupportedError'))) {

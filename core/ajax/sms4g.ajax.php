@@ -45,6 +45,19 @@ try {
 		ajax::success();
 	}
 
+	if (init('action') == 'readApn') {
+		// La réponse du démon arrive plus tard, poussée à la page par l'événement sms4g::apn
+		if (!sms4g::readApn()) {
+			throw new Exception(__('Le démon n\'est pas démarré', __FILE__));
+		}
+		ajax::success();
+	}
+
+	if (init('action') == 'applyApn') {
+		// Rien n'est sauvegardé ici : seul l'APN déjà sauvegardé part au modem (réponse plus tard par sms4g::apn)
+		ajax::success(sms4g::applyApn(init('apnMode'), init('apnCustom')));
+	}
+
 	if (init('action') == 'disableModemManager') {
 		$success = sms4g::disableModemManager();
 		if (!$success) {

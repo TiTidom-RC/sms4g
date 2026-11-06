@@ -79,7 +79,9 @@ class CmeError(CommandError):
         # Return a specialized version of this class if possible
         if len(args) >= 2:
             code = args[1]
-            if code == 11:
+            if code == 10:
+                return SimNotInsertedError(args[0])
+            elif code == 11:
                 return PinRequiredError(args[0])
             elif code == 16:
                 return IncorrectPinError(args[0])
@@ -96,6 +98,15 @@ class SecurityException(CmeError):
 
     def __init__(self, command, code):
         super(SecurityException, self).__init__(command, code)
+
+
+class SimNotInsertedError(CmeError):
+    """ Raised if the modem has no SIM card (or does not detect it): it cannot be used without one """
+
+    _description = 'SIM card not inserted'
+
+    def __init__(self, command, code=10):
+        super(SimNotInsertedError, self).__init__(command, code)
 
 
 class PinRequiredError(SecurityException):

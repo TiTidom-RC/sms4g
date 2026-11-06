@@ -47,10 +47,7 @@ try {
 
 	if (init('action') == 'readApn') {
 		// La réponse du démon arrive plus tard, poussée à la page par l'événement sms4g::apn
-		if (!sms4g::readApn()) {
-			throw new Exception(__('Le démon n\'est pas démarré', __FILE__));
-		}
-		ajax::success();
+		ajax::success(sms4g::readApn());
 	}
 
 	if (init('action') == 'applyApn') {

@@ -492,7 +492,8 @@ if (!isConnect('admin')) {
     // Le Core envoie les événements des plugins avec jQuery quand il est chargé (4.6.1 : toujours). Depuis 4.6.2 la liste
     // jeedom.vanillaEvents les envoie en CustomEvent : on y inscrit les événements. Sinon, le pont jQuery → CustomEvent de TVRemote,
     // seul endroit du plugin où jQuery intervient (un pont par événement, posé une seule fois).
-    window.sms4gBridges = window.sms4gBridges || {}
+    // Une page ouverte avant la mise à jour du plugin a déjà posé le pont de sms4g::ownNumber (ancien drapeau)
+    window.sms4gBridges = window.sms4gBridges || (window.sms4gBridgeAttached ? { 'sms4g::ownNumber': true } : {})
     for (const eventName of ['sms4g::ownNumber', 'sms4g::apn']) {
         if (typeof jeedom !== 'undefined' && Array.isArray(jeedom.vanillaEvents)) {
             if (!jeedom.vanillaEvents.includes(eventName)) {
@@ -555,23 +556,15 @@ if (!isConnect('admin')) {
         })
     })
 
-    // APN : le démon répond plus tard, Jeedom pousse la réponse à la page (événement sms4g::apn). « Appliquer » n'écrit dans
-    // le modem que l'APN sauvegardé : la page envoie aussi les valeurs affichées, pour refuser une modification non sauvegardée.
+    // APN : le démon répond plus tard, Jeedom pousse la réponse à la page (événement sms4g::apn), qui l'affiche quand elle arrive.
+    // Rien n'est bloqué en l'attendant : un bouton n'est désactivé que le temps de l'envoi de sa demande (une demande en double est
+    // sans risque, le démon fait attendre une seconde écriture). « Appliquer » n'écrit dans le modem que l'APN sauvegardé : la page
+    // envoie aussi les valeurs affichées, pour refuser une modification non sauvegardée.
     const checkApnButton = document.getElementById('btn_checkApn')
     const applyApnButton = document.getElementById('btn_applyApn')
     const apnModeSelect = document.querySelector('.configKey[data-l1key="apnMode"]')
     const apnCustomInput = document.querySelector('.configKey[data-l1key="apnCustom"]')
     const APN_PATTERN = /^[A-Za-z0-9.-]{0,100}$/
-    let apnTimeout = null
-
-    const setApnButtons = (enabled) => {
-        if (checkApnButton) {
-            checkApnButton.disabled = !enabled
-        }
-        if (applyApnButton) {
-            applyApnButton.disabled = !enabled
-        }
-    }
 
     const showApn = (data) => {
         document.getElementById('apnCheck_memory').innerHTML = modemIndicator(data && data.memory, '{{Mémoire}}')
@@ -598,8 +591,6 @@ if (!isConnect('admin')) {
         document.body.removeEventListener('sms4g::apn', window.sms4gApnHandler)
     }
     window.sms4gApnHandler = (event) => {
-        clearTimeout(apnTimeout)
-        setApnButtons(true)
         const data = event.detail || {}
         if (data.action === 'read') {
             showApn(data.memory ? data : null)
@@ -610,35 +601,27 @@ if (!isConnect('admin')) {
     }
     document.body.addEventListener('sms4g::apn', window.sms4gApnHandler)
 
-    const waitForApn = () => {
-        setApnButtons(false)
-        apnTimeout = setTimeout(() => {
-            setApnButtons(true)
-            jeedomUtils.showAlert({ message: '{{Pas de réponse du démon : est-il démarré ?}}', level: 'warning' })
-        }, 60000)
-    }
-
-    checkApnButton?.addEventListener('click', () => {
-        setApnButtons(false)
+    checkApnButton?.addEventListener('click', (event) => {
+        const btn = event.currentTarget
+        btn.disabled = true
+        showApn(null)  // les indicateurs se remplissent à l'arrivée de la réponse
         domUtils.ajax({
             type: 'POST',
             url: AJAX_URL,
             data: { action: 'readApn' },
             dataType: 'json',
-            error: (request, status, error) => { handleAjaxError(request, status, error); setApnButtons(true) },
+            error: (request, status, error) => { handleAjaxError(request, status, error); btn.disabled = false },
             success: (data) => {
-                if (data.state !== 'ok') {
-                    jeedomUtils.showAlert({ message: data.result, level: 'danger' })
-                    showApn(null)
-                    setApnButtons(true)
-                    return
+                btn.disabled = false
+                if (data.state !== 'ok' || !data.result.sent) {
+                    jeedomUtils.showAlert({ message: (data.state !== 'ok') ? data.result : data.result.message, level: 'danger' })
                 }
-                waitForApn()
             }
         })
     })
 
-    applyApnButton?.addEventListener('click', () => {
+    applyApnButton?.addEventListener('click', (event) => {
+        const btn = event.currentTarget
         jeeDialog.confirm({
             title: "{{Changer l'APN du modem}}",
             message: '<div class="alert alert-warning"><i class="fas fa-exclamation-triangle"></i> ' +
@@ -648,26 +631,23 @@ if (!isConnect('admin')) {
             if (!result) {
                 return
             }
-            setApnButtons(false)
+            btn.disabled = true
             domUtils.ajax({
                 type: 'POST',
                 url: AJAX_URL,
                 data: { action: 'applyApn', apnMode: apnModeSelect ? apnModeSelect.value : '', apnCustom: apnCustomInput ? apnCustomInput.value : '' },
                 dataType: 'json',
-                error: (request, status, error) => { handleAjaxError(request, status, error); setApnButtons(true) },
+                error: (request, status, error) => { handleAjaxError(request, status, error); btn.disabled = false },
                 success: (data) => {
+                    btn.disabled = false
                     if (data.state !== 'ok') {
                         jeedomUtils.showAlert({ message: data.result, level: 'danger' })
-                        setApnButtons(true)
                         return
                     }
                     jeedomUtils.showAlert({ message: data.result.message, level: data.result.level })
-                    if (!data.result.sent) {
-                        setApnButtons(true)
-                        return
+                    if (data.result.sent) {
+                        showApn(null)  // ce qui était affiché ne vaut plus : « Vérifier » une fois le réseau revenu
                     }
-                    showApn(null)  // ce qui était affiché ne vaut plus : « Vérifier » une fois le réseau revenu
-                    waitForApn()
                 }
             })
         })

@@ -85,6 +85,14 @@ class SupervisorPortTest(unittest.TestCase):
         attempts = [details['attempt'] for state, details in harness.states if state == 'reconnecting']
         self.assertEqual(set(attempts), {1})
 
+    def testTheCauseOfTheLastFailureComesWithTheReconnection(self):
+        harness = self.start(failures=1, baseDelay=0.05, maxDelay=0.05, portPresent=None)
+        harness.lose()
+        self.assertTrue(harness.reconnected.wait(3))
+        reconnecting = [details for state, details in harness.states if state == 'reconnecting']
+        self.assertNotIn('errorType', reconnecting[0])  # the connection was lost: no failed attempt yet
+        self.assertEqual(reconnecting[-1]['errorType'], 'OSError')
+
     def stateNames(self, harness) -> list[str]:
         return [state for state, _ in harness.states]
 

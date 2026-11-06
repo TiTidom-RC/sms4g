@@ -110,6 +110,7 @@ class Modem:
         self._lastSignal: int | None = None
         self._lastNetwork: tuple[str, str | None] | None = None
         self._smsStop = threading.Event()
+        self._apnLock = threading.Lock()  # one APN change at a time (two tabs, a scenario...)
         self._selfTest: SelfTest | None = None
         # The delivery reports are followed only when they are asked for
         self._receipts = ReceiptTracker(self._publish, self.options.receiptMaxAge) if self.options.deliveryReport else None
@@ -274,7 +275,7 @@ class Modem:
             failed: Future = Future()
             failed.set_exception(ValueError('invalid APN (letters, digits, dots and dashes only, 100 characters at most)'))
             return failed
-        return self._inBackground('wwanlib-apn-write', lambda session: self._writeApn(session, apn))
+        return self._inBackground('wwanlib-apn-write', lambda session: self._writeApnAlone(session, apn))
 
     def _inBackground(self, name: str, work: Callable[[_Session], Any]) -> Future:
         """ Runs a sequence of commands of the connection in use in its own thread (failed Future when there is none) """
@@ -319,10 +320,10 @@ class Modem:
 
     @staticmethod
     def _isFatal(error: Exception) -> bool:
-        """ Retrying cannot fix a missing or wrong PIN (and would lock the SIM), a missing SIM card (a SIM inserted later
-        is usually not seen until the modem restarts), nor a modem without the PDU mode """
-        return isinstance(error, (PinRequiredError, IncorrectPinError, PukRequiredError, SimNotInsertedError,
-                                  PduModeNotSupportedError))
+        """ Retrying cannot fix a missing or wrong PIN (and would lock the SIM), nor a modem without the PDU mode. A
+        missing SIM card is not fatal: it may only be late after a restart of the modem, or be inserted meanwhile; its
+        ``errorType`` comes with the reconnection states, so that the user is told. """
+        return isinstance(error, (PinRequiredError, IncorrectPinError, PukRequiredError, PduModeNotSupportedError))
 
     def _publishState(self, state: str, details: dict[str, Any]) -> None:
         self._state = state
@@ -605,16 +606,24 @@ class Modem:
     def _readApn(self, session: _Session) -> ApnReading:
         configured = self._readContext(session)
         network: str | None = None
-        try:
-            network, unreadable = parseNetworkApn(self._apnCommand(session, 'AT+CGCONTRDP'))
-            self._logUnreadable('AT+CGCONTRDP', unreadable)
-        except CommandError as e:
-            log.debug('AT+CGCONTRDP: %s', e)  # no connection in use (not in LTE), or not known by this modem
+        # Without a parameter, the connections in use; some firmwares only answer for a given context
+        for command in ('AT+CGCONTRDP', f'AT+CGCONTRDP={CONTEXT}'):
+            try:
+                network, unreadable = parseNetworkApn(self._apnCommand(session, command))
+                self._logUnreadable(command, unreadable)
+                break
+            except CommandError as e:
+                log.debug('%s: %s', command, e)  # no connection in use (not in LTE), or not known by this modem
         try:
             accessTechnology = parseAccessTechnology(self._apnCommand(session, 'AT+COPS?'))
         except CommandError:
             accessTechnology = None
         return ApnReading(configured, network, accessTechnology)
+
+    def _writeApnAlone(self, session: _Session, apn: str) -> ApnChange:
+        """ A second change waits for the end of the first one: it then finds the APN already written, or writes its own """
+        with self._apnLock:
+            return self._writeApn(session, apn)
 
     def _writeApn(self, session: _Session, apn: str) -> ApnChange:
         before = self._readContext(session)
@@ -648,7 +657,8 @@ class Modem:
     def _registerAgain(self, session: _Session) -> str:
         """ Makes the modem register again, so that it uses the new APN: radio off and on (AT+CFUN=4 keeps the SIM
         powered, so there is no PIN to enter again, unlike AT+CFUN=0), or a restart of the modem when it refuses
-        AT+CFUN=4. The SMS settings the modem may forget meanwhile are applied again at its "SMS DONE".
+        AT+CFUN=4 or does not switch its radio on again. The SMS settings the modem may forget meanwhile are applied
+        again at its "SMS DONE".
         :return: 'cfun', 'restart' or 'failed' """
         try:
             self._radioCommand(session, 'AT+CFUN=4')
@@ -656,25 +666,33 @@ class Modem:
             log.warning('No answer to AT+CFUN=4: the radio is switched on again all the same')
         except CommandError as e:
             log.info('AT+CFUN=4 refused by the modem (%s): restarting it so that it takes the new APN', e)
-            try:
-                self.restart('apn').result(self.RESTART_WAIT)
-            except TimeoutError:
-                pass  # still restarting
-            except WwanException as error:
-                log.error('The modem could not be restarted to take the new APN (%s): it takes it at its next restart', error)
-                return 'failed'
-            return 'restart'
+            return self._restartForApn()
         except NotConnectedError as e:
+            # The connection sequence switches the radio on again (AT+CFUN? at each connection)
             log.warning('Connection lost while switching the radio off (%s): the modem takes the new APN when it connects again', e)
             return 'failed'
         try:
             self._radioCommand(session, 'AT+CFUN=1')
-        except WwanException as e:
-            # The connection sequence switches the radio on again (AT+CFUN? at each connection)
-            log.error('The radio could not be switched on again (%s): it will be at the next connection to the modem', e)
+        except NotConnectedError as e:
+            log.warning('Connection lost while switching the radio on (%s): the modem takes the new APN when it connects again', e)
             return 'failed'
+        except WwanException as e:
+            # The connection stays up: nothing would switch the radio on again, a restart does (with the new APN)
+            log.warning('The radio could not be switched on again (%s): restarting the modem', e)
+            return self._restartForApn()
         log.info('Radio switched off and on again: the modem registers with the new APN')
         return 'cfun'
+
+    def _restartForApn(self) -> str:
+        """ :return: 'restart', or 'failed' when the modem cannot be restarted """
+        try:
+            self.restart('apn').result(self.RESTART_WAIT)
+        except TimeoutError:
+            pass  # still restarting
+        except WwanException as error:
+            log.error('The modem could not be restarted to take the new APN (%s): restart it by hand', error)
+            return 'failed'
+        return 'restart'
 
     def _setupSms(self, session: _Session) -> None:
         """ Everything the modem needs to send and receive SMS (the settings are lost when its SMS service restarts) """

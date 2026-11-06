@@ -988,12 +988,17 @@ class sms4g extends eqLogic {
 
 	/**
 	 * Demande au démon l'APN du modem (bouton « Vérifier » de la configuration) : celui de sa mémoire et celui attribué
-	 * par le réseau. La réponse arrive plus tard (onApn) et est poussée à la page par l'événement `sms4g::apn`.
+	 * par le réseau. La réponse arrive plus tard (onApn) et est poussée à la page par l'événement `sms4g::apn`. Un démon
+	 * arrêté est signalé à la page sans passer par la socket (pas d'erreur dans le log pour un démon simplement arrêté).
 	 *
-	 * @return bool false si le démon n'a pas pu être joint
+	 * @return array{sent: bool, level: string, message: string} demande partie ou non, et le message à afficher sinon
 	 */
 	public static function readApn() {
-		return self::sendToDaemon(array('cmd' => 'readApn'));
+		$deamonInfo = self::deamon_info();
+		if ($deamonInfo['state'] != 'ok' || !self::sendToDaemon(array('cmd' => 'readApn'))) {
+			return array('sent' => false, 'level' => 'danger', 'message' => __('Le démon n\'est pas démarré', __FILE__));
+		}
+		return array('sent' => true, 'level' => 'info', 'message' => '');
 	}
 
 	/**
@@ -1017,7 +1022,7 @@ class sms4g extends eqLogic {
 		if ($deamonInfo['state'] != 'ok') {
 			return array('sent' => false, 'level' => 'danger', 'message' => __('Le démon n\'est pas démarré', __FILE__));
 		}
-		$apn =($savedMode === 'custom') ? $savedCustom : '';
+		$apn = ($savedMode === 'custom') ? $savedCustom : '';
 		if ($savedMode === 'custom' && $apn === '') {
 			return array('sent' => false, 'level' => 'warning', 'message' => __('Saisissez un APN, ou choisissez « Automatique »', __FILE__));
 		}
@@ -1328,18 +1333,26 @@ class sms4g extends eqLogic {
 				log::add('sms4g', 'warning', '[CALLBACK] État du modem inconnu : ' . secureXSS($state));
 				return;
 		}
+		// Carte SIM absente : le démon continue d'essayer (elle peut être en retard après un redémarrage du modem, ou être
+		// insérée entre-temps) ; l'utilisateur est prévenu dès la première tentative ratée
+		$simMissing = in_array($state, array('reconnecting', 'disconnected')) && isset($_message['errorType']) && $_message['errorType'] == 'SimNotInsertedError';
+		if ($simMissing) {
+			$text .= ' : ' . __('carte SIM absente', __FILE__);
+		}
 		log::add('sms4g', 'info', '[MODEM] ' . $text);
 		$_modem->checkAndUpdateCmd('connection', $text, $_time);
 		$_modem->checkAndUpdateCmd('connection_state', $code, $_time);
 		$_modem->checkAndUpdateCmd('online', $online, $_time);
 
+		if ($simMissing && count(message::byPluginLogicalId('sms4g', 'sms4gSimMissing')) == 0) {
+			log::add('sms4g', 'error', '[MODEM] Carte SIM absente ou mal insérée');
+			message::add('sms4g', __('Carte SIM absente ou mal insérée : insérez-la (modem débranché), puis rebranchez le modem. Le plugin réessaie de s\'y connecter ; s\'il a abandonné (« Déconnecté »), redémarrez le démon.', __FILE__), '', 'sms4gSimMissing');
+		} elseif ($state == 'connected' && count(message::byPluginLogicalId('sms4g', 'sms4gSimMissing')) > 0) {
+			message::removeAll('sms4g', 'sms4gSimMissing');
+		}
+
 		if ($state == 'disconnected' && !empty($_message['fatal'])) {
 			$reason = isset($_message['reason']) ? secureXSS($_message['reason']) : '';
-			if (isset($_message['errorType']) && $_message['errorType'] == 'SimNotInsertedError') {
-				// Sans risque pour la SIM : le redémarrage automatique du démon reste actif
-				$reason = __('carte SIM absente ou mal insérée. Insérez-la, puis redémarrez le démon', __FILE__);
-				log::add('sms4g', 'error', '[MODEM] Carte SIM absente ou mal insérée');
-			}
 			message::add('sms4g', __('Erreur du modem', __FILE__) . ' : ' . $reason, '', 'sms4gcmderror');
 			// Un nouveau démarrage ne corrigerait pas ces erreurs (un PIN incorrect répété bloque même la SIM)
 			if (isset($_message['errorType']) && in_array($_message['errorType'], array('PinRequiredError', 'IncorrectPinError', 'PukRequiredError', 'PduModeNotSupportedError'))) {

@@ -903,6 +903,8 @@ class ModemTest(unittest.TestCase):
         self.assertTrue(waitFor(lambda: self.eventsOf(SignalChanged) and self.eventsOf(SignalChanged)[-1] == SignalChanged(20)))
         FakeSerial.instances[0].unplug()
         self.assertTrue(waitFor(lambda: len(FakeSerial.instances) == 2 and modem.state == ConnectionState.CONNECTED))
+        # The signal is read by the monitoring after the connection: it may come a moment after the "connected" state
+        self.assertTrue(waitFor(lambda: len(self.eventsOf(SignalChanged)) >= 4))
         signals = [event.value for event in self.eventsOf(SignalChanged)]
         self.assertEqual(signals, [-1, 20, -1, 20])
         self.assertEqual(self.eventsOf(NetworkChanged)[-2], NetworkChanged(Registration.UNKNOWN, None))
@@ -1137,7 +1139,7 @@ class ModemTest(unittest.TestCase):
 
     # ---- APN -------------------------------------------------------------------------------------
 
-    def apnModem(self, apn: str | None = 'CMNET', pdpType: str = 'IP', network: str = 'OK\r\n', **overrides) -> Modem:
+    def apnModem(self, apn: str | None = 'CMNET', pdpType: str = 'IP', network: object = 'OK\r\n', **overrides) -> Modem:
         """ A connected modem whose context 1 holds ``apn`` (None: not defined); a write accepted by the modem changes it """
         state = {'apn': apn, 'pdpType': pdpType}
 
@@ -1174,18 +1176,31 @@ class ModemTest(unittest.TestCase):
         reading = modem.readApn().result(3)
         self.assertEqual(reading.configured, PdpContext(1, 'IP', 'CMNET'))
         self.assertEqual(reading.network, 'free.mnc015.mcc208.gprs')
-        self.assertTrue(reading.lte)  # +COPS: 0,0,"Free Free",7
+        self.assertTrue(reading.networkRead)
         self.assertFalse([c for c in self.commandsAfterConnection() if c.startswith(('AT+CGDCONT=', 'AT+CFUN='))])
 
-    def testApnReadWithoutNetworkApn(self):
+    def testNoNetworkApnWhenTheModemAnswersWithoutOne(self):
+        # No connection in LTE (not in 4G, or kept off it by its APN): an answer without APN, or ERROR to both forms
         for network in ('OK\r\n', 'ERROR\r\n', '+CME ERROR: 4\r\n'):
             with self.subTest(network):
                 FakeSerial.instances.clear()
-                modem = self.apnModem(network=network, **{'AT+COPS?': '+COPS: 0\r\nOK\r\n'})
+                modem = self.apnModem(network=network)
                 reading = modem.readApn().result(3)
-                self.assertIsNone(reading.network)
-                self.assertIsNone(reading.lte)
+                self.assertEqual((reading.network, reading.networkRead), (None, True))
                 self.assertEqual(reading.configured.apn, 'CMNET')
+
+    def testNetworkApnNotReadWhenTheModemDoesNotAnswer(self):
+        with mock.patch.object(Modem, 'APN_TIMEOUT', 0.2):
+            modem = self.apnModem(network=None)
+            reading = modem.readApn().result(5)
+        self.assertEqual((reading.network, reading.networkRead), (None, False))
+        self.assertEqual(reading.configured.apn, 'CMNET')  # what was read is kept
+        self.assertNotIn('AT+CGCONTRDP=1', FakeSerial.instances[0].commands())  # no second wait with the other form
+
+    def testApnReadingFailsWhenTheConnectionIsLost(self):
+        modem = self.apnModem(network=lambda fake: fake.unplug())
+        with self.assertRaises(NotConnectedError):
+            modem.readApn().result(5)
 
     def testApnReadingFailsWhenTheModemRefusesTheContexts(self):
         modem = self.apnModem(**{'AT+CGDCONT?': 'ERROR\r\n'})
@@ -1266,6 +1281,17 @@ class ModemTest(unittest.TestCase):
             change = modem.setApn('free').result(3)
         self.assertEqual((change.status, change.radio), ('written', 'failed'))
         self.assertIn('restart it by hand', '\n'.join(logs.output))
+
+    def testRestartAlreadyInProgressTakesTheNewApn(self):
+        modem = self.apnModem(**{'AT+CFUN=4': 'ERROR\r\n'})
+
+        def alreadyRestarting(reason):  # a self-test restarted the modem a moment before
+            modem._state = ConnectionState.RESTARTING
+            raise NotConnectedError('The modem is already restarting')
+
+        with mock.patch.object(modem, 'restart', side_effect=alreadyRestarting), self.assertNoLogs('wwanlib', level='ERROR'):
+            change = modem.setApn('free').result(3)
+        self.assertEqual((change.status, change.radio), ('written', 'restart'))
 
     def testConnectionLostWhileSwitchingTheRadioOff(self):
         modem = self.apnModem(**{'AT+CFUN=4': lambda fake: fake.unplug()})

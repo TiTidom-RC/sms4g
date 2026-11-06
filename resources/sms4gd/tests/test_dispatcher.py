@@ -395,16 +395,22 @@ class DispatcherTest(unittest.TestCase):
         self.dispatcher = Dispatcher(self.messages, self.modem, self.out, 'KEY', diagnostic=False)
         self.dispatch(cmd='readApn')
         self.assertEqual(self.modem.calls, [('readApn',)])
-        self.modem.future.set_result(ApnReading(PdpContext(1, 'IP', 'CMNET'), None, 7))
+        self.modem.future.set_result(ApnReading(PdpContext(1, 'IP', 'CMNET'), None))
         self.assertEqual(self.out.events, [{'type': 'apn', 'action': 'read', 'status': 'ok', 'reason': '',
                                             'configured': {'cid': 1, 'pdpType': 'IP', 'apn': 'CMNET'}, 'network': None,
-                                            'lte': True}])
+                                            'networkRead': True}])
 
     def testApnReadingWhenContextOneIsNotDefined(self):
         self.dispatch(cmd='readApn')
-        self.modem.future.set_result(ApnReading(None, 'free', None))
+        self.modem.future.set_result(ApnReading(None, 'free'))
         event = self.out.events[0]
-        self.assertEqual((event['configured'], event['network'], event['lte']), (None, 'free', None))
+        self.assertEqual((event['configured'], event['network'], event['networkRead']), (None, 'free', True))
+
+    def testNetworkApnNotRead(self):
+        self.dispatch(cmd='readApn')
+        self.modem.future.set_result(ApnReading(PdpContext(1, 'IP', 'CMNET'), None, networkRead=False))
+        event = self.out.events[0]
+        self.assertEqual((event['network'], event['networkRead']), (None, False))
 
     def testApnIsWritten(self):
         self.dispatch(cmd='setApn', apn='free')

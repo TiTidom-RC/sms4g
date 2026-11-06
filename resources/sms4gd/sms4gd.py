@@ -133,10 +133,10 @@ def logApn():
         return
     if reading.network:
         network = f'"{reading.network}"'
-    elif reading.lte is False:
-        network = 'none (not registered in LTE)'
+    elif not reading.networkRead:
+        network = 'not read (no answer from the modem)'
     else:
-        network = 'none'
+        network = 'none (no connection in LTE)'
     logging.info("Diagnostic APN : memory %s, network %s", describeContext(reading.configured), network)
 
 

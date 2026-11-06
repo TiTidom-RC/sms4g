@@ -1063,6 +1063,10 @@ class sms4g extends eqLogic {
 		if (preg_match('/^the modem has no working restart command \((.*)\)$/', $reason, $match)) {
 			return __('ce modem n\'accepte aucune commande de redémarrage', __FILE__) . ' (' . secureXSS($match[1]) . ')';
 		}
+		// APN accepté par le modem mais pas conservé (le démon préfixe la raison du type de l'erreur)
+		if (preg_match('/^(?:\w+: )?the modem accepted the APN but still reports: (.*)$/', $reason, $match)) {
+			return __('le modem a accepté l\'APN mais indique toujours', __FILE__) . ' : ' . secureXSS($match[1]);
+		}
 		if (preg_match('/^the modem refused the command \((.*)\)$/', $reason, $match)) {
 			return __('le modem a refusé la commande', __FILE__) . ' (' . secureXSS($match[1]) . ')';
 		}
@@ -1184,23 +1188,22 @@ class sms4g extends eqLogic {
 		}
 
 		$network = (isset($_message['network']) && $_message['network'] !== null && $_message['network'] !== '') ? htmlspecialchars((string) $_message['network'], $flags, 'UTF-8') : '';
-		$lte = (isset($_message['lte']) && is_bool($_message['lte'])) ? $_message['lte'] : null;
+		$networkRead = !isset($_message['networkRead']) || $_message['networkRead'] !== false;
+		// La mémoire est affichée sans conclusion : c'est la ligne « Réseau » qui permet de l'interpréter (CMNET en mémoire
+		// sans APN attribué par le réseau : l'APN est probablement en cause)
 		if ($configured === null) {
 			$memory = array('status' => 'warn', 'label' => __('Mémoire : contexte 1 non défini', __FILE__));
 		} else {
 			$value = ($configuredApn === '') ? __('vide (automatique)', __FILE__) : htmlspecialchars((string) $configuredApn, $flags, 'UTF-8');
-			// Un APN en mémoire sans APN attribué par le réseau en 4G : c'est probablement lui que l'opérateur refuse
-			$suspect = ($lte === true && $network === '' && $configuredApn !== '');
-			$memory = array('status' => $suspect ? 'warn' : 'ok', 'label' => __('Mémoire', __FILE__) . ' : ' . $value);
+			$memory = array('status' => 'ok', 'label' => __('Mémoire', __FILE__) . ' : ' . $value);
 		}
+		// Une seule signification par réponse : un APN, aucun (pas de connexion 4G), ou non lu (le modem n'a pas répondu)
 		if ($network !== '') {
 			$networkIndicator = array('status' => 'ok', 'label' => __('Réseau', __FILE__) . ' : ' . $network);
-		} elseif ($lte === false) {
-			$networkIndicator = array('status' => 'unknown', 'label' => __('Réseau : non applicable hors 4G', __FILE__));
-		} elseif ($lte === true) {
-			$networkIndicator = array('status' => 'warn', 'label' => __('Réseau : aucun APN attribué', __FILE__));
+		} elseif ($networkRead) {
+			$networkIndicator = array('status' => 'warn', 'label' => __('Réseau : aucun APN attribué (pas de connexion 4G)', __FILE__));
 		} else {
-			$networkIndicator = array('status' => 'warn', 'label' => __('Réseau : non enregistré', __FILE__));
+			$networkIndicator = array('status' => 'unknown', 'label' => __('Réseau : non lu (le modem n\'a pas répondu)', __FILE__));
 		}
 		$data['memory'] = $memory;
 		$data['network'] = $networkIndicator;
@@ -1334,8 +1337,9 @@ class sms4g extends eqLogic {
 				return;
 		}
 		// Carte SIM absente : le démon continue d'essayer (elle peut être en retard après un redémarrage du modem, ou être
-		// insérée entre-temps) ; l'utilisateur est prévenu dès la première tentative ratée
-		$simMissing = in_array($state, array('reconnecting', 'disconnected')) && isset($_message['errorType']) && $_message['errorType'] == 'SimNotInsertedError';
+		// insérée entre-temps) ; l'utilisateur est prévenu dès la première tentative ratée. À l'abandon (« Déconnecté »), le
+		// démon s'arrête et la gestion automatique de Jeedom le relance : les essais reprennent.
+		$simMissing = in_array($state, array('reconnecting', 'restarting', 'disconnected')) && isset($_message['errorType']) && $_message['errorType'] == 'SimNotInsertedError';
 		if ($simMissing) {
 			$text .= ' : ' . __('carte SIM absente', __FILE__);
 		}
@@ -1346,7 +1350,7 @@ class sms4g extends eqLogic {
 
 		if ($simMissing && count(message::byPluginLogicalId('sms4g', 'sms4gSimMissing')) == 0) {
 			log::add('sms4g', 'error', '[MODEM] Carte SIM absente ou mal insérée');
-			message::add('sms4g', __('Carte SIM absente ou mal insérée : insérez-la (modem débranché), puis rebranchez le modem. Le plugin réessaie de s\'y connecter ; s\'il a abandonné (« Déconnecté »), redémarrez le démon.', __FILE__), '', 'sms4gSimMissing');
+			message::add('sms4g', __('Carte SIM absente ou mal insérée : insérez-la (modem débranché), puis rebranchez le modem. Le plugin réessaie de s\'y connecter tant que la carte est absente (si la gestion automatique du démon est désactivée, redémarrez le démon).', __FILE__), '', 'sms4gSimMissing');
 		} elseif ($state == 'connected' && count(message::byPluginLogicalId('sms4g', 'sms4gSimMissing')) > 0) {
 			message::removeAll('sms4g', 'sms4gSimMissing');
 		}

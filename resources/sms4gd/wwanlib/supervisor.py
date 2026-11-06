@@ -211,17 +211,17 @@ class Supervisor:
                 return None if self._stop.wait(self._portSettle) else True
 
     def _announce(self, attempt: int, retryIn: float | None = None, cause: Exception | None = None) -> None:
-        """ :param cause: the error of the last attempt, given as ``errorType`` (none when the connection was lost) """
+        """ :param cause: the error of the last attempt, given as ``errorType`` (none when the connection was lost), also
+            while the modem restarts: a SIM card that does not come back is told without waiting for the last attempt """
+        causeDetails: dict[str, Any] = {'errorType': type(cause).__name__} if cause is not None else {}
         reason = self._restartReason
         if reason is not None:
-            self._setState(ConnectionState.RESTARTING, reason=reason)
+            self._setState(ConnectionState.RESTARTING, reason=reason, **causeDetails)
             return
         details: dict[str, Any] = {'attempt': attempt, 'maxAttempts': self._maxAttempts}
         if retryIn is not None:
             details['retryIn'] = retryIn
-        if cause is not None:
-            details['errorType'] = type(cause).__name__
-        self._setState(ConnectionState.RECONNECTING, **details)
+        self._setState(ConnectionState.RECONNECTING, **details, **causeDetails)
 
     def _reconnect(self, error: Exception | None) -> bool:
         """ :return: True once reconnected, False if given up (the final state is published) or stopped """

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .apn import (CONTEXT, DEFAULT_PDP_TYPES, ApnChange, ApnReading, PdpContext, contextOf, describeContext, isValidApn,
-                  parseAccessTechnology, parseContexts, parseNetworkApn, sameApn)
+                  parseContexts, parseNetworkApn, sameApn)
 from .events import (ConnectionState, EventDispatcher, ModemIdentified, NetworkChanged, Registration, SignalChanged,
                      SmsReceived, StateChanged, UnsolicitedNotification)
 from .exceptions import (CommandError, IncorrectPinError, NotConnectedError, PduModeNotSupportedError, PinRequiredError,
@@ -96,6 +96,7 @@ class Modem:
     PDU_MODE_RETRY_DELAY = 1.0  # seconds between two attempts
     SIM_ATTEMPTS = 3  # a SIM card is looked for a few times: a modem that just started may not have detected it yet
     SIM_RETRY_DELAY = 2.0  # seconds between two attempts
+    APN_TIMEOUT = 10.0  # seconds for an APN command (AT+CGDCONT, AT+CGCONTRDP)
     RADIO_TIMEOUT = 15.0  # seconds for AT+CFUN=4 / AT+CFUN=1
 
     def __init__(self, port: str, baudrate: int = 115200, pin: str | None = None, options: ModemOptions | None = None):
@@ -259,10 +260,10 @@ class Modem:
         return result
 
     def readApn(self) -> Future:
-        """ Reads the APN of context 1 in the memory of the modem (``AT+CGDCONT?``), the one the network gave
-        (``AT+CGCONTRDP``, only while registered in LTE) and the access technology (``AT+COPS?``). Changes nothing.
-        Does not block: the Future resolves to an ``ApnReading``, or fails with ``CommandError`` (``AT+CGDCONT?``
-        refused), ``TimeoutException`` or ``NotConnectedError``. """
+        """ Reads the APN of context 1 in the memory of the modem (``AT+CGDCONT?``) and the one the network gave
+        (``AT+CGCONTRDP``, only while connected in LTE). Changes nothing. Does not block: the Future resolves to an
+        ``ApnReading`` (the APN of the network may be none, or not read), or fails with ``CommandError`` / ``TimeoutException``
+        (the APN of the memory could not be read) or ``NotConnectedError``. """
         return self._inBackground('wwanlib-apn-read', self._readApn)
 
     def setApn(self, apn: str) -> Future:
@@ -581,15 +582,14 @@ class Modem:
 
     # ---- APN (readApn / setApn, in their own thread) -----------------------------------------------
 
-    @staticmethod
-    def _apnCommand(session: _Session, command: str, priority: int = Priority.CONSOLE, timeout: float = 10.0,
-                    maxHold: float = 180.0) -> list[str]:
-        return session.executor.submit(command, timeout, priority, maxHold=maxHold).result()
+    def _apnCommand(self, session: _Session, command: str, priority: int = Priority.CONSOLE) -> list[str]:
+        """ A command that does not answer keeps the port for a short while only (3 times its delay, then the modem is
+        resynchronized), not for the three minutes of the other commands: the SMS to send are not held up """
+        return session.executor.submit(command, self.APN_TIMEOUT, priority, maxHold=3 * self.APN_TIMEOUT).result()
 
     def _radioCommand(self, session: _Session, command: str) -> list[str]:
-        """ A radio command that does not answer keeps the port for a short while only: the next one (AT+CFUN=1 after
-        AT+CFUN=4) is not held up for the three minutes of the other commands """
-        return self._apnCommand(session, command, Priority.CONTROL, self.RADIO_TIMEOUT, maxHold=2 * self.RADIO_TIMEOUT)
+        """ Same for AT+CFUN=4 / AT+CFUN=1: the second one is not held up for long by the first one """
+        return session.executor.submit(command, self.RADIO_TIMEOUT, Priority.CONTROL, maxHold=2 * self.RADIO_TIMEOUT).result()
 
     @staticmethod
     def _logUnreadable(command: str, lines: list[str]) -> None:
@@ -604,21 +604,23 @@ class Modem:
         return contextOf(contexts)
 
     def _readApn(self, session: _Session) -> ApnReading:
+        """ The APN of the memory is needed (any failure fails the reading); the one of the network is not: each answer
+        has one meaning, an APN, none (an answer without APN, or ERROR: no connection in LTE), or not read (no answer) """
         configured = self._readContext(session)
-        network: str | None = None
         # Without a parameter, the connections in use; some firmwares only answer for a given context
         for command in ('AT+CGCONTRDP', f'AT+CGCONTRDP={CONTEXT}'):
             try:
                 network, unreadable = parseNetworkApn(self._apnCommand(session, command))
-                self._logUnreadable(command, unreadable)
-                break
             except CommandError as e:
-                log.debug('%s: %s', command, e)  # no connection in use (not in LTE), or not known by this modem
-        try:
-            accessTechnology = parseAccessTechnology(self._apnCommand(session, 'AT+COPS?'))
-        except CommandError:
-            accessTechnology = None
-        return ApnReading(configured, network, accessTechnology)
+                log.debug('%s: %s', command, e)
+                continue
+            except TimeoutException:
+                # The port is held until the late answer (or resynchronized): no second wait with the other form
+                log.info('%s: no answer, the APN of the network is not read', command)
+                return ApnReading(configured, None, networkRead=False)
+            self._logUnreadable(command, unreadable)
+            return ApnReading(configured, network)
+        return ApnReading(configured, None)
 
     def _writeApnAlone(self, session: _Session, apn: str) -> ApnChange:
         """ A second change waits for the end of the first one: it then finds the APN already written, or writes its own """
@@ -684,11 +686,18 @@ class Modem:
         return 'cfun'
 
     def _restartForApn(self) -> str:
-        """ :return: 'restart', or 'failed' when the modem cannot be restarted """
+        """ :return: 'restart' (a restart already in progress included: it takes the new APN too), or 'failed' when the
+        modem cannot be restarted """
         try:
             self.restart('apn').result(self.RESTART_WAIT)
         except TimeoutError:
             pass  # still restarting
+        except NotConnectedError as error:
+            if self._state == ConnectionState.RESTARTING:
+                log.info('The modem is already restarting: it takes the new APN')
+                return 'restart'
+            log.error('The modem could not be restarted to take the new APN (%s): restart it by hand', error)
+            return 'failed'
         except WwanException as error:
             log.error('The modem could not be restarted to take the new APN (%s): restart it by hand', error)
             return 'failed'

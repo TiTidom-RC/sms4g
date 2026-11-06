@@ -111,8 +111,8 @@ def apnMessage(action: str, result: ApnReading | ApnChange | None = None, reason
     """ The `apn` message, answer to `readApn` (`action` `read`) and to `setApn` (`action` `apply`).
     `status`: `ok` (read), `written` or `unchanged` (apply: the modem already had it, nothing written), `error` (`reason`
     says why). `configured`: context 1 in the memory of the modem (`cid`, `pdpType`, `apn`; empty APN = given by the
-    operator), null when it is not defined. Read: `network`, the APN the network gave (null when none: not in LTE, not
-    registered), and `lte` (registered in LTE: true / false, null when unknown). Apply: `previous` APN (null when context 1
+    operator), null when it is not defined. Read: `network`, the APN the network gave (null when none: no connection in
+    LTE, or not read), and `networkRead` (false when the modem did not answer). Apply: `previous` APN (null when context 1
     was not defined) and `radio`, how the modem took it (`cfun`: radio off and on, `restart`, `failed`; null when
     unchanged). """
     def context(value: PdpContext | None) -> dict[str, Any] | None:
@@ -120,7 +120,7 @@ def apnMessage(action: str, result: ApnReading | ApnChange | None = None, reason
 
     payload: dict[str, Any] = {'type': 'apn', 'action': action, 'status': 'error', 'reason': reason, 'configured': None}
     if isinstance(result, ApnReading):
-        payload.update(status='ok', configured=context(result.configured), network=result.network, lte=result.lte)
+        payload.update(status='ok', configured=context(result.configured), network=result.network, networkRead=result.networkRead)
     elif isinstance(result, ApnChange):
         payload.update(status=result.status, configured=context(result.configured), previous=result.previous, radio=result.radio)
     return payload

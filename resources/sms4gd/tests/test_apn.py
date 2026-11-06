@@ -6,8 +6,8 @@ The answers follow 3GPP 27.007 and the AT manuals of SimCom and Quectel (no capt
 
 import unittest
 
-from wwanlib.apn import (ApnReading, PdpContext, contextOf, describeContext, isValidApn, parseAccessTechnology, parseContexts,
-                         parseNetworkApn, sameApn, splitFields)
+from wwanlib.apn import (PdpContext, contextOf, describeContext, isValidApn, parseContexts, parseNetworkApn, sameApn,
+                         splitFields)
 
 
 class ApnValueTest(unittest.TestCase):
@@ -66,21 +66,6 @@ class ParsingTest(unittest.TestCase):
         self.assertEqual(parseNetworkApn(['OK']), (None, []))
         self.assertEqual(parseNetworkApn(['+CGCONTRDP: 1,5,""', 'OK']), (None, []))
         self.assertEqual(parseNetworkApn(['+CGCONTRDP: 1', 'OK']), (None, ['+CGCONTRDP: 1']))
-
-    def testAccessTechnology(self):
-        self.assertEqual(parseAccessTechnology(['+COPS: 0,0,"Free Free",7', 'OK']), 7)
-        self.assertEqual(parseAccessTechnology(['+COPS: 0,0,"Orange F",8', 'OK']), 8)
-        self.assertEqual(parseAccessTechnology(['+COPS: 0,0,"Free",2', 'OK']), 2)
-        self.assertIsNone(parseAccessTechnology(['+COPS: 0', 'OK']))
-        self.assertIsNone(parseAccessTechnology(['+COPS: 0,0,"Free"', 'OK']))
-        self.assertIsNone(parseAccessTechnology(['OK']))
-
-    def testLte(self):
-        self.assertTrue(ApnReading(None, 'free', 7).lte)
-        self.assertTrue(ApnReading(None, None, 8).lte)  # LTE-M of a Quectel BG96
-        self.assertFalse(ApnReading(None, None, 2).lte)
-        self.assertFalse(ApnReading(None, None, 0).lte)
-        self.assertIsNone(ApnReading(None, None, None).lte)
 
     def testDescriptionNeverHoldsTheAddresses(self):
         self.assertEqual(describeContext(PdpContext(1, 'IP', 'CMNET')), 'context 1: IP, APN "CMNET"')

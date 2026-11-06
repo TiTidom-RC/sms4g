@@ -17,9 +17,6 @@ APN_PATTERN = re.compile(r'^[A-Za-z0-9.-]{0,100}$')
 CONTEXT = 1  # the context used to register in LTE
 # Types tried in order when context 1 is not defined yet (IP for the old 3G modems that do not know IPV4V6)
 DEFAULT_PDP_TYPES = ('IPV4V6', 'IP')
-# <AcT> of +COPS in LTE (3GPP 27.007: 7 E-UTRAN, 9 E-UTRAN NB-S1, 10 E-UTRA on 5GC, 13 E-UTRA-NR dual). Quectel gives
-# 8 for LTE-M (eMTC) on the BG96, where 3GPP has EC-GSM-IoT, which these modems do not offer.
-LTE_ACCESS_TECHNOLOGIES = frozenset({7, 8, 9, 10, 13})
 
 
 @dataclass(frozen=True)
@@ -33,13 +30,10 @@ class PdpContext:
 class ApnReading:
     """ Result of ``Modem.readApn`` """
     configured: PdpContext | None  # context 1 in the memory of the modem, None when it is not defined
-    network: str | None  # APN given by the network to the connection in use, None when there is none (not in LTE...)
-    accessTechnology: int | None  # <AcT> of +COPS, None when unknown (not registered...)
-
-    @property
-    def lte(self) -> bool | None:
-        """ Whether the modem is registered in LTE, None when unknown """
-        return None if self.accessTechnology is None else self.accessTechnology in LTE_ACCESS_TECHNOLOGIES
+    # APN the network gave to the connection in use. None when there is none (an answer without APN, or ERROR: no
+    # connection in LTE, which the modem needs to register there), or when it could not be read (see networkRead)
+    network: str | None
+    networkRead: bool = True  # False when the modem did not answer: nothing is known about the APN of the network
 
 
 @dataclass(frozen=True)
@@ -112,15 +106,6 @@ def parseNetworkApn(lines: list[str]) -> tuple[str | None, list[str]]:
             found.append((int(fields[0]), fields[2]))
     apn = next((apn for cid, apn in found if cid == CONTEXT), found[0][1] if found else None)
     return apn, unreadable
-
-
-def parseAccessTechnology(lines: list[str]) -> int | None:
-    """ <AcT> of ``+COPS: <mode>,<format>,"<operator>",<AcT>``, None when the modem is not registered or does not say """
-    line = next(iter(_answerLines('+COPS:', lines)), None)
-    if line is None:
-        return None
-    fields = splitFields(line[len('+COPS:'):])
-    return int(fields[3]) if len(fields) >= 4 and fields[3].isdigit() else None
 
 
 def describeContext(context: PdpContext | None) -> str:

@@ -40,7 +40,10 @@ class ApnReading:
     """ Result of ``Modem.readApn``: every context of the memory, every connection in use, nothing left out """
     contexts: tuple[PdpContext, ...]  # the contexts in the memory of the modem (AT+CGDCONT?)
     connections: tuple[Connection, ...]  # the connections in use (AT+CGCONTRDP): empty when there is none, or not read
-    connectionsRead: bool = True  # False when the modem did not answer: nothing is known about the connections
+    # False when nothing is known about the connections: the modem did not answer, or refused both forms of AT+CGCONTRDP
+    # (connectionsRefused). A modem without any connection answers OK without any line, not ERROR.
+    connectionsRead: bool = True
+    connectionsRefused: bool = False
     # The connections were read for this context only (the modem refused AT+CGCONTRDP without a parameter): nothing is
     # known about the others. None when every connection was read.
     onlyContext: int | None = None
@@ -225,7 +228,7 @@ def describeReading(reading: ApnReading) -> str:
     if not parts:
         parts.append('no context in the memory')
     if not reading.connectionsRead:
-        parts.append('connections not read (no answer from the modem)')
+        parts.append('connections not read (' + ('AT+CGCONTRDP refused' if reading.connectionsRefused else 'no answer from the modem') + ')')
     elif reading.onlyContext is not None:
         parts.append(f'connections read for context {reading.onlyContext} only (AT+CGCONTRDP without a parameter refused)')
     return ' | '.join(parts)

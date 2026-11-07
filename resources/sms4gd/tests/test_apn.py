@@ -9,8 +9,8 @@ import unittest
 from wwanlib.apn import (ApnReading, Connection, PdpContext, addressFamilies, contextOf, describeContext, describeReading,
                          familiesLabel, isValidApn, parseConnections, parseContexts, sameApn, splitFields)
 
-# Answers of the SIM7600G-H (LE20B04SIM7600G22, SIM Free) captured on 2026-11-07: same layout, but the addresses are replaced
-# by documentation ones (192.0.2.0/24, 198.51.100.0/24 and 2001:db8::/32, written as the modem writes them, 16 numbers)
+# Answers of a SIM7600G-H (LE20B04SIM7600G22): same layout, the addresses replaced by documentation ones (192.0.2.0/24,
+# 198.51.100.0/24 and 2001:db8::/32, written as the modem writes them, 16 numbers)
 _IPV6 = '32.1.13.184.0.0.0.0.0.0.0.0.0.0.0.{}'
 SIM7600_CGDCONT = ['+CGDCONT: 1,"IP","","0.0.0.0",0,0,0,0',
                    '+CGDCONT: 2,"IPV4V6","ims","0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0",0,0,0,0',
@@ -110,6 +110,13 @@ class ParsingTest(unittest.TestCase):
     def testReadingWhenTheConnectionsWereNotRead(self):
         reading = ApnReading((PdpContext(1, 'IP', 'CMNET'),), (), connectionsRead=False)
         self.assertEqual(describeReading(reading), '1 IP "CMNET" | connections not read (no answer from the modem)')
+        refused = ApnReading((PdpContext(1, 'IP', 'CMNET'),), (), connectionsRead=False, connectionsRefused=True)
+        self.assertEqual(describeReading(refused), '1 IP "CMNET" | connections not read (AT+CGCONTRDP refused)')
+
+    def testReadingWithoutAnyConnection(self):
+        # SIM7600G-H with its radio off: OK without any line to both forms (2026-11-07)
+        reading = ApnReading(tuple(parseContexts(SIM7600_CGDCONT)[0]), parseConnections(['OK'])[0])
+        self.assertEqual(describeReading(reading), '1 IP "" inactive | 2 IPV4V6 "ims" inactive | 3 IPV4V6 "" inactive')
 
     def testConnectionOfAContextThatIsNotInTheMemory(self):
         reading = ApnReading((), (Connection(4, 7, 'internet', ('IPv4',)),))

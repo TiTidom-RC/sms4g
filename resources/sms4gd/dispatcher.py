@@ -115,7 +115,7 @@ def apnMessage(action: str, result: ApnReading | ApnChange | None = None, reason
     Read: `contexts`, one entry per context (memory and connections put together, by number): `cid`; `pdpType` and `apn`
     of the memory (null when the context is not in the memory); `active` (true / false, null when its connection was not
     read: no answer from the modem, or the modem only answered for context 1); for an active one, `networkApn`, `families` (`IPv4`, `IPv6` or `IPv4v6` obtained, empty when unknown) and
-    `bearer` (null when the modem does not say). `connectionsRead`: false when the modem did not answer for them.
+    `bearer` (null when the modem does not say). `connectionsRead`: false when nothing is known about them (no answer, or AT+CGCONTRDP refused).
     Apply: `previous` APN (null when context 1 was not defined) and `radio`, how the modem took it (`cfun`: radio off and
     on, `restart`, `failed`; null when unchanged). """
     def context(value: PdpContext | None) -> dict[str, Any] | None:

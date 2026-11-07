@@ -608,7 +608,8 @@ class Modem:
 
     def _readApn(self, session: _Session) -> ApnReading:
         """ The contexts of the memory are needed (any failure fails the reading); the connections in use are not: each
-        answer has one meaning, the connections listed, none (an answer without any, or ERROR), or not read (no answer) """
+        answer has one meaning, the connections listed, none (OK without any line), or not read (no answer, or ERROR to
+        both forms: a refused request, not an absence of connection) """
         contexts = tuple(self._readContexts(session))
         # Without a parameter, every connection in use; some firmwares only answer for a given context
         for command in ('AT+CGCONTRDP', f'AT+CGCONTRDP={CONTEXT}'):
@@ -624,7 +625,8 @@ class Modem:
             self._logUnreadable(command, unreadable)
             # The second form only tells about context 1: the other contexts are not read, not taken for inactive
             return ApnReading(contexts, connections, onlyContext=None if command == 'AT+CGCONTRDP' else CONTEXT)
-        return ApnReading(contexts, ())
+        log.info('AT+CGCONTRDP refused in both forms: the connections in use are not read')
+        return ApnReading(contexts, (), connectionsRead=False, connectionsRefused=True)
 
     def _writeApnAlone(self, session: _Session, apn: str) -> ApnChange:
         """ A second change waits for the end of the first one: it then finds the APN already written, or writes its own """

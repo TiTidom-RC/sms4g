@@ -1182,14 +1182,23 @@ class ModemTest(unittest.TestCase):
         self.assertFalse([c for c in self.commandsAfterConnection() if c.startswith(('AT+CGDCONT=', 'AT+CFUN='))])
 
     def testNoConnectionWhenTheModemAnswersWithoutAny(self):
-        # An answer without any connection, or ERROR to both forms
-        for network in ('OK\r\n', 'ERROR\r\n', '+CME ERROR: 4\r\n'):
-            with self.subTest(network):
+        # What the SIM7600G-H answers with its radio off (AT+CFUN=4, captured on 2026-11-07): OK, without any line
+        reading = self.apnModem(network='OK\r\n').readApn().result(3)
+        self.assertEqual((reading.connections, reading.connectionsRead, reading.onlyContext), ((), True, None))
+        self.assertTrue(reading.connectionKnown(1))  # inactive, for sure
+        self.assertEqual(reading.configured.apn, 'CMNET')
+
+    def testConnectionsNotReadWhenTheModemRefusesBothForms(self):
+        # ERROR is a refused request (the SIM7600G-H answers ERROR to AT+CGCONTRDP=99), not "no connection"
+        for refusal in ('ERROR\r\n', '+CME ERROR: 4\r\n'):
+            with self.subTest(refusal):
                 FakeSerial.instances.clear()
-                modem = self.apnModem(network=network)
-                reading = modem.readApn().result(3)
-                self.assertEqual((reading.connections, reading.connectionsRead), ((), True))
-                self.assertEqual(reading.configured.apn, 'CMNET')
+                with self.assertLogs('wwanlib', level='INFO') as logs:
+                    reading = self.apnModem(network=refusal).readApn().result(3)
+                self.assertEqual((reading.connections, reading.connectionsRead, reading.connectionsRefused), ((), False, True))
+                self.assertFalse(reading.connectionKnown(1))
+                self.assertEqual(reading.configured.apn, 'CMNET')  # what was read is kept
+                self.assertIn('refused in both forms', '\n'.join(logs.output))
 
     def testConnectionsNotReadWhenTheModemDoesNotAnswer(self):
         with mock.patch.object(Modem, 'APN_TIMEOUT', 0.2):

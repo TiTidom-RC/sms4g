@@ -1271,12 +1271,13 @@ class sms4g extends eqLogic {
 	 * Écrit « Réponse AT » puis « Statut AT » (commande, flèche, code de fin en majuscules, détail éventuel entre
 	 * parenthèses). La réponse passe en premier : un scénario déclenché par le statut trouve toujours une réponse
 	 * complète. Les textes sont protégés des balises HTML : ils peuvent venir du modem, ou d'une commande saisie par
-	 * une IA ; les guillemets restent lisibles (+COPS: 0,0,"Free Free",7).
+	 * une IA ; les guillemets restent lisibles (+COPS: 0,0,"Free Free",7). La commande rappelée dans le statut est
+	 * masquée (maskSecrets) : un code PIN saisi, même refusé, peut être le bon. La réponse du modem reste complète.
 	 */
 	private static function setAtResult($_modem, $_command, $_status, $_detail, $_response, $_time = null) {
 		$labels = array('ok' => 'OK', 'error' => 'ERROR', 'timeout' => 'TIMEOUT', 'refused' => 'REFUSED', 'notConnected' => 'NOT CONNECTED');
 		$label = isset($labels[$_status]) ? $labels[$_status] : strtoupper($_status);
-		$status = $_command . ' → ' . $label;
+		$status = self::maskSecrets($_command) . ' → ' . $label;
 		if ($_detail != '') {
 			$status .= ' (' . $_detail . ')';
 		}

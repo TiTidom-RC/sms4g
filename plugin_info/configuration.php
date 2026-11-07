@@ -207,7 +207,7 @@ if (!isConnect('admin')) {
                         <option value="custom">{{Personnalisé}}</option>
                     </select>
                     <input class="configKey form-control" data-l1key="apnCustom" style="width:220px;" maxlength="100" placeholder="free" title="{{APN de votre opérateur, par exemple : Free « free », Orange « orange », SFR « sl2sfr », Bouygues Telecom « mmsbouygtel.com ». Lettres, chiffres, points et tirets uniquement, 100 caractères au plus.}}" />
-                    <i id="apnCustomInvalid" class="fas fa-exclamation-triangle tooltips" style="color:var(--al-danger-color)!important; margin-left:-8px; display:none;" title="{{APN non valide : lettres, chiffres, points et tirets uniquement, 100 caractères au plus}}"></i>
+                    <i id="apnCustomInvalid" class="fas fa-exclamation-triangle tooltips" style="color:var(--al-danger-color)!important; display:none;" title="{{APN non valide : lettres, chiffres, points et tirets uniquement, 100 caractères au plus}}"></i>
                     <button type="button" id="btn_applyApn" class="btn btn-sm btn-warning">
                         <i class="fas fa-check"></i> {{Appliquer}}
                     </button>

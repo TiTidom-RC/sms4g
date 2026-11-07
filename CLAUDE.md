@@ -94,9 +94,10 @@ Le workspace contient, à côté de ce dépôt, des dépôts voisins directement
 
 ## Sécurité et données sensibles
 
-- **Logs** : ne jamais journaliser en clair l'apikey, le code PIN ni les numéros de téléphone complets.
-  - Côté Python, le filtre `SecretMaskFilter` (`sms4gd.py`) masque apikey, `AT+CPIN` et numéros `+XXXXXXXX` : toute nouvelle donnée sensible doit y être ajoutée (règle dans `_RULES`) plutôt que masquée au cas par cas.
-  - Côté PHP, masquer avant `log::add` (cf. `preg_replace` sur `--apikey|--pin` dans `deamon_start()`), sans altérer la commande réellement exécutée.
+- **Logs** : ne jamais journaliser en clair l'apikey, le code PIN, les numéros de téléphone complets ni les adresses IP que l'opérateur attribue au modem.
+  - Côté Python, le filtre `SecretMaskFilter` (`sms4gd.py`) masque apikey, `AT+CPIN`, numéros `+XXXXXXXX`, et les adresses des réponses `AT+CGCONTRDP` / `AT+CGDCONT?` (via `wwanlib.maskAddresses`) : toute nouvelle donnée sensible doit y être ajoutée (règle dans `_RULES`, ou fonction de `wwanlib` appelée par le filtre) plutôt que masquée au cas par cas.
+  - Côté PHP, tout texte journalisé qui vient de l'extérieur (commande AT, réponse du modem, commande de lancement du démon) passe par `sms4g::maskSecrets()` avant `log::add`, sans altérer la commande réellement exécutée. Ses règles sont celles de `SecretMaskFilter`, dans le même ordre : une nouvelle donnée sensible s'ajoute dans les deux. Un numéro déjà isolé (expéditeur d'un SMS) passe par `maskNumber()`.
+  - **Adresses IP : seules celles que le réseau attribue au modem sont concernées**, c'est-à-dire les champs d'adresse des lignes `+CGCONTRDP:` / `+CGDCONT:` (adresse obtenue, passerelle, DNS). Leur masquage garde la forme et le début (`10.x.x.x`, `2a01:x:x::x`), utiles au diagnostic. Les adresses techniques du plugin ne sont pas des données personnelles et ne se masquent pas : `127.0.0.1` du démon et du callback, ports, URL de Jeedom, adresses de la configuration. Ne jamais ajouter de règle qui masque toute adresse IP du log.
 - **Accès API** : le mode API du plugin est forcé à `localhost` (`api::sms4g::mode` dans `install.php`) ; ne pas relâcher cette contrainte.
 - Toute entrée provenant du socket ou du callback HTTP doit être authentifiée par l'apikey avant traitement.
 - Les SMS reçus sont des entrées non fiables (routées vers le moteur d'interactions) : ne jamais les exécuter/interpoler sans contrôle.

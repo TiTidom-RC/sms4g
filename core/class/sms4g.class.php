@@ -304,8 +304,8 @@ class sms4g extends eqLogic {
 		$cmd .= ' --callback ' . network::getNetworkAccess('internal', 'http:127.0.0.1:port:comp') . '/plugins/sms4g/core/php/jeesms4g.php';
 		$cmd .= ' --apikey ' . jeedom::getApiKey('sms4g');
 		$cmd .= ' --pid ' . jeedom::getTmpFolder('sms4g') . '/deamon.pid';
-		// Masque apikey/pin uniquement dans le log (la commande exécutée ci-dessous garde les vraies valeurs)
-		log::add('sms4g', 'info', 'Lancement démon sms4g : ' . preg_replace('/(--apikey|--pin|--ownnumber)\s+\S+/', '$1 ***', $cmd));
+		// Masque apikey, PIN et numéro uniquement dans le log (la commande exécutée ci-dessous garde les vraies valeurs)
+		log::add('sms4g', 'info', 'Lancement démon sms4g : ' . self::maskSecrets($cmd));
 		$result = exec($cmd . ' >> ' . log::getPathToLog('sms4gd') . ' 2>&1 &');
 		$i = 0;
 		while ($i < 30) {
@@ -1259,7 +1259,7 @@ class sms4g extends eqLogic {
 		if (is_numeric($_timeout) && $_timeout > 0) {
 			$payload['timeout'] = (float) $_timeout;
 		}
-		log::add('sms4g', 'info', '[AT] Commande envoyée au démon : ' . self::maskPhoneNumbers($command));
+		log::add('sms4g', 'info', '[AT] Commande envoyée au démon : ' . self::maskSecrets($command));
 		if (!self::sendToDaemon($payload)) {
 			self::setAtResult($modem, $command, 'notConnected', 'daemon not reachable', '');
 			return false;
@@ -1407,8 +1407,8 @@ class sms4g extends eqLogic {
 		$lines = (isset($_message['lines']) && is_array($_message['lines'])) ? $_message['lines'] : array();
 		$detail = ($status != 'ok' && !empty($_message['error'])) ? (string) $_message['error'] : '';
 		$truncated = !empty($_message['truncated']);
-		log::add('sms4g', 'info', '[AT] ' . self::maskPhoneNumbers($command) . ' → ' . $status);
-		log::add('sms4g', 'debug', '[AT] Réponse : ' . self::maskPhoneNumbers(implode(' | ', $lines)));
+		log::add('sms4g', 'info', '[AT] ' . self::maskSecrets($command) . ' → ' . $status);
+		log::add('sms4g', 'debug', '[AT] Réponse : ' . self::maskSecrets(implode(' | ', $lines)));
 		// Délai dépassé : les lignes reçues sont incomplètes, elles restent dans le log (la réponse portera TIMEOUT)
 		if ($status == 'timeout') {
 			$lines = array();
@@ -1671,18 +1671,78 @@ class sms4g extends eqLogic {
 		return (strlen($number) > 6) ? substr($number, 0, 4) . str_repeat('X', strlen($number) - 6) . substr($number, -2) : $number;
 	}
 	/**
-	 * Masque les numéros de téléphone d'un texte de log (même règle que le démon : 4 premiers et 2 derniers caractères).
+	 * Masque les données sensibles d'un texte avant log::add. Tout texte journalisé qui vient de l'extérieur (commande AT,
+	 * réponse du modem, ligne de commande du démon) passe par ici. Mêmes règles, dans le même ordre, que le filtre du log du
+	 * démon (SecretMaskFilter, sms4gd.py) : une nouvelle donnée sensible s'ajoute dans les deux. Pour un numéro déjà isolé
+	 * (expéditeur d'un SMS...), maskNumber.
 	 */
-	private static function maskPhoneNumbers($_text) {
-		$mask = function ($match) {
-			return substr($match[0], 0, 4) . str_repeat('X', strlen($match[0]) - 6) . substr($match[0], -2);
+	public static function maskSecrets($_text) {
+		$maskPhone = function ($_match) {
+			return substr($_match[0], 0, 4) . str_repeat('X', strlen($_match[0]) - 6) . substr($_match[0], -2);
 		};
-		// Avec "+", puis format national (avec ou sans séparateurs) et chiffres internationaux sans "+" : jamais au milieu d'un mot
-		$patterns = array('/\+\d{6,15}/', '/(?<![\w.+])0\d{8,14}(?!\w)/', '/(?<![\w.+])0\d(?:[ .-]\d{2}){4}(?!\w)/', '/(?<![\w.+])33[1-9]\d{8}(?!\w)/');
-		foreach ($patterns as $pattern) {
-			$_text = preg_replace_callback($pattern, $mask, $_text);
+		$maskAddresses = function ($_match) {
+			return $_match[1] . preg_replace_callback('/(?<![0-9A-Za-z.:])[0-9A-Fa-f.:]*[.:][0-9A-Fa-f.:]*(?![0-9A-Za-z.:])/', function ($_address) {
+				return self::maskModemAddress($_address[0]);
+			}, $_match[2]);
+		};
+		$rules = array(
+			// Adresses IP que le réseau attribue au modem (réponses AT+CGCONTRDP / AT+CGDCONT?) : forme et début conservés.
+			// Une ligne s'arrête à un guillemet simple, un crochet ou un « | » (liste, ou lignes jointes)
+			array('/(\+CGCONTRDP:\s*\d+,[^,\'|\]\r\n]*,[^,\'|\]\r\n]*)([^\'|\]\r\n]*)/', $maskAddresses),
+			array('/(\+CGDCONT:\s*\d+,"[^"]*","[^"]*",)("[^"]*")/', $maskAddresses),
+			array('/(["\']?apikey["\']?\s*[:=]\s*["\']?)[^"\'&\s]+/i', '$1sEcReT'),
+			// Code PIN (et PUK) d'une commande AT+CPIN=, avec ou sans guillemets ni espaces ; jamais la lecture AT+CPIN? / AT+CPIN=?
+			array('/(AT\s*\+\s*CPIN\s*=)(?!\s*\?)[^\'|\]\r\n]+/i', '$1****'),
+			// Arguments de la commande du démon (deamon_start), la commande exécutée n'est pas modifiée
+			array('/(--apikey|--pin|--ownnumber)\s+\S+/', '$1 ***'),
+			// Numéros : avec "+", format national (avec ou sans séparateurs), chiffres internationaux sans "+" ; jamais au milieu d'un mot
+			array('/\+\d{6,15}/', $maskPhone),
+			array('/(?<![\w.+])0\d{8,14}(?!\w)/', $maskPhone),
+			array('/(?<![\w.+])0\d(?:[ .-]\d{2}){4}(?!\w)/', $maskPhone),
+			array('/(?<![\w.+])33[1-9]\d{8}(?!\w)/', $maskPhone),
+		);
+		$text = (string) $_text;
+		foreach ($rules as $rule) {
+			$text = ($rule[1] instanceof Closure) ? preg_replace_callback($rule[0], $rule[1], $text) : preg_replace($rule[0], $rule[1], $text);
 		}
-		return $_text;
+		return $text;
+	}
+
+	/**
+	 * Une adresse IP attribuée par le réseau, masquée : sa forme et son début restent (10.x.x.x, 2a01:x:x::x, 253.222.x...
+	 * pour une IPv6 écrite en 16 nombres), le masque qui la suit (8 ou 32 nombres) et 0.0.0.0 aussi. Même règle que le démon
+	 * (wwanlib/apn.py, maskAddresses).
+	 */
+	private static function maskModemAddress($_address) {
+		if (strpos($_address, ':') !== false) {
+			$groups = explode(':', $_address);
+			$first = null;
+			foreach ($groups as $index => $group) {
+				if ($group !== '' && $first === null) {
+					$first = $index;
+				} elseif ($group !== '') {
+					$groups[$index] = 'x';
+				}
+			}
+			return implode(':', $groups);
+		}
+		$parts = explode('.', $_address);
+		foreach ($parts as $part) {
+			if (!ctype_digit($part)) {
+				return preg_replace('/[0-9A-Fa-f]/', 'x', $_address);
+			}
+		}
+		if (count(array_filter($parts, fn($_part) => (int) $_part != 0)) == 0) {
+			return $_address;
+		}
+		$kept = in_array(count($parts), array(16, 32)) ? 2 : 1;
+		$length = (count($parts) == 8) ? 4 : ((count($parts) == 32) ? 16 : count($parts)); // ce qui suit est le masque
+		foreach ($parts as $index => $part) {
+			if ($index >= $kept && $index < $length) {
+				$parts[$index] = 'x';
+			}
+		}
+		return implode('.', $parts);
 	}
 
 	/*     * *********************Méthode d'instance************************* */

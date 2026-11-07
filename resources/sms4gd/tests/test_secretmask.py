@@ -5,6 +5,7 @@ import logging
 import unittest
 
 import sms4gd
+from tests.test_apn import SIM7600_CGCONTRDP, SIM7600_CGDCONT
 from wwanlib import maskPduNumbers
 from wwanlib.pdu import decodeSmsPdu, encodeSmsSubmitPdu
 
@@ -63,7 +64,19 @@ class PhoneNumberTest(unittest.TestCase):
 
     def testApiKeyAndPin(self):
         self.assertEqual(masked('GET /x?apikey=abc123 HTTP/1.1'), 'GET /x?apikey=sEcReT HTTP/1.1')
-        self.assertEqual(masked('write: AT+CPIN="1234"'), 'write: AT+CPIN="****"')
+        self.assertEqual(masked('write: AT+CPIN="1234"'), 'write: AT+CPIN=****')
+
+    def testPinInEveryFormTypedInTheDiagnosticMode(self):
+        # The diagnostic mode refuses AT+CPIN=, and logs the command it refuses: the PIN never shows, whatever its form
+        for typed in ('AT+CPIN=1234', 'at+cpin="1234"', 'AT + CPIN = 1234', 'AT+CPIN="12345678","0000"'):
+            with self.subTest(typed):
+                line = masked(f'AT command refused (entering a PIN is forbidden): {typed}')
+                self.assertNotIn('1234', line)
+                self.assertNotIn('0000', line)
+                self.assertTrue(line.endswith('=****'), line)
+        self.assertEqual(masked("response: ['+CPIN: READY', 'OK']"), "response: ['+CPIN: READY', 'OK']")
+        for read in ('write: AT+CPIN?', 'AT command accepted: AT+CPIN=? (timeout 15s)'):
+            self.assertEqual(masked(read), read)
 
 
 class RawPduTest(unittest.TestCase):
@@ -118,6 +131,41 @@ class MaskedPduTest(unittest.TestCase):
     def testLongHexOutsideOfTheModemTrafficIsLeftAlone(self):
         line = "Send to jeedom : {'id': 'e758eb4e78ba458a896a83906f376425'}"
         self.assertEqual(masked(line, True), line)
+
+
+class AddressTest(unittest.TestCase):
+    """ The IP addresses of AT+CGCONTRDP / AT+CGDCONT? (debug level): their form and their start stay, which tells their kind
+    (private, public, none) without telling the line; the context, the connection number and the APN stay readable """
+
+    def testAnswerOfTheSim7600(self):
+        self.assertEqual(
+            masked(f'response: {SIM7600_CGCONTRDP}'),
+            "response: ['+CGCONTRDP: 1,5,free,192.x.x.x,,198.x.x.x,198.x.x.x', "
+            "'+CGCONTRDP: 2,6,ims,32.1.x.x.x.x.x.x.x.x.x.x.x.x.x.x, 32.1.x.x.x.x.x.x.x.x.x.x.x.x.x.x, "
+            "32.1.x.x.x.x.x.x.x.x.x.x.x.x.x.x, 32.1.x.x.x.x.x.x.x.x.x.x.x.x.x.x,32.1.x.x.x.x.x.x.x.x.x.x.x.x.x.x,"
+            "32.1.x.x.x.x.x.x.x.x.x.x.x.x.x.x', 'OK']")
+
+    def testContextsOfTheMemory(self):
+        self.assertEqual(masked(f'response: {SIM7600_CGDCONT}'), f'response: {SIM7600_CGDCONT}')  # 0.0.0.0: no address
+        self.assertEqual(masked('+CGDCONT: 1,"IPV4V6","free","10.12.34.56",0,0'), '+CGDCONT: 1,"IPV4V6","free","10.x.x.x",0,0')
+
+    def testForms(self):
+        for address, shown in (('10.175.25.120', '10.x.x.x'), ('10.12.34.56.255.255.255.0', '10.x.x.x.255.255.255.0'),
+                               ('2a01:e0a:1::1', '2a01:x:x::x'), ('fe80::1', 'fe80::x'),
+                               ('.'.join(['253', '222'] + ['1'] * 30), '.'.join(['253', '222'] + ['x'] * 14 + ['1'] * 16)),
+                               ('1.2.3.4.5', '1.x.x.x.x')):
+            with self.subTest(address):
+                self.assertEqual(masked(f'+CGCONTRDP: 1,5,"free","{address}"'), f'+CGCONTRDP: 1,5,"free","{shown}"')
+
+    def testLinesJoinedByPhpOrInAListAreMaskedOneByOne(self):
+        self.assertEqual(masked('+CGCONTRDP: 1,5,"free.mnc015.mcc208.gprs","10.1.2.3" | +CGCONTRDP: 2,6,"ims","fd00:1::2" | OK'),
+                         '+CGCONTRDP: 1,5,"free.mnc015.mcc208.gprs","10.x.x.x" | +CGCONTRDP: 2,6,"ims","fd00:x::x" | OK')
+
+    def testWhatIsNotAnAnswerOfTheseCommandsIsLeftAlone(self):
+        for line in ('Callback : http://127.0.0.1:80/plugins/sms4g/core/php/jeesms4g.php',
+                     'PyEnvVersion :: 2.8.14-17-ge6669f0a', 'Diagnostic APN : 1 IP "" -> free IPv4 #5',
+                     "response: ['+CPSI: LTE,Online,208-15,0x23F9,108521043,362,EUTRAN-BAND3,1675,4,4,-130,-1073,-750,12', 'OK']"):
+            self.assertEqual(masked(line), line)
 
 
 if __name__ == '__main__':

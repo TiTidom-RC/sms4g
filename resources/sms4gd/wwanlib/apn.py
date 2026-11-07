@@ -151,6 +151,40 @@ def parseConnections(lines: list[str]) -> tuple[tuple[Connection, ...], list[str
     return connections, unreadable
 
 
+# Addresses in the answers, for the logs: the fields after <cid>,<bearer id>,<apn> of +CGCONTRDP (address and mask, gateway,
+# DNS...), and the address field of +CGDCONT. A line stops at a quote, a bracket or a "|" (a list or a join of lines).
+_CGCONTRDP_ADDRESSES = re.compile(r"(\+CGCONTRDP:\s*\d+,[^,'|\]\r\n]*,[^,'|\]\r\n]*)([^'|\]\r\n]*)")
+_CGDCONT_ADDRESS = re.compile(r'(\+CGDCONT:\s*\d+,"[^"]*","[^"]*",)("[^"]*")')
+_ADDRESS = re.compile(r'(?<![0-9A-Za-z.:])[0-9A-Fa-f.:]*[.:][0-9A-Fa-f.:]*(?![0-9A-Za-z.:])')
+
+
+def _maskAddress(address: str) -> str:
+    """ The form of the address is kept, and its start, which tells its kind without telling the line (shared by millions):
+    ``10.x.x.x`` (private IPv4), ``2a01:x:x::x``, ``253.222.x…`` (IPv6 written as 16 numbers, fd… = private). A mask that
+    follows the address (8 or 32 numbers) stays, ``0.0.0.0`` (no address) too. """
+    if ':' in address:
+        groups = address.split(':')
+        first = next((index for index, group in enumerate(groups) if group), None)
+        return ':'.join(group if index == first or not group else 'x' for index, group in enumerate(groups))
+    parts = address.split('.')
+    if not all(part.isdigit() for part in parts):
+        return re.sub(r'[0-9A-Fa-f]', 'x', address)
+    if all(int(part) == 0 for part in parts):
+        return address
+    kept = 2 if len(parts) in (16, 32) else 1
+    length = {8: 4, 32: 16}.get(len(parts), len(parts))  # what follows is the mask
+    return '.'.join(part if index < kept or index >= length else 'x' for index, part in enumerate(parts))
+
+
+def maskAddresses(text: str) -> str:
+    """ The addresses of the +CGCONTRDP and +CGDCONT answers in a text, masked (see ``_maskAddress``): the context, the
+    connection number and the APN stay readable. Anything else is left untouched. """
+    def mask(match: re.Match) -> str:
+        return match.group(1) + _ADDRESS.sub(lambda address: _maskAddress(address.group(0)), match.group(2))
+
+    return _CGDCONT_ADDRESS.sub(mask, _CGCONTRDP_ADDRESSES.sub(mask, text))
+
+
 def describeContext(context: PdpContext | None) -> str:
     """ Context 1 as the logs show it: never the raw answer, which holds IP addresses """
     if context is None:

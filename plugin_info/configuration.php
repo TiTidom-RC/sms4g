@@ -188,13 +188,13 @@ if (!isConnect('admin')) {
             </div>
             <div class="form-group">
                 <label class="col-lg-3 control-label">{{APN du modem}}
-                    <sup><i class="fas fa-question-circle tooltips" title="{{Une ligne par contexte du modem. Pastille : verte, connexion active ; orange, contexte 1 inactif (celui de l'enregistrement en 4G, que modifie « Changer l'APN ») ; grise, autre contexte inactif, ou « ? » si le modem n'a pas répondu. Puis le type demandé, l'APN en mémoire (puce), l'APN attribué par le réseau (antenne), les adresses obtenues (IPv4 / IPv6) et le numéro de la connexion (#). En 4G, un APN que l'opérateur ne connaît pas empêche le modem de s'enregistrer sur le réseau.}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="<b>{{Une ligne par contexte du modem}}</b><br><span class='label label-success'>1</span> {{connexion active}}<br><span class='label label-warning'>1</span> {{contexte 1 inactif : celui de l'enregistrement en 4G (modifié par « Changer l'APN »)}}<br><span class='label' style='background-color:#7f8c8d'>3</span> {{autre contexte inactif}} &nbsp;·&nbsp; <span class='label' style='background-color:#7f8c8d'>1 ?</span> {{le modem n'a pas répondu}}<br>{{Connexion : numéro attribué par le réseau}}<br><i>{{En 4G, un APN inconnu de l'opérateur empêche le modem de s'enregistrer.}}</i>"></i></sup>
                 </label>
                 <div class="col-lg-9" style="display:flex; align-items:flex-start; gap:14px; flex-wrap:wrap; padding-top:4px;">
                     <button type="button" id="btn_checkApn" class="btn btn-sm btn-info">
                         <i class="fas fa-stethoscope"></i> {{Vérifier}}
                     </button>
-                    <div id="apnCheck_contexts" style="display:flex; flex-direction:column; gap:4px; padding-top:3px;"><span><i class="fas fa-question-circle" style="color:var(--al-default-color,#95a5a6)"></i> {{Contextes du modem}}</span></div>
+                    <div id="apnCheck_contexts" style="padding-top:4px;"><span><i class="fas fa-question-circle" style="color:var(--al-default-color,#95a5a6)"></i> {{Contextes du modem}}</span></div>
                 </div>
             </div>
             <div class="form-group">
@@ -565,23 +565,27 @@ if (!isConnect('admin')) {
     const apnCustomInput = document.querySelector('.configKey[data-l1key="apnCustom"]')
     const APN_PATTERN = /^[A-Za-z0-9.-]{0,100}$/
 
-    // Une ligne par contexte : pastille (couleur = état), type demandé, APN en mémoire, et pour une connexion active l'APN
-    // attribué, les adresses obtenues et le numéro de connexion. Les valeurs viennent du modem : affichées en texte seulement.
-    const APN_BADGES = { active: 'label-success', mainInactive: 'label-warning', inactive: 'label-default', unknown: 'label-default' }
-    const apnPart = (line, text, style) => {
-        const span = document.createElement('span')
-        span.textContent = text
-        if (style) {
-            span.style.cssText = style
-        }
-        line.appendChild(span)
+    // Une ligne par contexte, en grille aux colonnes alignées : pastille (couleur = état), type demandé, APN en mémoire, et
+    // pour une connexion active l'APN attribué, les adresses obtenues et le numéro de connexion. L'en-tête porte les icônes une
+    // seule fois. Les valeurs viennent du modem : affichées en texte seulement.
+    const APN_GREY = '#7f8c8d'  // le gris par défaut des pastilles se confond avec le fond du thème sombre
+    const APN_BADGES = { active: 'label-success', mainInactive: 'label-warning' }
+    const apnCell = (grid, text, style) => {
+        const cell = document.createElement('span')
+        cell.textContent = text
+        cell.style.cssText = 'white-space:nowrap;' + (style || '')
+        grid.appendChild(cell)
+        return cell
     }
-    const apnIcon = (line, icon, title) => {
-        const i = document.createElement('i')
-        i.className = 'fas ' + icon
-        i.title = title
-        i.style.opacity = '0.7'
-        line.appendChild(i)
+    const apnHeader = (grid, icon, text) => {
+        const cell = apnCell(grid, '', 'opacity:0.6; font-size:0.85em;')
+        if (icon) {
+            const i = document.createElement('i')
+            i.className = 'fas ' + icon
+            i.style.marginRight = '4px'
+            cell.appendChild(i)
+        }
+        cell.appendChild(document.createTextNode(text))
     }
     const showApn = (data) => {
         const container = document.getElementById('apnCheck_contexts')
@@ -595,31 +599,37 @@ if (!isConnect('admin')) {
             return
         }
         container.innerHTML = ''
+        const grid = document.createElement('div')
+        grid.style.cssText = 'display:grid; grid-template-columns:repeat(6, max-content); column-gap:18px; row-gap:5px; align-items:center;'
+        apnHeader(grid, '', '')
+        apnHeader(grid, '', '{{Type}}')
+        apnHeader(grid, 'fa-microchip', '{{Mémoire}}')
+        apnHeader(grid, 'fa-broadcast-tower', '{{Réseau}}')
+        apnHeader(grid, '', '{{Adresses}}')
+        apnHeader(grid, '', '{{Connexion}}')
         for (const row of rows) {
-            const line = document.createElement('div')
-            line.style.cssText = 'display:flex; align-items:center; gap:8px; flex-wrap:wrap;'
-            const badge = document.createElement('span')
-            badge.className = 'label ' + (APN_BADGES[row.state] || 'label-default')
-            badge.style.minWidth = '2em'
-            badge.textContent = (row.state === 'unknown') ? row.cid + ' ?' : String(row.cid)
-            line.appendChild(badge)
-            apnPart(line, row.pdpType || '—', 'min-width:4.5em; font-family:monospace;')
-            apnIcon(line, 'fa-microchip', '{{APN en mémoire}}')
-            apnPart(line, (row.memoryApn === null) ? '{{(absent de la mémoire)}}' : (row.memoryApn || '{{(vide)}}'))
-            if (row.state === 'active') {
-                apnIcon(line, 'fa-broadcast-tower', '{{APN attribué par le réseau}}')
-                apnPart(line, row.networkApn || '{{(vide)}}')
-                if (row.families) {
-                    apnPart(line, row.families)
-                }
-                if (row.bearer !== null && row.bearer !== undefined) {
-                    apnPart(line, '#' + row.bearer, 'opacity:0.6; font-size:0.9em;')
-                }
-            } else if (row.state === 'mainInactive') {
-                apnPart(line, '{{inactif}}', 'color:var(--al-warning-color,#f39c12);')
+            const active = row.state === 'active'
+            const badge = apnCell(grid, (row.state === 'unknown') ? row.cid + ' ?' : String(row.cid),
+                'display:inline-block; min-width:2.2em; text-align:center; justify-self:start;')
+            badge.className = 'label ' + (APN_BADGES[row.state] || '')
+            if (!APN_BADGES[row.state]) {
+                badge.style.backgroundColor = APN_GREY
             }
-            container.appendChild(line)
+            const dim = active ? '' : 'opacity:0.6;'
+            apnCell(grid, row.pdpType || '—', 'font-family:monospace;' + dim)
+            apnCell(grid, (row.memoryApn === null) ? '{{(absent de la mémoire)}}' : (row.memoryApn || '{{(vide)}}'), dim)
+            if (active) {
+                apnCell(grid, row.networkApn || '{{(vide)}}')
+                apnCell(grid, row.families || '—')
+                apnCell(grid, (row.bearer !== null && row.bearer !== undefined) ? '#' + row.bearer : '—', 'opacity:0.6; font-size:0.9em;')
+            } else {
+                apnCell(grid, (row.state === 'unknown') ? '{{non lu}}' : '{{inactif}}',
+                    (row.state === 'mainInactive') ? 'color:var(--al-warning-color,#f39c12);' : 'opacity:0.6;')
+                apnCell(grid, '')
+                apnCell(grid, '')
+            }
         }
+        container.appendChild(grid)
     }
 
     // Le champ personnalisé ne sert qu'en mode « Personnalisé » ; une saisie qui n'est pas un APN est signalée (sans rien bloquer :

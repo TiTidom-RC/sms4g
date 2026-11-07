@@ -207,6 +207,7 @@ if (!isConnect('admin')) {
                         <option value="custom">{{Personnalisé}}</option>
                     </select>
                     <input class="configKey form-control" data-l1key="apnCustom" style="width:220px;" maxlength="100" placeholder="free" title="{{APN de votre opérateur, par exemple : Free « free », Orange « orange », SFR « sl2sfr », Bouygues Telecom « mmsbouygtel.com ». Lettres, chiffres, points et tirets uniquement, 100 caractères au plus.}}" />
+                    <i id="apnCustomInvalid" class="fas fa-exclamation-circle tooltips" style="color:var(--al-danger-color)!important; display:none;" title="{{APN non valide : lettres, chiffres, points et tirets uniquement, 100 caractères au plus}}"></i>
                     <button type="button" id="btn_applyApn" class="btn btn-sm btn-warning">
                         <i class="fas fa-check"></i> {{Appliquer}}
                     </button>
@@ -563,6 +564,7 @@ if (!isConnect('admin')) {
     const applyApnButton = document.getElementById('btn_applyApn')
     const apnModeSelect = document.querySelector('.configKey[data-l1key="apnMode"]')
     const apnCustomInput = document.querySelector('.configKey[data-l1key="apnCustom"]')
+    const apnCustomInvalid = document.getElementById('apnCustomInvalid')
     const APN_PATTERN = /^[A-Za-z0-9.-]{0,100}$/
 
     // Une ligne par contexte, en grille aux colonnes alignées : pastille (couleur = état), type demandé, APN en mémoire, et
@@ -632,14 +634,17 @@ if (!isConnect('admin')) {
         container.appendChild(grid)
     }
 
-    // Le champ personnalisé ne sert qu'en mode « Personnalisé » ; une saisie qui n'est pas un APN s'écrit en rouge (sans rien
-    // bloquer : « Appliquer » la refusera). Les règles sont dans l'info-bulle fixe du champ.
+    // Le champ personnalisé ne sert qu'en mode « Personnalisé » ; une saisie qui n'est pas un APN affiche l'icône d'alerte à côté
+    // du champ, sans rien bloquer (« Appliquer » la refuse)
     const refreshApnCustom = () => {
         if (!apnModeSelect || !apnCustomInput) {
             return
         }
-        apnCustomInput.style.display = (apnModeSelect.value === 'custom') ? '' : 'none'
-        apnCustomInput.style.color = APN_PATTERN.test(apnCustomInput.value.trim()) ? '' : 'var(--al-danger-color,#e74c3c)'
+        const custom = apnModeSelect.value === 'custom'
+        apnCustomInput.style.display = custom ? '' : 'none'
+        if (apnCustomInvalid) {
+            apnCustomInvalid.style.display = (custom && !APN_PATTERN.test(apnCustomInput.value.trim())) ? '' : 'none'
+        }
     }
     apnModeSelect?.addEventListener('change', refreshApnCustom)  // aussi déclenché par le Core au chargement des valeurs
     apnCustomInput?.addEventListener('input', refreshApnCustom)

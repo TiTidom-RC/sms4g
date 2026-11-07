@@ -632,14 +632,14 @@ if (!isConnect('admin')) {
         container.appendChild(grid)
     }
 
-    // Le champ personnalisé ne sert qu'en mode « Personnalisé » ; une saisie qui n'est pas un APN est bordée de rouge (sans rien
+    // Le champ personnalisé ne sert qu'en mode « Personnalisé » ; une saisie qui n'est pas un APN s'écrit en rouge (sans rien
     // bloquer : « Appliquer » la refusera). Les règles sont dans l'info-bulle fixe du champ.
     const refreshApnCustom = () => {
         if (!apnModeSelect || !apnCustomInput) {
             return
         }
         apnCustomInput.style.display = (apnModeSelect.value === 'custom') ? '' : 'none'
-        apnCustomInput.style.borderColor = APN_PATTERN.test(apnCustomInput.value.trim()) ? '' : 'var(--al-danger-color,#e74c3c)'
+        apnCustomInput.style.color = APN_PATTERN.test(apnCustomInput.value.trim()) ? '' : 'var(--al-danger-color,#e74c3c)'
     }
     apnModeSelect?.addEventListener('change', refreshApnCustom)  // aussi déclenché par le Core au chargement des valeurs
     apnCustomInput?.addEventListener('input', refreshApnCustom)

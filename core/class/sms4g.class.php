@@ -23,6 +23,9 @@ class sms4g extends eqLogic {
 
 	const PYTHON3_PATH = __DIR__ . '/../../resources/venv/bin/python3';
 	const PYENV_PATH = '/opt/pyenv/bin/pyenv';
+	// Ce qu'un APN peut contenir (lettres, chiffres, points et tirets) ; vide = fourni par l'opérateur. Rien d'autre ne doit
+	// atteindre la commande AT, où l'APN est écrit entre guillemets (le démon applique la même règle)
+	const APN_PATTERN = '/^[A-Za-z0-9.-]{0,100}$/';
 
 	public static $_encryptConfigKey = array('pin');
 
@@ -301,8 +304,8 @@ class sms4g extends eqLogic {
 		$cmd .= ' --callback ' . network::getNetworkAccess('internal', 'http:127.0.0.1:port:comp') . '/plugins/sms4g/core/php/jeesms4g.php';
 		$cmd .= ' --apikey ' . jeedom::getApiKey('sms4g');
 		$cmd .= ' --pid ' . jeedom::getTmpFolder('sms4g') . '/deamon.pid';
-		// Masque apikey/pin uniquement dans le log (la commande exécutée ci-dessous garde les vraies valeurs)
-		log::add('sms4g', 'info', 'Lancement démon sms4g : ' . preg_replace('/(--apikey|--pin|--ownnumber)\s+\S+/', '$1 ***', $cmd));
+		// Masque apikey, PIN et numéro uniquement dans le log (la commande exécutée ci-dessous garde les vraies valeurs)
+		log::add('sms4g', 'info', 'Lancement démon sms4g : ' . self::maskSecrets($cmd));
 		$result = exec($cmd . ' >> ' . log::getPathToLog('sms4gd') . ' 2>&1 &');
 		$i = 0;
 		while ($i < 30) {
@@ -975,6 +978,73 @@ class sms4g extends eqLogic {
 	}
 
 	/**
+	 * Sauvegarde de l'APN personnalisé : seuls les espaces autour sont retirés. Une valeur invalide n'est pas refusée
+	 * ici, une exception interromprait la sauvegarde native de la page en plein milieu : c'est « Appliquer » qui la
+	 * refuse (applyApn), et le démon aussi.
+	 */
+	public static function preConfig_apnCustom($_value) {
+		return trim((string) $_value);
+	}
+
+	/**
+	 * Demande au démon l'APN du modem (bouton « Vérifier » de la configuration) : celui de sa mémoire et celui attribué
+	 * par le réseau. La réponse arrive plus tard (onApn) et est poussée à la page par l'événement `sms4g::apn`. Un démon
+	 * arrêté est signalé à la page sans passer par la socket (pas d'erreur dans le log pour un démon simplement arrêté).
+	 *
+	 * @return array{sent: bool, level: string, message: string} demande partie ou non, et le message à afficher sinon
+	 */
+	public static function readApn() {
+		$deamonInfo = self::deamon_info();
+		if ($deamonInfo['state'] != 'ok' || !self::sendToDaemon(array('cmd' => 'readApn'))) {
+			return array('sent' => false, 'level' => 'danger', 'message' => __('Le démon n\'est pas démarré', __FILE__));
+		}
+		return array('sent' => true, 'level' => 'info', 'message' => '');
+	}
+
+	/**
+	 * Écrit dans le modem l'APN **sauvegardé** dans la configuration (bouton « Appliquer »). Les valeurs affichées par la
+	 * page servent seulement à vérifier qu'il ne reste pas de modification non sauvegardée : ce qui part au modem est
+	 * toujours la valeur en base. La réponse du démon arrive plus tard (onApn, événement `sms4g::apn`).
+	 *
+	 * @param string $_mode choix affiché (auto / custom)
+	 * @param string $_custom APN personnalisé affiché
+	 * @param bool $_check contrôles seuls, rien n'est envoyé au modem : la page les fait avant de demander confirmation
+	 * @return array{sent: bool, level: string, message: string, ready?: bool, apn?: string} demande partie ou non, et le
+	 *         message à afficher (refus) ; en mode contrôle, ready (contrôles passés) et apn (l'APN qui sera écrit, protégé
+	 *         des balises HTML comme les messages)
+	 */
+	public static function applyApn($_mode, $_custom, $_check = false) {
+		$savedMode = (string) config::byKey('apnMode', 'sms4g', 'auto');
+		$savedCustom = trim((string) config::byKey('apnCustom', 'sms4g', ''));
+		$mode = trim((string) $_mode);
+		// En mode automatique, le champ personnalisé n'est pas utilisé : sa modification ne bloque rien
+		if ($mode !== $savedMode || ($mode === 'custom' && trim((string) $_custom) !== $savedCustom)) {
+			return array('sent' => false, 'level' => 'warning', 'message' => __('Sauvegardez la configuration avant d\'appliquer l\'APN', __FILE__));
+		}
+		$deamonInfo = self::deamon_info();
+		if ($deamonInfo['state'] != 'ok') {
+			return array('sent' => false, 'level' => 'danger', 'message' => __('Le démon n\'est pas démarré', __FILE__));
+		}
+		$apn = ($savedMode === 'custom') ? $savedCustom : '';
+		if ($savedMode === 'custom' && $apn === '') {
+			return array('sent' => false, 'level' => 'warning', 'message' => __('Saisissez un APN, ou choisissez « Automatique »', __FILE__));
+		}
+		if (preg_match(self::APN_PATTERN, $apn) !== 1) {
+			log::add('sms4g', 'warning', '[APN] Changement refusé : APN invalide');
+			return array('sent' => false, 'level' => 'danger', 'message' => __('APN invalide : lettres, chiffres, points et tirets uniquement (100 caractères au plus)', __FILE__));
+		}
+		$shown = ($apn === '') ? __('automatique', __FILE__) : $apn;
+		if ($_check) {
+			return array('sent' => false, 'ready' => true, 'apn' => htmlspecialchars($shown, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), 'level' => 'info', 'message' => '');
+		}
+		log::add('sms4g', 'info', '[APN] Changement demandé : ' . $shown);
+		if (!self::sendToDaemon(array('cmd' => 'setApn', 'apn' => $apn))) {
+			return array('sent' => false, 'level' => 'danger', 'message' => __('Le démon n\'est pas démarré', __FILE__));
+		}
+		return array('sent' => true, 'level' => 'info', 'message' => __('Changement de l\'APN demandé', __FILE__) . ' (' . htmlspecialchars($shown, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . ')');
+	}
+
+	/**
 	 * Raison donnée par le démon (anglais, courte) en français ; une raison inconnue (texte du modem...) est affichée
 	 * telle quelle, protégée des balises HTML.
 	 */
@@ -989,6 +1059,7 @@ class sms4g extends eqLogic {
 			'the SMS stayed in the queue' => __('le SMS n\'a pas pu partir', __FILE__),
 			'the SIM does not know its number' => __('la carte SIM ne connaît pas son numéro', __FILE__),
 			'the modem did not answer' => __('le modem n\'a pas répondu', __FILE__),
+			'invalid APN' => __('APN invalide', __FILE__),
 		);
 		foreach ($known as $text => $translation) {
 			if (strpos($reason, $text) === 0) {
@@ -997,6 +1068,10 @@ class sms4g extends eqLogic {
 		}
 		if (preg_match('/^the modem has no working restart command \((.*)\)$/', $reason, $match)) {
 			return __('ce modem n\'accepte aucune commande de redémarrage', __FILE__) . ' (' . secureXSS($match[1]) . ')';
+		}
+		// APN accepté par le modem mais pas conservé (le démon préfixe la raison du type de l'erreur)
+		if (preg_match('/^(?:\w+: )?the modem accepted the APN but still reports: (.*)$/', $reason, $match)) {
+			return __('le modem a accepté l\'APN mais indique toujours', __FILE__) . ' : ' . secureXSS($match[1]);
 		}
 		if (preg_match('/^the modem refused the command \((.*)\)$/', $reason, $match)) {
 			return __('le modem a refusé la commande', __FILE__) . ' (' . secureXSS($match[1]) . ')';
@@ -1077,6 +1152,95 @@ class sms4g extends eqLogic {
 	}
 
 	/**
+	 * APN lu ou écrit par le démon : poussé à la page de configuration (`sms4g::apn`). Les textes sont préparés ici
+	 * (traduits, protégés des balises HTML : ils viennent du modem et du réseau) ; la page n'a qu'à les afficher.
+	 *
+	 * Envoyé à la page : `action` (read / apply), `message` et `level` (message à afficher, vide si aucun) ; pour read,
+	 * `contexts` (une ligne par contexte, voir apnRows) et `connectionsRead` (false : le modem n'a pas répondu pour les
+	 * connexions). Le détail de la lecture est déjà dans le log du démon (`Diagnostic APN : …`).
+	 */
+	public static function onApn($_message) {
+		$action = (isset($_message['action']) && $_message['action'] == 'apply') ? 'apply' : 'read';
+		$status = isset($_message['status']) ? (string) $_message['status'] : '';
+		$configured = (isset($_message['configured']) && is_array($_message['configured'])) ? $_message['configured'] : null;
+		$configuredApn = ($configured !== null && isset($configured['apn'])) ? (string) $configured['apn'] : null;
+		$flags = ENT_QUOTES | ENT_SUBSTITUTE;
+		$data = array('action' => $action, 'message' => '', 'level' => 'info');
+
+		if ($status == 'error') {
+			$reason = self::translateReason(isset($_message['reason']) ? $_message['reason'] : '');
+			$data['level'] = 'danger';
+			$data['message'] = (($action == 'apply') ? __('Changement de l\'APN impossible', __FILE__) : __('Lecture de l\'APN impossible', __FILE__)) . ' : ' . $reason;
+			log::add('sms4g', 'warning', '[APN] ' . $data['message']);
+			event::add('sms4g::apn', $data);
+			return;
+		}
+
+		if ($action == 'apply') {
+			$shown = ($configuredApn === null || $configuredApn === '') ? __('automatique', __FILE__) : htmlspecialchars($configuredApn, $flags, 'UTF-8');
+			$radio = isset($_message['radio']) ? (string) $_message['radio'] : '';
+			if ($status == 'unchanged') {
+				$data['message'] = __('Le modem utilisait déjà cet APN', __FILE__) . ' (' . $shown . ')';
+			} elseif ($radio == 'failed') {
+				$data['level'] = 'warning';
+				$data['message'] = __('APN enregistré dans le modem', __FILE__) . ' (' . $shown . '), ' . __('mais il n\'a pas pu se reconnecter au réseau : redémarrez le modem', __FILE__);
+			} else {
+				$data['level'] = 'success';
+				$wait = ($radio == 'restart') ? __('le modem redémarre (environ 30 secondes)', __FILE__) : __('le modem se reconnecte au réseau', __FILE__);
+				$data['message'] = __('APN enregistré dans le modem', __FILE__) . ' (' . $shown . ') : ' . $wait . '. ' . __('Attendez quelques secondes, puis cliquez sur « Vérifier »', __FILE__);
+			}
+			log::add('sms4g', ($data['level'] == 'warning') ? 'warning' : 'info', '[APN] ' . strip_tags($data['message']));
+			event::add('sms4g::apn', $data);
+			return;
+		}
+
+		// Une ligne par contexte (mémoire et connexion réunies par numéro), toutes les informations visibles pour qu'une
+		// capture d'écran suffise au diagnostic. Les valeurs restent brutes : la page les affiche en texte (textContent).
+		$data['contexts'] = self::apnRows(isset($_message['contexts']) && is_array($_message['contexts']) ? $_message['contexts'] : array());
+		$data['connectionsRead'] = !isset($_message['connectionsRead']) || $_message['connectionsRead'] !== false;
+		event::add('sms4g::apn', $data);
+	}
+
+	/**
+	 * Lignes des contextes pour la page de configuration. `state` : `active` (connexion active), `mainInactive` (contexte 1
+	 * inactif : celui de l'enregistrement en 4G et du réglage de l'APN), `inactive` (autre contexte inactif), `unknown`
+	 * (connexions non lues : le modem n'a pas répondu).
+	 *
+	 * @param array $_contexts entrées `contexts` du message `apn` du démon
+	 * @return array<int, array{cid: int, state: string, pdpType: string, memoryApn: ?string, networkApn: ?string, families: string, bearer: ?int}>
+	 */
+	private static function apnRows($_contexts) {
+		$text = function ($_value) {
+			return ($_value === null) ? null : mb_substr((string) $_value, 0, 100);
+		};
+		$rows = array();
+		foreach ($_contexts as $context) {
+			if (!is_array($context) || !isset($context['cid']) || !is_numeric($context['cid'])) {
+				continue;
+			}
+			$cid = (int) $context['cid'];
+			$active = array_key_exists('active', $context) ? $context['active'] : null;
+			if ($active === true) {
+				$state = 'active';
+			} elseif ($active === false) {
+				$state = ($cid == 1) ? 'mainInactive' : 'inactive';
+			} else {
+				$state = 'unknown';
+			}
+			$rows[] = array(
+				'cid' => $cid,
+				'state' => $state,
+				'pdpType' => (string) $text(isset($context['pdpType']) ? $context['pdpType'] : ''),
+				'memoryApn' => (isset($context['apn']) && $context['apn'] !== null) ? $text($context['apn']) : null,
+				'networkApn' => ($state == 'active' && isset($context['networkApn'])) ? $text($context['networkApn']) : null,
+				'families' => ($state == 'active' && isset($context['families'])) ? (string) $text($context['families']) : '',
+				'bearer' => ($state == 'active' && isset($context['bearer']) && is_numeric($context['bearer'])) ? (int) $context['bearer'] : null,
+			);
+		}
+		return $rows;
+	}
+
+	/**
 	 * Commande AT du mode diagnostic. Rend la main aussitôt : le résultat arrive plus tard dans les commandes
 	 * « Statut AT » et « Réponse AT » (onAtResponse). Ici seul le mode diagnostic est contrôlé : le format et le
 	 * filtre des commandes autorisées sont ceux du démon, qui fait foi (son refus arrive dans « Statut AT »).
@@ -1101,7 +1265,7 @@ class sms4g extends eqLogic {
 		if (is_numeric($_timeout) && $_timeout > 0) {
 			$payload['timeout'] = (float) $_timeout;
 		}
-		log::add('sms4g', 'info', '[AT] Commande envoyée au démon : ' . self::maskPhoneNumbers($command));
+		log::add('sms4g', 'info', '[AT] Commande envoyée au démon : ' . self::maskSecrets($command));
 		if (!self::sendToDaemon($payload)) {
 			self::setAtResult($modem, $command, 'notConnected', 'daemon not reachable', '');
 			return false;
@@ -1113,12 +1277,13 @@ class sms4g extends eqLogic {
 	 * Écrit « Réponse AT » puis « Statut AT » (commande, flèche, code de fin en majuscules, détail éventuel entre
 	 * parenthèses). La réponse passe en premier : un scénario déclenché par le statut trouve toujours une réponse
 	 * complète. Les textes sont protégés des balises HTML : ils peuvent venir du modem, ou d'une commande saisie par
-	 * une IA ; les guillemets restent lisibles (+COPS: 0,0,"Free Free",7).
+	 * une IA ; les guillemets restent lisibles (+COPS: 0,0,"Free Free",7). La commande rappelée dans le statut est
+	 * masquée (maskSecrets) : un code PIN saisi, même refusé, peut être le bon. La réponse du modem reste complète.
 	 */
 	private static function setAtResult($_modem, $_command, $_status, $_detail, $_response, $_time = null) {
 		$labels = array('ok' => 'OK', 'error' => 'ERROR', 'timeout' => 'TIMEOUT', 'refused' => 'REFUSED', 'notConnected' => 'NOT CONNECTED');
 		$label = isset($labels[$_status]) ? $labels[$_status] : strtoupper($_status);
-		$status = $_command . ' → ' . $label;
+		$status = self::maskSecrets($_command) . ' → ' . $label;
 		if ($_detail != '') {
 			$status .= ' (' . $_detail . ')';
 		}
@@ -1201,10 +1366,24 @@ class sms4g extends eqLogic {
 				log::add('sms4g', 'warning', '[CALLBACK] État du modem inconnu : ' . secureXSS($state));
 				return;
 		}
+		// Carte SIM absente : le démon continue d'essayer (elle peut être en retard après un redémarrage du modem, ou être
+		// insérée entre-temps) ; l'utilisateur est prévenu dès la première tentative ratée. À l'abandon (« Déconnecté »), le
+		// démon s'arrête et la gestion automatique de Jeedom le relance : les essais reprennent.
+		$simMissing = in_array($state, array('reconnecting', 'restarting', 'disconnected')) && isset($_message['errorType']) && $_message['errorType'] == 'SimNotInsertedError';
+		if ($simMissing) {
+			$text .= ' : ' . __('carte SIM absente', __FILE__);
+		}
 		log::add('sms4g', 'info', '[MODEM] ' . $text);
 		$_modem->checkAndUpdateCmd('connection', $text, $_time);
 		$_modem->checkAndUpdateCmd('connection_state', $code, $_time);
 		$_modem->checkAndUpdateCmd('online', $online, $_time);
+
+		if ($simMissing && count(message::byPluginLogicalId('sms4g', 'sms4gSimMissing')) == 0) {
+			log::add('sms4g', 'error', '[MODEM] Carte SIM absente ou mal insérée');
+			message::add('sms4g', __('Carte SIM absente ou mal insérée : insérez-la (modem débranché), puis rebranchez le modem. Le plugin réessaie de s\'y connecter tant que la carte est absente (si la gestion automatique du démon est désactivée, redémarrez le démon).', __FILE__), '', 'sms4gSimMissing');
+		} elseif ($state == 'connected' && count(message::byPluginLogicalId('sms4g', 'sms4gSimMissing')) > 0) {
+			message::removeAll('sms4g', 'sms4gSimMissing');
+		}
 
 		if ($state == 'disconnected' && !empty($_message['fatal'])) {
 			$reason = isset($_message['reason']) ? secureXSS($_message['reason']) : '';
@@ -1235,8 +1414,8 @@ class sms4g extends eqLogic {
 		$lines = (isset($_message['lines']) && is_array($_message['lines'])) ? $_message['lines'] : array();
 		$detail = ($status != 'ok' && !empty($_message['error'])) ? (string) $_message['error'] : '';
 		$truncated = !empty($_message['truncated']);
-		log::add('sms4g', 'info', '[AT] ' . self::maskPhoneNumbers($command) . ' → ' . $status);
-		log::add('sms4g', 'debug', '[AT] Réponse : ' . self::maskPhoneNumbers(implode(' | ', $lines)));
+		log::add('sms4g', 'info', '[AT] ' . self::maskSecrets($command) . ' → ' . $status);
+		log::add('sms4g', 'debug', '[AT] Réponse : ' . self::maskSecrets(implode(' | ', $lines)));
 		// Délai dépassé : les lignes reçues sont incomplètes, elles restent dans le log (la réponse portera TIMEOUT)
 		if ($status == 'timeout') {
 			$lines = array();
@@ -1499,18 +1678,81 @@ class sms4g extends eqLogic {
 		return (strlen($number) > 6) ? substr($number, 0, 4) . str_repeat('X', strlen($number) - 6) . substr($number, -2) : $number;
 	}
 	/**
-	 * Masque les numéros de téléphone d'un texte de log (même règle que le démon : 4 premiers et 2 derniers caractères).
+	 * Masque les données sensibles d'un texte avant log::add. Tout texte journalisé qui vient de l'extérieur (commande AT,
+	 * réponse du modem, ligne de commande du démon) passe par ici. Mêmes règles, dans le même ordre, que le filtre du log du
+	 * démon (SecretMaskFilter, sms4gd.py) : une nouvelle donnée sensible s'ajoute dans les deux. Pour un numéro déjà isolé
+	 * (expéditeur d'un SMS...), maskNumber.
 	 */
-	private static function maskPhoneNumbers($_text) {
-		$mask = function ($match) {
-			return substr($match[0], 0, 4) . str_repeat('X', strlen($match[0]) - 6) . substr($match[0], -2);
+	public static function maskSecrets($_text) {
+		$maskPhone = function ($_match) {
+			return substr($_match[0], 0, 4) . str_repeat('X', strlen($_match[0]) - 6) . substr($_match[0], -2);
 		};
-		// Avec "+", puis format national (avec ou sans séparateurs) et chiffres internationaux sans "+" : jamais au milieu d'un mot
-		$patterns = array('/\+\d{6,15}/', '/(?<![\w.+])0\d{8,14}(?!\w)/', '/(?<![\w.+])0\d(?:[ .-]\d{2}){4}(?!\w)/', '/(?<![\w.+])33[1-9]\d{8}(?!\w)/');
-		foreach ($patterns as $pattern) {
-			$_text = preg_replace_callback($pattern, $mask, $_text);
+		$maskAddresses = function ($_match) {
+			return $_match[1] . preg_replace_callback('/(?<![0-9A-Za-z.:])[0-9A-Fa-f.:]*[.:][0-9A-Fa-f.:]*(?![0-9A-Za-z.:])/', function ($_address) {
+				return self::maskModemAddress($_address[0]);
+			}, $_match[2]);
+		};
+		// Un champ entre guillemets doubles ou non, selon le modem ; une ligne s'arrête à un guillemet simple, un crochet ou un
+		// « | » (liste, ou lignes jointes)
+		$field = '(?:"[^"]*"|[^,\'"|\]\r\n]*)';
+		$rules = array(
+			// Adresses IP que le réseau attribue au modem (réponses AT+CGCONTRDP / AT+CGDCONT?) : forme et début conservés.
+			// Une ligne mal formée est masquée aussi (le premier champ n'a pas besoin d'être un nombre)
+			array('/(\+CGCONTRDP:\s*' . $field . ',' . $field . ',' . $field . ')([^\'|\]\r\n]*)/', $maskAddresses),
+			array('/(\+CGDCONT:\s*' . $field . ',' . $field . ',' . $field . ',)(' . $field . ')/', $maskAddresses),
+			array('/(["\']?apikey["\']?\s*[:=]\s*["\']?)[^"\'&\s]+/i', '$1sEcReT'),
+			// Code PIN (et PUK) d'une commande AT+CPIN=, avec ou sans guillemets ni espaces ; jamais la lecture AT+CPIN? / AT+CPIN=?
+			array('/(AT\s*\+\s*CPIN\s*=)(?!\s*\?)[^\'|\]\r\n]+/i', '$1****'),
+			// Arguments de la commande du démon (deamon_start), la commande exécutée n'est pas modifiée
+			array('/(--apikey|--pin|--ownnumber)\s+\S+/', '$1 ***'),
+			// Numéros : avec "+", format national (avec ou sans séparateurs), chiffres internationaux sans "+" ; jamais au milieu d'un mot
+			array('/\+\d{6,15}/', $maskPhone),
+			array('/(?<![\w.+])0\d{8,14}(?!\w)/', $maskPhone),
+			array('/(?<![\w.+])0\d(?:[ .-]\d{2}){4}(?!\w)/', $maskPhone),
+			array('/(?<![\w.+])33[1-9]\d{8}(?!\w)/', $maskPhone),
+		);
+		$text = (string) $_text;
+		foreach ($rules as $rule) {
+			$text = ($rule[1] instanceof Closure) ? preg_replace_callback($rule[0], $rule[1], $text) : preg_replace($rule[0], $rule[1], $text);
 		}
-		return $_text;
+		return $text;
+	}
+
+	/**
+	 * Une adresse IP attribuée par le réseau, masquée : sa forme et son début restent (10.x.x.x, 2a01:x:x::x, 253.222.x...
+	 * pour une IPv6 écrite en 16 nombres), le masque qui la suit (8 ou 32 nombres) et 0.0.0.0 aussi. Même règle que le démon
+	 * (wwanlib/apn.py, maskAddresses).
+	 */
+	private static function maskModemAddress($_address) {
+		if (strpos($_address, ':') !== false) {
+			$groups = explode(':', $_address);
+			$first = null;
+			foreach ($groups as $index => $group) {
+				if ($group !== '' && $first === null) {
+					$first = $index;
+				} elseif ($group !== '') {
+					$groups[$index] = 'x';
+				}
+			}
+			return implode(':', $groups);
+		}
+		$parts = explode('.', $_address);
+		foreach ($parts as $part) {
+			if (!ctype_digit($part)) {
+				return preg_replace('/[0-9A-Fa-f]/', 'x', $_address);
+			}
+		}
+		if (count(array_filter($parts, fn($_part) => (int) $_part != 0)) == 0) {
+			return $_address;
+		}
+		$kept = in_array(count($parts), array(16, 32)) ? 2 : 1;
+		$length = (count($parts) == 8) ? 4 : ((count($parts) == 32) ? 16 : count($parts)); // ce qui suit est le masque
+		foreach ($parts as $index => $part) {
+			if ($index >= $kept && $index < $length) {
+				$parts[$index] = 'x';
+			}
+		}
+		return implode('.', $parts);
 	}
 
 	/*     * *********************Méthode d'instance************************* */

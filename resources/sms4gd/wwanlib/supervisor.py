@@ -210,14 +210,18 @@ class Supervisor:
                 log.info('The port is back')
                 return None if self._stop.wait(self._portSettle) else True
 
-    def _announce(self, attempt: int, retryIn: float | None = None) -> None:
+    def _announce(self, attempt: int, retryIn: float | None = None, cause: Exception | None = None) -> None:
+        """ :param cause: the error of the last attempt, given as ``errorType`` (none when the connection was lost), also
+            while the modem restarts: a SIM card that does not come back is told without waiting for the last attempt """
+        causeDetails: dict[str, Any] = {'errorType': type(cause).__name__} if cause is not None else {}
         reason = self._restartReason
         if reason is not None:
-            self._setState(ConnectionState.RESTARTING, reason=reason)
-        elif retryIn is None:
-            self._setState(ConnectionState.RECONNECTING, attempt=attempt, maxAttempts=self._maxAttempts)
-        else:
-            self._setState(ConnectionState.RECONNECTING, attempt=attempt, maxAttempts=self._maxAttempts, retryIn=retryIn)
+            self._setState(ConnectionState.RESTARTING, reason=reason, **causeDetails)
+            return
+        details: dict[str, Any] = {'attempt': attempt, 'maxAttempts': self._maxAttempts}
+        if retryIn is not None:
+            details['retryIn'] = retryIn
+        self._setState(ConnectionState.RECONNECTING, **details, **causeDetails)
 
     def _reconnect(self, error: Exception | None) -> bool:
         """ :return: True once reconnected, False if given up (the final state is published) or stopped """
@@ -232,12 +236,12 @@ class Supervisor:
             if afterQuick and watching:
                 delay = min(delay, QUICK_RETRY_DELAY)
             # Two states per attempt: the announcement (retryIn), then the attempt itself once the delay elapsed
-            self._announce(attempt, delay)
+            self._announce(attempt, delay, error)
             log.warning('Reconnection attempt %d/%d in %.0fs', attempt, self._maxAttempts, delay)
             returned = self._wait(delay, watching)
             if returned is None:
                 return False
-            self._announce(attempt)
+            self._announce(attempt, cause=error)
             log.info('Reconnection attempt %d/%d', attempt, self._maxAttempts)
             error = self._connectOnce()
             if error is None:

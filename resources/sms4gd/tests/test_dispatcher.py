@@ -8,7 +8,7 @@ import unittest
 from concurrent.futures import Future
 
 from dispatcher import MAX_RESPONSE_CHARS, Dispatcher, selfTestMessage, smsInboxMessage, smsStatusMessage
-from wwanlib import (CmeError, NotConnectedError, RestartRefusedError, SelfTestResult, SignalChanged, SmsDelivery, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError,
+from wwanlib import (ApnChange, ApnReading, CmeError, Connection, NotConnectedError, PdpContext, RestartRefusedError, SelfTestResult, SignalChanged, SmsDelivery, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError,
                     SmsReceived, SmsSent, TimeoutException)
 
 
@@ -32,6 +32,14 @@ class FakeModem:
     def selfTest(self):
         self.selfTests += 1
         return Future()
+
+    def readApn(self):
+        self.calls.append(('readApn',))
+        return self.future
+
+    def setApn(self, apn):
+        self.calls.append(('setApn', apn))
+        return self.future
 
     def command(self, command, timeout=10.0, parseError=True):
         self.calls.append((command, timeout, parseError))
@@ -261,7 +269,7 @@ class DispatcherTest(unittest.TestCase):
 
     def testOtherErrors(self):
         self.dispatch(cmd='atCommand', id='b7', command='AT+CSQ')
-        self.modem.future.set_exception(CmeError('AT+CSQ', 10))
+        self.modem.future.set_exception(CmeError('AT+CSQ', 30))  # 10 is SimNotInsertedError
         self.assertEqual(self.out.events[0]['status'], 'error')
         self.assertIn('CmeError', self.out.events[0]['error'])
 
@@ -380,6 +388,83 @@ class DispatcherTest(unittest.TestCase):
             event, _ = self.ownNumber(lines)
             self.assertEqual((event['status'], event['number'], event['reason']),
                              ('error', None, f'the modem refused the command ({shown})'))
+
+    # ---- APN --------------------------------------------------------------------------------------
+
+    def testApnIsReadWithoutTheDiagnosticMode(self):
+        self.dispatcher = Dispatcher(self.messages, self.modem, self.out, 'KEY', diagnostic=False)
+        self.dispatch(cmd='readApn')
+        self.assertEqual(self.modem.calls, [('readApn',)])
+        with self.assertLogs('dispatcher', level='INFO') as logs:
+            self.modem.future.set_result(ApnReading((PdpContext(1, 'IP', ''), PdpContext(2, 'IPV4V6', 'ims')),
+                                                    (Connection(2, 6, 'ims', ('IPv6',)),)))
+        self.assertEqual(self.out.events, [{
+            'type': 'apn', 'action': 'read', 'status': 'ok', 'reason': '', 'connectionsRead': True,
+            'configured': {'cid': 1, 'pdpType': 'IP', 'apn': ''},
+            'contexts': [{'cid': 1, 'pdpType': 'IP', 'apn': '', 'active': False},
+                         {'cid': 2, 'pdpType': 'IPV4V6', 'apn': 'ims', 'active': True, 'networkApn': 'ims', 'families': 'IPv6',
+                          'bearer': 6}]}])
+        # What the page shows is in the log too, for a screenshot to be checked
+        self.assertIn('APN read: 1 IP "" inactive | 2 IPV4V6 "ims" -> ims IPv6 #6', '\n'.join(logs.output))
+
+    def testApnReadingWithAConnectionOfAContextThatIsNotInTheMemory(self):
+        self.dispatch(cmd='readApn')
+        self.modem.future.set_result(ApnReading((), (Connection(1, None, 'free', ()),)))
+        self.assertEqual(self.out.events[0]['contexts'], [{'cid': 1, 'pdpType': None, 'apn': None, 'active': True,
+                                                           'networkApn': 'free', 'families': '', 'bearer': None}])
+        self.assertIsNone(self.out.events[0]['configured'])
+
+    def testConnectionsNotRead(self):
+        self.dispatch(cmd='readApn')
+        self.modem.future.set_result(ApnReading((PdpContext(1, 'IP', 'CMNET'),), (), connectionsRead=False))
+        event = self.out.events[0]
+        self.assertEqual((event['contexts'], event['connectionsRead']),
+                         ([{'cid': 1, 'pdpType': 'IP', 'apn': 'CMNET', 'active': None}], False))
+
+    def testConnectionsReadForContextOneOnly(self):
+        self.dispatch(cmd='readApn')
+        self.modem.future.set_result(ApnReading((PdpContext(1, 'IP', ''), PdpContext(2, 'IPV4V6', 'ims')), (), onlyContext=1))
+        self.assertEqual([(row['cid'], row['active']) for row in self.out.events[0]['contexts']], [(1, False), (2, None)])
+
+    def testApnIsWritten(self):
+        self.dispatch(cmd='setApn', apn='free')
+        self.assertEqual(self.modem.calls, [('setApn', 'free')])
+        self.modem.future.set_result(ApnChange('written', 'CMNET', PdpContext(1, 'IP', 'free'), 'cfun'))
+        self.assertEqual(self.out.events, [{'type': 'apn', 'action': 'apply', 'status': 'written', 'reason': '',
+                                            'configured': {'cid': 1, 'pdpType': 'IP', 'apn': 'free'}, 'previous': 'CMNET',
+                                            'radio': 'cfun'}])
+
+    def testEmptyApnIsAnApn(self):
+        self.dispatch(cmd='setApn', apn='')
+        self.assertEqual(self.modem.calls, [('setApn', '')])
+
+    def testApnAlreadyThere(self):
+        self.dispatch(cmd='setApn', apn='free')
+        self.modem.future.set_result(ApnChange('unchanged', 'free', PdpContext(1, 'IP', 'free'), None))
+        self.assertEqual((self.out.events[0]['status'], self.out.events[0]['radio']), ('unchanged', None))
+
+    def testInvalidApnNeverReachesTheModem(self):
+        for apn in ('free"', 'free",1', None, 12, ['free']):
+            self.out.events.clear()
+            with self.assertLogs('dispatcher', level='WARNING'):
+                self.dispatch(cmd='setApn', apn=apn)
+            self.assertEqual(self.out.events, [{'type': 'apn', 'action': 'apply', 'status': 'error', 'reason': 'invalid APN',
+                                                'configured': None}])
+        self.assertEqual(self.modem.calls, [])
+
+    def testApnFailuresAreExplained(self):
+        for action, fields, error, reason in (
+                ('read', {'cmd': 'readApn'}, NotConnectedError('Modem not connected'), 'modem not connected'),
+                ('apply', {'cmd': 'setApn', 'apn': 'free'}, TimeoutException(), 'the modem did not answer'),
+                ('apply', {'cmd': 'setApn', 'apn': 'free'}, CmeError('AT+CGDCONT=1,"IP","free"', 4), 'CmeError: CME 4')):
+            with self.subTest(reason):
+                self.out.events.clear()
+                self.modem.future = Future()
+                self.dispatch(**fields)
+                with self.assertLogs('dispatcher', level='WARNING'):
+                    self.modem.future.set_exception(error)
+                self.assertEqual(self.out.events, [{'type': 'apn', 'action': action, 'status': 'error', 'reason': reason,
+                                                    'configured': None}])
 
     def testThreadHandlesMessagesAndStopsAtOnce(self):
         self.dispatcher.start()

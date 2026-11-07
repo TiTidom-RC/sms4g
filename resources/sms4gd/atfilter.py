@@ -35,6 +35,7 @@ _FORBIDDEN_WRITE = {
     'CPMS': 'the SMS memory selection is managed by the library',
     'CSCA': 'the SMS center is managed by the library',
     'CSMP': 'the SMS parameters are managed by the library',
+    'CGDCONT': 'the APN is managed by the library',
     'IPR': 'changing the port speed would cut the link',
 }
 
@@ -53,6 +54,8 @@ _FORBIDDEN_BASIC = (
 _INFORMATIVE = {'AT', 'AT+CGMI', 'AT+CGMM', 'AT+CGMR', 'AT+CSQ', 'AT+CNUM',
                 # 3GPP: last error cause, LTE signal quality, activity status, commands the modem knows
                 'AT+CEER', 'AT+CESQ', 'AT+CPAS', 'AT+CLAC',
+                # 3GPP: APN and addresses the network gave to the connections in use
+                'AT+CGCONTRDP',
                 # SimCom
                 'AT+CPMUTEMP', 'AT+CSUB',
                 # Huawei
@@ -67,6 +70,8 @@ _ALLOWED_READS = (
     re.compile(r'^AT\+QCFG="(NWSCANMODE|NWSCANSEQ|IOTOPMODE|BAND|SERVICEDOMAIN|ROAMSERVICE)"$', re.IGNORECASE),
     re.compile(r'^AT\+QENG="(SERVINGCELL|NEIGHBOURCELL)"$', re.IGNORECASE),
     re.compile(r'^AT\+QURCCFG="URCPORT"$', re.IGNORECASE),
+    # 3GPP: the same for one context only
+    re.compile(r'^AT\+CGCONTRDP=\d{1,2}$'),
 )
 
 # Allowed writes: the whole normalized command must match

@@ -9,10 +9,13 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any
 
+from .apn import (CONTEXT, DEFAULT_PDP_TYPES, ApnChange, ApnReading, PdpContext, contextOf, describeContext, isValidApn,
+                  parseConnections, parseContexts, sameApn)
 from .events import (ConnectionState, EventDispatcher, ModemIdentified, NetworkChanged, Registration, SignalChanged,
                      SmsReceived, StateChanged, UnsolicitedNotification)
 from .exceptions import (CommandError, IncorrectPinError, NotConnectedError, PduModeNotSupportedError, PinRequiredError,
-                         PukRequiredError, RestartRefusedError, SmscNumberUnknownError, TimeoutException, WwanException)
+                         PukRequiredError, RestartRefusedError, SimNotInsertedError, SmscNumberUnknownError,
+                         TimeoutException, WwanException)
 from .executor import Executor, Priority, Transaction
 from .inbox import Inbox, Reassembler
 from .outbox import Outbox
@@ -91,6 +94,10 @@ class Modem:
     RESTART_WAIT = 30.0  # seconds the self-test waits to know whether the modem accepted a restart command
     PDU_MODE_ATTEMPTS = 3  # AT+CMGF=0 (PDU mode) is sometimes refused right after the SIM was unlocked: tried again
     PDU_MODE_RETRY_DELAY = 1.0  # seconds between two attempts
+    SIM_ATTEMPTS = 3  # a SIM card is looked for a few times: a modem that just started may not have detected it yet
+    SIM_RETRY_DELAY = 2.0  # seconds between two attempts
+    APN_TIMEOUT = 10.0  # seconds for an APN command (AT+CGDCONT, AT+CGCONTRDP)
+    RADIO_TIMEOUT = 15.0  # seconds for AT+CFUN=4 / AT+CFUN=1
 
     def __init__(self, port: str, baudrate: int = 115200, pin: str | None = None, options: ModemOptions | None = None):
         self.port = port
@@ -104,6 +111,7 @@ class Modem:
         self._lastSignal: int | None = None
         self._lastNetwork: tuple[str, str | None] | None = None
         self._smsStop = threading.Event()
+        self._apnLock = threading.Lock()  # one APN change at a time (two tabs, a scenario...)
         self._selfTest: SelfTest | None = None
         # The delivery reports are followed only when they are asked for
         self._receipts = ReceiptTracker(self._publish, self.options.receiptMaxAge) if self.options.deliveryReport else None
@@ -251,6 +259,42 @@ class Modem:
         threading.Thread(target=run, name='wwanlib-selftest-now', daemon=True).start()
         return result
 
+    def readApn(self) -> Future:
+        """ Reads every context in the memory of the modem (``AT+CGDCONT?``) and every connection in use with what the
+        network gave it (``AT+CGCONTRDP``). Changes nothing. Does not block: the Future resolves to an ``ApnReading`` (the
+        connections may be none, or not read), or fails with ``CommandError`` / ``TimeoutException`` (the memory could not
+        be read) or ``NotConnectedError``. """
+        return self._inBackground('wwanlib-apn-read', self._readApn)
+
+    def setApn(self, apn: str) -> Future:
+        """ Writes the APN of context 1 (empty: the operator gives its own) and makes the modem register again with it:
+        radio off and on, or a restart of the modem when it refuses to switch its radio off. The modem keeps the APN
+        (it survives a restart): it is written only when asked, and not at all when the modem already has it.
+        Does not block: the Future resolves to an ``ApnChange``, or fails with ``ValueError`` (not an APN),
+        ``CommandError`` (refused by the modem), ``TimeoutException`` or ``NotConnectedError``. """
+        if not isValidApn(apn):
+            failed: Future = Future()
+            failed.set_exception(ValueError('invalid APN (letters, digits, dots and dashes only, 100 characters at most)'))
+            return failed
+        return self._inBackground('wwanlib-apn-write', lambda session: self._writeApnAlone(session, apn))
+
+    def _inBackground(self, name: str, work: Callable[[_Session], Any]) -> Future:
+        """ Runs a sequence of commands of the connection in use in its own thread (failed Future when there is none) """
+        result: Future = Future()
+        session = self._session
+        if self._state not in (ConnectionState.CONNECTED, ConnectionState.SEARCHING) or session is None:
+            result.set_exception(NotConnectedError(f'Modem not connected (state: {self._state})'))
+            return result
+
+        def run() -> None:
+            try:
+                result.set_result(work(session))
+            except Exception as e:
+                result.set_exception(e)
+
+        threading.Thread(target=run, name=name, daemon=True).start()
+        return result
+
     def sendSms(self, number: str, text: str, ref: str | None = None, maxPartsPerGroup: int = 0) -> str:
         """ Queues an SMS. Does not block: the result comes as an event, ``SmsSent`` or ``SmsFailed`` or ``SmsExpired``
         (``SmsQueued`` first when it cannot leave at once, e.g. while the modem reconnects).
@@ -277,7 +321,9 @@ class Modem:
 
     @staticmethod
     def _isFatal(error: Exception) -> bool:
-        """ Retrying cannot fix a missing or wrong PIN (and would lock the SIM), nor a modem without the PDU mode """
+        """ Retrying cannot fix a missing or wrong PIN (and would lock the SIM), nor a modem without the PDU mode. A
+        missing SIM card is not fatal: it may only be late after a restart of the modem, or be inserted meanwhile; its
+        ``errorType`` comes with the reconnection states, so that the user is told. """
         return isinstance(error, (PinRequiredError, IncorrectPinError, PukRequiredError, PduModeNotSupportedError))
 
     def _publishState(self, state: str, details: dict[str, Any]) -> None:
@@ -534,6 +580,135 @@ class Modem:
         except WwanException as e:
             log.error('Failed to set the network mode: %s', e)
 
+    # ---- APN (readApn / setApn, in their own thread) -----------------------------------------------
+
+    def _apnCommand(self, session: _Session, command: str, priority: int = Priority.CONSOLE) -> list[str]:
+        """ A command that does not answer keeps the port for a short while only (3 times its delay, then the modem is
+        resynchronized), not for the three minutes of the other commands: the SMS to send are not held up """
+        return session.executor.submit(command, self.APN_TIMEOUT, priority, maxHold=3 * self.APN_TIMEOUT).result()
+
+    def _radioCommand(self, session: _Session, command: str) -> list[str]:
+        """ Same for AT+CFUN=4 / AT+CFUN=1: the second one is not held up for long by the first one """
+        return session.executor.submit(command, self.RADIO_TIMEOUT, Priority.CONTROL, maxHold=2 * self.RADIO_TIMEOUT).result()
+
+    @staticmethod
+    def _logUnreadable(command: str, lines: list[str]) -> None:
+        """ The raw answer holds IP addresses: it only goes to the debug level """
+        if lines:
+            log.info('%s: answer format not recognized (%d line(s), shown in debug)', command, len(lines))
+            log.debug('%s: %s', command, lines)
+
+    def _readContexts(self, session: _Session) -> list[PdpContext]:
+        contexts, unreadable = parseContexts(self._apnCommand(session, 'AT+CGDCONT?'))
+        self._logUnreadable('AT+CGDCONT?', unreadable)
+        return contexts
+
+    def _readContext(self, session: _Session) -> PdpContext | None:
+        return contextOf(self._readContexts(session))
+
+    def _readApn(self, session: _Session) -> ApnReading:
+        """ The contexts of the memory are needed (any failure fails the reading); the connections in use are not: each
+        answer has one meaning, the connections listed, none (OK without any line), or not read (no answer, or ERROR to
+        both forms: a refused request, not an absence of connection) """
+        contexts = tuple(self._readContexts(session))
+        # Without a parameter, every connection in use; some firmwares only answer for a given context
+        for command in ('AT+CGCONTRDP', f'AT+CGCONTRDP={CONTEXT}'):
+            try:
+                connections, unreadable = parseConnections(self._apnCommand(session, command))
+            except CommandError as e:
+                log.debug('%s: %s', command, e)
+                continue
+            except TimeoutException:
+                # The port is held until the late answer (or resynchronized): no second wait with the other form
+                log.info('%s: no answer, the connections in use are not read', command)
+                return ApnReading(contexts, (), connectionsRead=False)
+            self._logUnreadable(command, unreadable)
+            # The second form only tells about context 1: the other contexts are not read, not taken for inactive
+            return ApnReading(contexts, connections, onlyContext=None if command == 'AT+CGCONTRDP' else CONTEXT)
+        log.info('AT+CGCONTRDP refused in both forms: the connections in use are not read')
+        return ApnReading(contexts, (), connectionsRead=False, connectionsRefused=True)
+
+    def _writeApnAlone(self, session: _Session, apn: str) -> ApnChange:
+        """ A second change waits for the end of the first one: it then finds the APN already written, or writes its own """
+        with self._apnLock:
+            return self._writeApn(session, apn)
+
+    def _writeApn(self, session: _Session, apn: str) -> ApnChange:
+        before = self._readContext(session)
+        previous = before.apn if before is not None else None
+        if before is not None and sameApn(before.apn, apn):
+            log.info('APN unchanged, the modem already has it (%s)', describeContext(before))
+            return ApnChange('unchanged', previous, before, None)
+        # The type of the context is kept; a type that cannot be written back as it was read is left for the defaults
+        if before is not None and re.fullmatch(r'[A-Za-z0-9]+', before.pdpType):
+            pdpTypes: tuple[str, ...] = (before.pdpType,)
+        else:
+            pdpTypes = DEFAULT_PDP_TYPES
+        error: CommandError | None = None
+        for pdpType in pdpTypes:
+            try:
+                self._apnCommand(session, f'AT+CGDCONT={CONTEXT},"{pdpType}","{apn}"', Priority.CONTROL)
+                error = None
+                break
+            except CommandError as e:
+                error = e
+        if error is not None:
+            log.warning('APN refused by the modem (%s)', error)
+            raise error
+        after = self._readContext(session)
+        if after is None or not sameApn(after.apn, apn):
+            log.warning('The modem accepted the APN but still reports: %s', describeContext(after))
+            raise CommandError(f'the modem accepted the APN but still reports: {describeContext(after)}')
+        log.info('APN written: %s (before: %s)', describeContext(after), describeContext(before))
+        return ApnChange('written', previous, after, self._registerAgain(session))
+
+    def _registerAgain(self, session: _Session) -> str:
+        """ Makes the modem register again, so that it uses the new APN: radio off and on (AT+CFUN=4 keeps the SIM
+        powered, so there is no PIN to enter again, unlike AT+CFUN=0), or a restart of the modem when it refuses
+        AT+CFUN=4 or does not switch its radio on again. The SMS settings the modem may forget meanwhile are applied
+        again at its "SMS DONE".
+        :return: 'cfun', 'restart' or 'failed' """
+        try:
+            self._radioCommand(session, 'AT+CFUN=4')
+        except TimeoutException:
+            log.warning('No answer to AT+CFUN=4: the radio is switched on again all the same')
+        except CommandError as e:
+            log.info('AT+CFUN=4 refused by the modem (%s): restarting it so that it takes the new APN', e)
+            return self._restartForApn()
+        except NotConnectedError as e:
+            # The connection sequence switches the radio on again (AT+CFUN? at each connection)
+            log.warning('Connection lost while switching the radio off (%s): the modem takes the new APN when it connects again', e)
+            return 'failed'
+        try:
+            self._radioCommand(session, 'AT+CFUN=1')
+        except NotConnectedError as e:
+            log.warning('Connection lost while switching the radio on (%s): the modem takes the new APN when it connects again', e)
+            return 'failed'
+        except WwanException as e:
+            # The connection stays up: nothing would switch the radio on again, a restart does (with the new APN)
+            log.warning('The radio could not be switched on again (%s): restarting the modem', e)
+            return self._restartForApn()
+        log.info('Radio switched off and on again: the modem registers with the new APN')
+        return 'cfun'
+
+    def _restartForApn(self) -> str:
+        """ :return: 'restart' (a restart already in progress included: it takes the new APN too), or 'failed' when the
+        modem cannot be restarted """
+        try:
+            self.restart('apn').result(self.RESTART_WAIT)
+        except TimeoutError:
+            pass  # still restarting
+        except NotConnectedError as error:
+            if self._state == ConnectionState.RESTARTING:
+                log.info('The modem is already restarting: it takes the new APN')
+                return 'restart'
+            log.error('The modem could not be restarted to take the new APN (%s): restart it by hand', error)
+            return 'failed'
+        except WwanException as error:
+            log.error('The modem could not be restarted to take the new APN (%s): restart it by hand', error)
+            return 'failed'
+        return 'restart'
+
     def _setupSms(self, session: _Session) -> None:
         """ Everything the modem needs to send and receive SMS (the settings are lost when its SMS service restarts) """
         run = session.run
@@ -630,7 +805,25 @@ class Modem:
         return re.sub(r'^\+CGM[IMR]:\s*', '', line)
 
     def _unlockSim(self, run: Callable[..., list[str]]) -> None:
-        """ Enters the PIN if the SIM asks for it """
+        """ Enters the PIN if the SIM asks for it. A SIM card that is not detected is looked for again a few times (the
+        modem may still be starting) before the connection stops: the modem cannot be used without one. """
+        for attempt in range(1, self.SIM_ATTEMPTS + 1):
+            try:
+                cpin = self._readSimState(run)
+                break
+            except SimNotInsertedError:
+                if attempt == self.SIM_ATTEMPTS or self._smsStop.wait(self.SIM_RETRY_DELAY):
+                    raise
+                log.info('No SIM card detected, checking again (%d/%d)', attempt, self.SIM_ATTEMPTS)
+        if cpin != '+CPIN: READY':
+            if self._pin:
+                run(f'AT+CPIN="{self._pin}"')
+            else:
+                raise PinRequiredError('AT+CPIN')
+
+    @staticmethod
+    def _readSimState(run: Callable[..., list[str]]) -> str | None:
+        """ The +CPIN line. :raise SimNotInsertedError: no SIM card (+CME ERROR: 10, or +CPIN: NOT INSERTED) """
         try:
             cpin = lineStartingWith('+CPIN', run('AT+CPIN?', timeout=15.0))
         except TimeoutException as timeout:
@@ -638,11 +831,9 @@ class Modem:
             cpin = lineStartingWith('+CPIN', timeout.data) if timeout.data else None
             if cpin is None:
                 raise
-        if cpin != '+CPIN: READY':
-            if self._pin:
-                run(f'AT+CPIN="{self._pin}"')
-            else:
-                raise PinRequiredError('AT+CPIN')
+        if cpin is not None and 'NOT INSERTED' in cpin.upper():
+            raise SimNotInsertedError('AT+CPIN?')
+        return cpin
 
     @staticmethod
     def _readSmsc(run: Callable[..., list[str]]) -> str | None:

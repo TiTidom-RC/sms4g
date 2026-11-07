@@ -54,6 +54,12 @@ ALLOWED = [
     ('at+cesq', 'AT+CESQ'),
     ('AT+CPAS', 'AT+CPAS'),
     ('AT+CLAC', 'AT+CLAC'),
+    # APN: the one of the memory of the modem, the one the network gave
+    ('AT+CGDCONT?', 'AT+CGDCONT?'),
+    ('AT+CGDCONT=?', 'AT+CGDCONT=?'),
+    ('AT+CGCONTRDP', 'AT+CGCONTRDP'),
+    ('at+cgcontrdp=1', 'AT+CGCONTRDP=1'),
+    ('AT+CGCONTRDP=?', 'AT+CGCONTRDP=?'),
     # whitelisted writes
     ('AT+CNMI=2,1,0,2', 'AT+CNMI=2,1,0,2'),
     ('AT+CNMI=1,1,0,1,0', 'AT+CNMI=1,1,0,1,0'),
@@ -137,6 +143,10 @@ REFUSED = [
     ('AT+QCFG="servicedomain",1,1', 'not allowed'),
     ('AT+QCFG="roamservice",2,1', 'not allowed'),
     ('AT^SETPORT="FF;10,12"', 'not allowed'),  # changes the USB mode of the modem
+    ('AT+CGDCONT=1,"IPV4V6","free"', 'APN'),  # the APN is written from the configuration page of the plugin
+    ('AT+CGDCONT=1', 'APN'),
+    ('AT+CGCONTRDP=1,2', 'not allowed'),
+    ('AT+CGCONTRDP=a', 'not allowed'),
     ('AT+CEER=1', 'not allowed'),
     ('AT+CLAC=1', 'not allowed'),
     ('AT+QPOWD', 'not allowed'),

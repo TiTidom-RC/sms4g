@@ -8,6 +8,8 @@ Public API (everything else is internal):
   ``maskNumber()``, ``maskPduNumbers()``: a phone number, and a PDU, as they may appear in a log.
 * ``Modem.selfTest()`` and the ``selfTestInterval`` option (``selftest.py``): the modem sends an SMS to its own SIM and
   checks that it comes back with its delivery report.
+* ``Modem.readApn()`` / ``Modem.setApn()`` (``apn.py``): the APN of the modem, read, and written only when asked;
+  ``isValidApn()``, ``maskAddresses()`` (the addresses of these answers, as they may appear in a log).
 * Received SMS (``inbox.py``): read as soon as the modem announces them, long ones reassembled; the result comes as
   an event, ``SmsReceived`` or ``SmsIncomplete``.
 * Events (``events.py``): ``StateChanged``, ``ModemIdentified``, ``SignalChanged``, ``NetworkChanged``,
@@ -22,12 +24,14 @@ the Executor reads them. The library only depends on pyserial,
 never imports Jeedom and logs through ``logging.getLogger(__name__)``.
 """
 
+from .apn import (ApnChange, ApnReading, Connection, PdpContext, describeContext, describeReading, familiesLabel, isValidApn,
+                  maskAddresses)
 from .events import (ConnectionState, ModemIdentified, NetworkChanged, Registration, SelfTestResult, SignalChanged, SmsExpired,
                      SmsDelivery, SmsFailed, SmsIncomplete, SmsQueued, SmsReceived, SmsSent, StateChanged,
                      UnsolicitedNotification)
 from .exceptions import (CmeError, CmsError, CommandError, EncodingError, IncorrectPinError, NotConnectedError,
                          PduModeNotSupportedError, PinRequiredError, PukRequiredError, RestartRefusedError,
-                         SmscNumberUnknownError, SmsQueueFullError, TimeoutException, WwanException)
+                         SimNotInsertedError, SmscNumberUnknownError, SmsQueueFullError, TimeoutException, WwanException)
 from .modem import Modem, ModemOptions
 from .profiles import Profile
 from .sms import maskNumber, maskPduNumbers
@@ -36,7 +40,9 @@ __all__ = [
     'Modem', 'ModemOptions', 'Profile', 'ConnectionState', 'Registration', 'StateChanged', 'ModemIdentified',
     'SignalChanged', 'NetworkChanged', 'UnsolicitedNotification',
     'WwanException', 'CommandError', 'CmeError', 'CmsError', 'TimeoutException', 'NotConnectedError', 'RestartRefusedError',
-    'PinRequiredError', 'IncorrectPinError', 'PukRequiredError', 'SmscNumberUnknownError', 'EncodingError',
+    'PinRequiredError', 'IncorrectPinError', 'PukRequiredError', 'SimNotInsertedError', 'SmscNumberUnknownError', 'EncodingError',
+    'ApnReading', 'ApnChange', 'Connection', 'PdpContext', 'describeContext', 'describeReading', 'familiesLabel', 'isValidApn',
+    'maskAddresses',
     'maskNumber', 'maskPduNumbers', 'PduModeNotSupportedError', 'SmsQueueFullError', 'SmsQueued', 'SmsSent', 'SmsFailed', 'SmsExpired',
     'SmsReceived', 'SmsIncomplete', 'SmsDelivery', 'SelfTestResult',
 ]

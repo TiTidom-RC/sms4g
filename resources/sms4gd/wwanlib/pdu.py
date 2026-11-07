@@ -618,11 +618,10 @@ def _encodeAddressField(address, smscField=False):
     toa = 0x80 | 0x00 | 0x01  # Type-of-address start | Unknown type-of-number | ISDN/tel numbering plan
     alphaNumeric = False
     if address.isalnum():
-        # Might just be a local number
-        if address.isdigit():
-            # Local number
-            toa |= 0x20
-        else:
+        # Digits only (0612345678, short number...): kept with the "unknown" type of number, as a phone does, the network
+        # reading the prefixes. Not "national" (0x20): a national number has no trunk prefix ("0"), and some SMS centers
+        # refuse 0612345678 sent with this type.
+        if not address.isdigit():
             # Alphanumeric address
             toa |= 0x50
             toa &= 0xFE  # switch to "unknown" numbering plan

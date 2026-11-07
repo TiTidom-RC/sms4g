@@ -35,7 +35,7 @@ from typing import Optional
 from dispatcher import Dispatcher, selfTestMessage, smsInboxMessage, smsStatusMessage
 from utils import Config
 from wwanlib import (ConnectionState, Modem, ModemIdentified, ModemOptions, NetworkChanged, Registration, SignalChanged,
-                     StateChanged, WwanException, maskNumber, maskPduNumbers)
+                     StateChanged, WwanException, describeReading, maskAddresses, maskNumber, maskPduNumbers)
 
 try:
     from jeedom.jeedom import jeedom_publisher, jeedom_socket, jeedom_utils, JEEDOM_SOCKET_MESSAGE
@@ -69,7 +69,9 @@ class SecretMaskFilter(logging.Filter):
 
     _RULES = [
         (re.compile(r'(["\']?apikey["\']?\s*[:=]\s*["\']?)[^"\'&\s]+', re.IGNORECASE), r'\1sEcReT'),
-        (re.compile(r'(AT\+CPIN=")[^"]+(")', re.IGNORECASE), r'\1****\2'),
+        # Code PIN (et PUK) d'une commande AT+CPIN=, avec ou sans guillemets ni espaces ; jamais la lecture AT+CPIN? / AT+CPIN=?
+        # Même règle que sms4g::maskSecrets (PHP). Le reste de la commande est masqué : il n'y a que des codes après le "="
+        (re.compile(r'(AT\s*\+\s*CPIN\s*=)(?!\s*\?)[^\'|\]\r\n]+', re.IGNORECASE), r'\1****'),
         (re.compile(r'\+\d{6,15}'), _maskPhone),
         # Sans le "+" : format national (0377324755, 03 77 32 47 55), préfixe 00 et chiffres internationaux seuls. Jamais
         # au milieu d'un mot, d'un nombre décimal ou d'un chemin : les identifiants, les heures et les numéros de série restent lisibles.
@@ -91,7 +93,8 @@ class SecretMaskFilter(logging.Filter):
         message = record.getMessage()
         if message.startswith(self._SMSC_LINE):
             return True
-        redacted = message
+        # Adresses IP des réponses AT+CGCONTRDP / AT+CGDCONT? (debug) : la forme et le début restent, pas de quoi retrouver la ligne
+        redacted = maskAddresses(message)
         for pattern, repl in self._RULES:
             redacted = pattern.sub(repl, redacted)
         if self._maskPdu and self._PDU_LINE.match(redacted):
@@ -118,6 +121,21 @@ def runDiagnostic():
                 return
             continue
         logging.info("Diagnostic %s : %s", command, ' | '.join(lines[:-1]))
+    logApn()
+
+
+def logApn():
+    """Journalise les contextes du modem (mémoire, et ce que le réseau a attribué aux connexions actives), dans le même
+    ordre que la page de configuration. Un résumé, jamais les réponses brutes de AT+CGDCONT? et AT+CGCONTRDP, qui
+    contiennent des adresses IP."""
+    if modem is None:
+        return
+    try:
+        reading = modem.readApn().result(45)
+    except (WwanException, TimeoutError) as e:
+        logging.warning("Diagnostic APN failed : %s", e)
+        return
+    logging.info("Diagnostic APN : %s", describeReading(reading))
 
 
 def publishState(state: str, **details):

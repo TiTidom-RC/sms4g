@@ -27,8 +27,9 @@ from concurrent.futures import Future
 from typing import Any, Protocol
 
 from atfilter import checkAtCommand
-from wwanlib import (NotConnectedError, RestartRefusedError, SelfTestResult, SmsDelivery, SmsExpired, SmsFailed, SmsIncomplete,
-                     SmsQueued, SmsQueueFullError, SmsReceived, SmsSent, TimeoutException, maskNumber)
+from wwanlib import (ApnChange, ApnReading, NotConnectedError, PdpContext, RestartRefusedError, SelfTestResult, SmsDelivery,
+                     SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError, SmsReceived, SmsSent, TimeoutException,
+                     describeReading, familiesLabel, isValidApn, maskNumber)
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +48,10 @@ class ModemLike(Protocol):
     def restart(self, reason: str = ...) -> Future: ...
 
     def selfTest(self) -> Future: ...
+
+    def readApn(self) -> Future: ...
+
+    def setApn(self, apn: str) -> Future: ...
 
 
 class OutLike(Protocol):
@@ -102,6 +107,43 @@ def selfTestMessage(event: Any) -> dict[str, Any] | None:
             'restarted': event.restarted}
 
 
+def apnMessage(action: str, result: ApnReading | ApnChange | None = None, reason: str = '') -> dict[str, Any]:
+    """ The `apn` message, answer to `readApn` (`action` `read`) and to `setApn` (`action` `apply`).
+    `status`: `ok` (read), `written` or `unchanged` (apply: the modem already had it, nothing written), `error` (`reason`
+    says why). `configured`: context 1 in the memory of the modem (`cid`, `pdpType`, `apn`; empty APN = given by the
+    operator), null when it is not defined.
+    Read: `contexts`, one entry per context (memory and connections put together, by number): `cid`; `pdpType` and `apn`
+    of the memory (null when the context is not in the memory); `active` (true / false, null when its connection was not
+    read: no answer from the modem, or the modem only answered for context 1); for an active one, `networkApn`, `families` (`IPv4`, `IPv6` or `IPv4v6` obtained, empty when unknown) and
+    `bearer` (null when the modem does not say). `connectionsRead`: false when nothing is known about them (no answer, or AT+CGCONTRDP refused).
+    Apply: `previous` APN (null when context 1 was not defined) and `radio`, how the modem took it (`cfun`: radio off and
+    on, `restart`, `failed`; null when unchanged). """
+    def context(value: PdpContext | None) -> dict[str, Any] | None:
+        return None if value is None else {'cid': value.cid, 'pdpType': value.pdpType, 'apn': value.apn}
+
+    def rows(reading: ApnReading) -> list[dict[str, Any]]:
+        memory = {item.cid: item for item in reading.contexts}
+        cids = sorted(set(memory) | {connection.cid for connection in reading.connections})
+        entries: list[dict[str, Any]] = []
+        for cid in cids:
+            stored = memory.get(cid)
+            connection = reading.connection(cid)
+            entry: dict[str, Any] = {'cid': cid, 'pdpType': stored.pdpType if stored else None, 'apn': stored.apn if stored else None,
+                                     'active': True if connection is not None else (False if reading.connectionKnown(cid) else None)}
+            if connection is not None:
+                entry.update(networkApn=connection.apn, families=familiesLabel(connection.families), bearer=connection.bearer)
+            entries.append(entry)
+        return entries
+
+    payload: dict[str, Any] = {'type': 'apn', 'action': action, 'status': 'error', 'reason': reason, 'configured': None}
+    if isinstance(result, ApnReading):
+        payload.update(status='ok', configured=context(result.configured), contexts=rows(result),
+                       connectionsRead=result.connectionsRead)
+    elif isinstance(result, ApnChange):
+        payload.update(status=result.status, configured=context(result.configured), previous=result.previous, radio=result.radio)
+    return payload
+
+
 class Dispatcher:
     def __init__(self, messages: 'queue.Queue[bytes | None]', modem: ModemLike, out: OutLike, apikey: str, diagnostic: bool,
                  pinConfigured: bool = True):
@@ -117,7 +159,8 @@ class Dispatcher:
         self._pinConfigured = pinConfigured
         self._thread: threading.Thread | None = None
         self._handlers = {'atCommand': self._atCommand, 'sendSms': self._sendSms, 'restartModem': self._restartModem,
-                          'selfTest': self._selfTest, 'readOwnNumber': self._readOwnNumber}
+                          'selfTest': self._selfTest, 'readOwnNumber': self._readOwnNumber, 'readApn': self._readApn,
+                          'setApn': self._setApn}
 
     def start(self) -> None:
         thread = threading.Thread(target=self._run, name='dispatcher', daemon=True)
@@ -236,7 +279,7 @@ class Dispatcher:
         number = None
         error = done.exception()
         if error is not None:
-            status, reason = 'error', self._ownNumberError(error)
+            status, reason = 'error', self._failureReason(error)
         else:
             lines = done.result()
             number = next((match.group(1) for match in map(CNUM_LINE.match, lines) if match), None)
@@ -247,8 +290,38 @@ class Dispatcher:
             log.warning('Number of the SIM not read (%s)', reason)
         self._out.event({'type': 'ownNumber', 'status': status, 'number': number, 'reason': reason})
 
+    def _readApn(self, message: dict[str, Any]) -> None:
+        """ Reads the APN of the modem (read only: not a command of the user). The answer is an `apn` message (see
+        `apnMessage`). """
+        log.info('APN reading requested from Jeedom')
+        self._modem.readApn().add_done_callback(lambda done: self._apnDone('read', done))
+
+    def _setApn(self, message: dict[str, Any]) -> None:
+        """ Writes the APN of the modem (empty: given by the operator). Jeedom sends the APN saved in its configuration.
+        The answer is an `apn` message (see `apnMessage`). """
+        apn = message.get('apn')
+        if not isValidApn(apn):
+            log.warning('APN change refused: not an APN')
+            self._out.event(apnMessage('apply', reason='invalid APN'))
+            return
+        log.info('APN change requested from Jeedom: "%s"', apn)
+        self._modem.setApn(apn).add_done_callback(lambda done: self._apnDone('apply', done))
+
+    def _apnDone(self, action: str, done: Future) -> None:
+        """ Callback of the Future: runs in the thread of the library, only builds the payload and queues it """
+        error = done.exception()
+        if error is None:
+            result = done.result()
+            if isinstance(result, ApnReading):
+                log.info('APN read: %s', describeReading(result))  # what the page shows, for a screenshot to be checked
+            self._out.event(apnMessage(action, result))
+            return
+        reason = self._failureReason(error)
+        log.warning('APN %s failed (%s)', 'reading' if action == 'read' else 'change', reason)
+        self._out.event(apnMessage(action, reason=reason))
+
     @staticmethod
-    def _ownNumberError(error: BaseException) -> str:
+    def _failureReason(error: BaseException) -> str:
         if isinstance(error, NotConnectedError):
             return 'modem not connected'
         if isinstance(error, TimeoutException):

@@ -1149,8 +1149,9 @@ class sms4g extends eqLogic {
 	 * APN lu ou écrit par le démon : poussé à la page de configuration (`sms4g::apn`). Les textes sont préparés ici
 	 * (traduits, protégés des balises HTML : ils viennent du modem et du réseau) ; la page n'a qu'à les afficher.
 	 *
-	 * Envoyé à la page : `action` (read / apply), `memory` et `network` (indicateurs : status ok / warn / unknown, label ;
-	 * seulement pour read), `message` et `level` (message à afficher, vide si aucun).
+	 * Envoyé à la page : `action` (read / apply), `message` et `level` (message à afficher, vide si aucun) ; pour read,
+	 * `contexts` (une ligne par contexte, voir apnRows) et `connectionsRead` (false : le modem n'a pas répondu pour les
+	 * connexions). Le détail de la lecture est déjà dans le log du démon (`Diagnostic APN : …`).
 	 */
 	public static function onApn($_message) {
 		$action = (isset($_message['action']) && $_message['action'] == 'apply') ? 'apply' : 'read';
@@ -1187,28 +1188,50 @@ class sms4g extends eqLogic {
 			return;
 		}
 
-		$network = (isset($_message['network']) && $_message['network'] !== null && $_message['network'] !== '') ? htmlspecialchars((string) $_message['network'], $flags, 'UTF-8') : '';
-		$networkRead = !isset($_message['networkRead']) || $_message['networkRead'] !== false;
-		// La mémoire est affichée sans conclusion : c'est la ligne « Réseau » qui permet de l'interpréter (CMNET en mémoire
-		// sans APN attribué par le réseau : l'APN est probablement en cause)
-		if ($configured === null) {
-			$memory = array('status' => 'warn', 'label' => __('Mémoire : contexte 1 non défini', __FILE__));
-		} else {
-			$value = ($configuredApn === '') ? __('vide (automatique)', __FILE__) : htmlspecialchars((string) $configuredApn, $flags, 'UTF-8');
-			$memory = array('status' => 'ok', 'label' => __('Mémoire', __FILE__) . ' : ' . $value);
-		}
-		// Une seule signification par réponse : un APN, aucun (pas de connexion 4G), ou non lu (le modem n'a pas répondu)
-		if ($network !== '') {
-			$networkIndicator = array('status' => 'ok', 'label' => __('Réseau', __FILE__) . ' : ' . $network);
-		} elseif ($networkRead) {
-			$networkIndicator = array('status' => 'warn', 'label' => __('Réseau : aucun APN attribué (pas de connexion 4G)', __FILE__));
-		} else {
-			$networkIndicator = array('status' => 'unknown', 'label' => __('Réseau : non lu (le modem n\'a pas répondu)', __FILE__));
-		}
-		$data['memory'] = $memory;
-		$data['network'] = $networkIndicator;
-		log::add('sms4g', 'info', '[APN] ' . strip_tags($memory['label'] . ' ; ' . $networkIndicator['label']));
+		// Une ligne par contexte (mémoire et connexion réunies par numéro), toutes les informations visibles pour qu'une
+		// capture d'écran suffise au diagnostic. Les valeurs restent brutes : la page les affiche en texte (textContent).
+		$data['contexts'] = self::apnRows(isset($_message['contexts']) && is_array($_message['contexts']) ? $_message['contexts'] : array());
+		$data['connectionsRead'] = !isset($_message['connectionsRead']) || $_message['connectionsRead'] !== false;
 		event::add('sms4g::apn', $data);
+	}
+
+	/**
+	 * Lignes des contextes pour la page de configuration. `state` : `active` (connexion active), `mainInactive` (contexte 1
+	 * inactif : celui de l'enregistrement en 4G et du réglage de l'APN), `inactive` (autre contexte inactif), `unknown`
+	 * (connexions non lues : le modem n'a pas répondu).
+	 *
+	 * @param array $_contexts entrées `contexts` du message `apn` du démon
+	 * @return array<int, array{cid: int, state: string, pdpType: string, memoryApn: ?string, networkApn: ?string, families: string, bearer: ?int}>
+	 */
+	private static function apnRows($_contexts) {
+		$text = function ($_value) {
+			return ($_value === null) ? null : mb_substr((string) $_value, 0, 100);
+		};
+		$rows = array();
+		foreach ($_contexts as $context) {
+			if (!is_array($context) || !isset($context['cid']) || !is_numeric($context['cid'])) {
+				continue;
+			}
+			$cid = (int) $context['cid'];
+			$active = array_key_exists('active', $context) ? $context['active'] : null;
+			if ($active === true) {
+				$state = 'active';
+			} elseif ($active === false) {
+				$state = ($cid == 1) ? 'mainInactive' : 'inactive';
+			} else {
+				$state = 'unknown';
+			}
+			$rows[] = array(
+				'cid' => $cid,
+				'state' => $state,
+				'pdpType' => (string) $text(isset($context['pdpType']) ? $context['pdpType'] : ''),
+				'memoryApn' => (isset($context['apn']) && $context['apn'] !== null) ? $text($context['apn']) : null,
+				'networkApn' => ($state == 'active' && isset($context['networkApn'])) ? $text($context['networkApn']) : null,
+				'families' => ($state == 'active' && isset($context['families'])) ? (string) $text($context['families']) : '',
+				'bearer' => ($state == 'active' && isset($context['bearer']) && is_numeric($context['bearer'])) ? (int) $context['bearer'] : null,
+			);
+		}
+		return $rows;
 	}
 
 	/**

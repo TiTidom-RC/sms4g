@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .apn import (CONTEXT, DEFAULT_PDP_TYPES, ApnChange, ApnReading, PdpContext, contextOf, describeContext, isValidApn,
-                  parseContexts, parseNetworkApn, sameApn)
+                  parseConnections, parseContexts, sameApn)
 from .events import (ConnectionState, EventDispatcher, ModemIdentified, NetworkChanged, Registration, SignalChanged,
                      SmsReceived, StateChanged, UnsolicitedNotification)
 from .exceptions import (CommandError, IncorrectPinError, NotConnectedError, PduModeNotSupportedError, PinRequiredError,
@@ -260,10 +260,10 @@ class Modem:
         return result
 
     def readApn(self) -> Future:
-        """ Reads the APN of context 1 in the memory of the modem (``AT+CGDCONT?``) and the one the network gave
-        (``AT+CGCONTRDP``, only while connected in LTE). Changes nothing. Does not block: the Future resolves to an
-        ``ApnReading`` (the APN of the network may be none, or not read), or fails with ``CommandError`` / ``TimeoutException``
-        (the APN of the memory could not be read) or ``NotConnectedError``. """
+        """ Reads every context in the memory of the modem (``AT+CGDCONT?``) and every connection in use with what the
+        network gave it (``AT+CGCONTRDP``). Changes nothing. Does not block: the Future resolves to an ``ApnReading`` (the
+        connections may be none, or not read), or fails with ``CommandError`` / ``TimeoutException`` (the memory could not
+        be read) or ``NotConnectedError``. """
         return self._inBackground('wwanlib-apn-read', self._readApn)
 
     def setApn(self, apn: str) -> Future:
@@ -598,29 +598,32 @@ class Modem:
             log.info('%s: answer format not recognized (%d line(s), shown in debug)', command, len(lines))
             log.debug('%s: %s', command, lines)
 
-    def _readContext(self, session: _Session) -> PdpContext | None:
+    def _readContexts(self, session: _Session) -> list[PdpContext]:
         contexts, unreadable = parseContexts(self._apnCommand(session, 'AT+CGDCONT?'))
         self._logUnreadable('AT+CGDCONT?', unreadable)
-        return contextOf(contexts)
+        return contexts
+
+    def _readContext(self, session: _Session) -> PdpContext | None:
+        return contextOf(self._readContexts(session))
 
     def _readApn(self, session: _Session) -> ApnReading:
-        """ The APN of the memory is needed (any failure fails the reading); the one of the network is not: each answer
-        has one meaning, an APN, none (an answer without APN, or ERROR: no connection in LTE), or not read (no answer) """
-        configured = self._readContext(session)
-        # Without a parameter, the connections in use; some firmwares only answer for a given context
+        """ The contexts of the memory are needed (any failure fails the reading); the connections in use are not: each
+        answer has one meaning, the connections listed, none (an answer without any, or ERROR), or not read (no answer) """
+        contexts = tuple(self._readContexts(session))
+        # Without a parameter, every connection in use; some firmwares only answer for a given context
         for command in ('AT+CGCONTRDP', f'AT+CGCONTRDP={CONTEXT}'):
             try:
-                network, unreadable = parseNetworkApn(self._apnCommand(session, command))
+                connections, unreadable = parseConnections(self._apnCommand(session, command))
             except CommandError as e:
                 log.debug('%s: %s', command, e)
                 continue
             except TimeoutException:
                 # The port is held until the late answer (or resynchronized): no second wait with the other form
-                log.info('%s: no answer, the APN of the network is not read', command)
-                return ApnReading(configured, None, networkRead=False)
+                log.info('%s: no answer, the connections in use are not read', command)
+                return ApnReading(contexts, (), connectionsRead=False)
             self._logUnreadable(command, unreadable)
-            return ApnReading(configured, network)
-        return ApnReading(configured, None)
+            return ApnReading(contexts, connections)
+        return ApnReading(contexts, ())
 
     def _writeApnAlone(self, session: _Session, apn: str) -> ApnChange:
         """ A second change waits for the end of the first one: it then finds the APN already written, or writes its own """

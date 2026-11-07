@@ -24,7 +24,7 @@ the Executor reads them. The library only depends on pyserial,
 never imports Jeedom and logs through ``logging.getLogger(__name__)``.
 """
 
-from .apn import ApnChange, ApnReading, PdpContext, describeContext, isValidApn
+from .apn import ApnChange, ApnReading, Connection, PdpContext, describeContext, describeReading, familiesLabel, isValidApn
 from .events import (ConnectionState, ModemIdentified, NetworkChanged, Registration, SelfTestResult, SignalChanged, SmsExpired,
                      SmsDelivery, SmsFailed, SmsIncomplete, SmsQueued, SmsReceived, SmsSent, StateChanged,
                      UnsolicitedNotification)
@@ -40,7 +40,7 @@ __all__ = [
     'SignalChanged', 'NetworkChanged', 'UnsolicitedNotification',
     'WwanException', 'CommandError', 'CmeError', 'CmsError', 'TimeoutException', 'NotConnectedError', 'RestartRefusedError',
     'PinRequiredError', 'IncorrectPinError', 'PukRequiredError', 'SimNotInsertedError', 'SmscNumberUnknownError', 'EncodingError',
-    'ApnReading', 'ApnChange', 'PdpContext', 'describeContext', 'isValidApn',
+    'ApnReading', 'ApnChange', 'Connection', 'PdpContext', 'describeContext', 'describeReading', 'familiesLabel', 'isValidApn',
     'maskNumber', 'maskPduNumbers', 'PduModeNotSupportedError', 'SmsQueueFullError', 'SmsQueued', 'SmsSent', 'SmsFailed', 'SmsExpired',
     'SmsReceived', 'SmsIncomplete', 'SmsDelivery', 'SelfTestResult',
 ]

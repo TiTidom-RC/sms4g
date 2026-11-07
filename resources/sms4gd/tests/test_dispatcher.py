@@ -8,7 +8,7 @@ import unittest
 from concurrent.futures import Future
 
 from dispatcher import MAX_RESPONSE_CHARS, Dispatcher, selfTestMessage, smsInboxMessage, smsStatusMessage
-from wwanlib import (ApnChange, ApnReading, CmeError, NotConnectedError, PdpContext, RestartRefusedError, SelfTestResult, SignalChanged, SmsDelivery, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError,
+from wwanlib import (ApnChange, ApnReading, CmeError, Connection, NotConnectedError, PdpContext, RestartRefusedError, SelfTestResult, SignalChanged, SmsDelivery, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError,
                     SmsReceived, SmsSent, TimeoutException)
 
 
@@ -395,22 +395,31 @@ class DispatcherTest(unittest.TestCase):
         self.dispatcher = Dispatcher(self.messages, self.modem, self.out, 'KEY', diagnostic=False)
         self.dispatch(cmd='readApn')
         self.assertEqual(self.modem.calls, [('readApn',)])
-        self.modem.future.set_result(ApnReading(PdpContext(1, 'IP', 'CMNET'), None))
-        self.assertEqual(self.out.events, [{'type': 'apn', 'action': 'read', 'status': 'ok', 'reason': '',
-                                            'configured': {'cid': 1, 'pdpType': 'IP', 'apn': 'CMNET'}, 'network': None,
-                                            'networkRead': True}])
+        with self.assertLogs('dispatcher', level='INFO') as logs:
+            self.modem.future.set_result(ApnReading((PdpContext(1, 'IP', ''), PdpContext(2, 'IPV4V6', 'ims')),
+                                                    (Connection(2, 6, 'ims', ('IPv6',)),)))
+        self.assertEqual(self.out.events, [{
+            'type': 'apn', 'action': 'read', 'status': 'ok', 'reason': '', 'connectionsRead': True,
+            'configured': {'cid': 1, 'pdpType': 'IP', 'apn': ''},
+            'contexts': [{'cid': 1, 'pdpType': 'IP', 'apn': '', 'active': False},
+                         {'cid': 2, 'pdpType': 'IPV4V6', 'apn': 'ims', 'active': True, 'networkApn': 'ims', 'families': 'IPv6',
+                          'bearer': 6}]}])
+        # What the page shows is in the log too, for a screenshot to be checked
+        self.assertIn('APN read: 1 IP "" inactive | 2 IPV4V6 "ims" -> ims IPv6 #6', '\n'.join(logs.output))
 
-    def testApnReadingWhenContextOneIsNotDefined(self):
+    def testApnReadingWithAConnectionOfAContextThatIsNotInTheMemory(self):
         self.dispatch(cmd='readApn')
-        self.modem.future.set_result(ApnReading(None, 'free'))
-        event = self.out.events[0]
-        self.assertEqual((event['configured'], event['network'], event['networkRead']), (None, 'free', True))
+        self.modem.future.set_result(ApnReading((), (Connection(1, None, 'free', ()),)))
+        self.assertEqual(self.out.events[0]['contexts'], [{'cid': 1, 'pdpType': None, 'apn': None, 'active': True,
+                                                           'networkApn': 'free', 'families': '', 'bearer': None}])
+        self.assertIsNone(self.out.events[0]['configured'])
 
-    def testNetworkApnNotRead(self):
+    def testConnectionsNotRead(self):
         self.dispatch(cmd='readApn')
-        self.modem.future.set_result(ApnReading(PdpContext(1, 'IP', 'CMNET'), None, networkRead=False))
+        self.modem.future.set_result(ApnReading((PdpContext(1, 'IP', 'CMNET'),), (), connectionsRead=False))
         event = self.out.events[0]
-        self.assertEqual((event['network'], event['networkRead']), (None, False))
+        self.assertEqual((event['contexts'], event['connectionsRead']),
+                         ([{'cid': 1, 'pdpType': 'IP', 'apn': 'CMNET', 'active': None}], False))
 
     def testApnIsWritten(self):
         self.dispatch(cmd='setApn', apn='free')

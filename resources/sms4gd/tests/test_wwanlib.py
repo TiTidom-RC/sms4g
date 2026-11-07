@@ -16,7 +16,7 @@ import serial
 
 from wwanlib import (ConnectionState, Modem, ModemIdentified, ModemOptions, NetworkChanged, Registration, SignalChanged,
                     StateChanged)
-from wwanlib.apn import PdpContext
+from wwanlib.apn import Connection, PdpContext
 from wwanlib.exceptions import CmsError, CommandError, NotConnectedError, PinRequiredError, RestartRefusedError, TimeoutException
 from wwanlib.executor import CTRL_Z, Executor, Priority, Step, Transaction
 from wwanlib.profiles import GENERIC, HUAWEI, QUECTEL, SIMCOM
@@ -1172,28 +1172,30 @@ class ModemTest(unittest.TestCase):
         return [c for c in commands if c.startswith(('AT+CGDCONT', 'AT+CFUN', 'AT+CRESET', 'AT+CMEE?'))]
 
     def testApnIsRead(self):
-        modem = self.apnModem(network='+CGCONTRDP: 1,5,"free.mnc015.mcc208.gprs","10.1.2.3.255.255.255.0"\r\nOK\r\n')
+        modem = self.apnModem(network='+CGCONTRDP: 1,5,"free.mnc015.mcc208.gprs","192.0.2.10.255.255.255.0"\r\n'
+                                      '+CGCONTRDP: 2,6,ims,32.1.13.184.0.0.0.0.0.0.0.0.0.0.0.10\r\nOK\r\n')
         reading = modem.readApn().result(3)
         self.assertEqual(reading.configured, PdpContext(1, 'IP', 'CMNET'))
-        self.assertEqual(reading.network, 'free.mnc015.mcc208.gprs')
-        self.assertTrue(reading.networkRead)
+        self.assertEqual(reading.connections, (Connection(1, 5, 'free.mnc015.mcc208.gprs', ('IPv4',)),
+                                               Connection(2, 6, 'ims', ('IPv6',))))
+        self.assertTrue(reading.connectionsRead)
         self.assertFalse([c for c in self.commandsAfterConnection() if c.startswith(('AT+CGDCONT=', 'AT+CFUN='))])
 
-    def testNoNetworkApnWhenTheModemAnswersWithoutOne(self):
-        # No connection in LTE (not in 4G, or kept off it by its APN): an answer without APN, or ERROR to both forms
+    def testNoConnectionWhenTheModemAnswersWithoutAny(self):
+        # An answer without any connection, or ERROR to both forms
         for network in ('OK\r\n', 'ERROR\r\n', '+CME ERROR: 4\r\n'):
             with self.subTest(network):
                 FakeSerial.instances.clear()
                 modem = self.apnModem(network=network)
                 reading = modem.readApn().result(3)
-                self.assertEqual((reading.network, reading.networkRead), (None, True))
+                self.assertEqual((reading.connections, reading.connectionsRead), ((), True))
                 self.assertEqual(reading.configured.apn, 'CMNET')
 
-    def testNetworkApnNotReadWhenTheModemDoesNotAnswer(self):
+    def testConnectionsNotReadWhenTheModemDoesNotAnswer(self):
         with mock.patch.object(Modem, 'APN_TIMEOUT', 0.2):
             modem = self.apnModem(network=None)
             reading = modem.readApn().result(5)
-        self.assertEqual((reading.network, reading.networkRead), (None, False))
+        self.assertEqual((reading.connections, reading.connectionsRead), ((), False))
         self.assertEqual(reading.configured.apn, 'CMNET')  # what was read is kept
         self.assertNotIn('AT+CGCONTRDP=1', FakeSerial.instances[0].commands())  # no second wait with the other form
 
@@ -1301,7 +1303,7 @@ class ModemTest(unittest.TestCase):
 
     def testNetworkApnIsAskedForContextOneWhenTheModemWantsIt(self):
         modem = self.apnModem(network='ERROR\r\n', **{'AT+CGCONTRDP=1': '+CGCONTRDP: 1,5,"free"\r\nOK\r\n'})
-        self.assertEqual(modem.readApn().result(3).network, 'free')
+        self.assertEqual(modem.readApn().result(3).connection(), Connection(1, 5, 'free', ()))
 
     def testTwoChangesAtOnceDoNotMix(self):
         modem = self.apnModem()

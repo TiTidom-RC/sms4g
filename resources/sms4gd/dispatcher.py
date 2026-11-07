@@ -29,7 +29,7 @@ from typing import Any, Protocol
 from atfilter import checkAtCommand
 from wwanlib import (ApnChange, ApnReading, NotConnectedError, PdpContext, RestartRefusedError, SelfTestResult, SmsDelivery,
                      SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError, SmsReceived, SmsSent, TimeoutException,
-                     isValidApn, maskNumber)
+                     describeReading, familiesLabel, isValidApn, maskNumber)
 
 log = logging.getLogger(__name__)
 
@@ -111,16 +111,34 @@ def apnMessage(action: str, result: ApnReading | ApnChange | None = None, reason
     """ The `apn` message, answer to `readApn` (`action` `read`) and to `setApn` (`action` `apply`).
     `status`: `ok` (read), `written` or `unchanged` (apply: the modem already had it, nothing written), `error` (`reason`
     says why). `configured`: context 1 in the memory of the modem (`cid`, `pdpType`, `apn`; empty APN = given by the
-    operator), null when it is not defined. Read: `network`, the APN the network gave (null when none: no connection in
-    LTE, or not read), and `networkRead` (false when the modem did not answer). Apply: `previous` APN (null when context 1
-    was not defined) and `radio`, how the modem took it (`cfun`: radio off and on, `restart`, `failed`; null when
-    unchanged). """
+    operator), null when it is not defined.
+    Read: `contexts`, one entry per context (memory and connections put together, by number): `cid`; `pdpType` and `apn`
+    of the memory (null when the context is not in the memory); `active` (true / false, null when the connections were not
+    read); for an active one, `networkApn`, `families` (`IPv4`, `IPv6` or `IPv4v6` obtained, empty when unknown) and
+    `bearer` (null when the modem does not say). `connectionsRead`: false when the modem did not answer for them.
+    Apply: `previous` APN (null when context 1 was not defined) and `radio`, how the modem took it (`cfun`: radio off and
+    on, `restart`, `failed`; null when unchanged). """
     def context(value: PdpContext | None) -> dict[str, Any] | None:
         return None if value is None else {'cid': value.cid, 'pdpType': value.pdpType, 'apn': value.apn}
 
+    def rows(reading: ApnReading) -> list[dict[str, Any]]:
+        memory = {item.cid: item for item in reading.contexts}
+        cids = sorted(set(memory) | {connection.cid for connection in reading.connections})
+        entries: list[dict[str, Any]] = []
+        for cid in cids:
+            stored = memory.get(cid)
+            connection = reading.connection(cid)
+            entry: dict[str, Any] = {'cid': cid, 'pdpType': stored.pdpType if stored else None, 'apn': stored.apn if stored else None,
+                                     'active': (connection is not None) if reading.connectionsRead else None}
+            if connection is not None:
+                entry.update(networkApn=connection.apn, families=familiesLabel(connection.families), bearer=connection.bearer)
+            entries.append(entry)
+        return entries
+
     payload: dict[str, Any] = {'type': 'apn', 'action': action, 'status': 'error', 'reason': reason, 'configured': None}
     if isinstance(result, ApnReading):
-        payload.update(status='ok', configured=context(result.configured), network=result.network, networkRead=result.networkRead)
+        payload.update(status='ok', configured=context(result.configured), contexts=rows(result),
+                       connectionsRead=result.connectionsRead)
     elif isinstance(result, ApnChange):
         payload.update(status=result.status, configured=context(result.configured), previous=result.previous, radio=result.radio)
     return payload
@@ -293,7 +311,10 @@ class Dispatcher:
         """ Callback of the Future: runs in the thread of the library, only builds the payload and queues it """
         error = done.exception()
         if error is None:
-            self._out.event(apnMessage(action, done.result()))
+            result = done.result()
+            if isinstance(result, ApnReading):
+                log.info('APN read: %s', describeReading(result))  # what the page shows, for a screenshot to be checked
+            self._out.event(apnMessage(action, result))
             return
         reason = self._failureReason(error)
         log.warning('APN %s failed (%s)', 'reading' if action == 'read' else 'change', reason)

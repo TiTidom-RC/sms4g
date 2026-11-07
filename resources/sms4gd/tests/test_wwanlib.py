@@ -1182,14 +1182,14 @@ class ModemTest(unittest.TestCase):
         self.assertFalse([c for c in self.commandsAfterConnection() if c.startswith(('AT+CGDCONT=', 'AT+CFUN='))])
 
     def testNoConnectionWhenTheModemAnswersWithoutAny(self):
-        # What the SIM7600G-H answers with its radio off (AT+CFUN=4, captured on 2026-11-07): OK, without any line
+        # A modem without any connection (radio off...) answers OK, without any line
         reading = self.apnModem(network='OK\r\n').readApn().result(3)
         self.assertEqual((reading.connections, reading.connectionsRead, reading.onlyContext), ((), True, None))
         self.assertTrue(reading.connectionKnown(1))  # inactive, for sure
         self.assertEqual(reading.configured.apn, 'CMNET')
 
     def testConnectionsNotReadWhenTheModemRefusesBothForms(self):
-        # ERROR is a refused request (the SIM7600G-H answers ERROR to AT+CGCONTRDP=99), not "no connection"
+        # ERROR is a refused request, not "no connection"
         for refusal in ('ERROR\r\n', '+CME ERROR: 4\r\n'):
             with self.subTest(refusal):
                 FakeSerial.instances.clear()

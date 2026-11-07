@@ -61,8 +61,7 @@ class ParsingTest(unittest.TestCase):
         self.assertEqual(unreadable, ['+CGDCONT: x,"IP","free"', '+CGDCONT: 1'])
 
     def testConnectionsOfASim7600(self):
-        """ Answer of the SIM7600G-H (LE20B04SIM7600G22, SIM Free) captured on 2026-11-07: no quotes, IPv4 without mask
-        for context 1, IPv6 written as 16 numbers for context 2 """
+        """ SIM7600G-H: no quotes, IPv4 without mask for context 1, IPv6 written as 16 numbers for context 2 """
         connections, unreadable = parseConnections(SIM7600_CGCONTRDP)
         self.assertEqual(connections, (Connection(1, 5, 'free', ('IPv4',)), Connection(2, 6, 'ims', ('IPv6',))))
         self.assertEqual(unreadable, [])
@@ -96,16 +95,16 @@ class ParsingTest(unittest.TestCase):
         self.assertEqual(parseConnections(['OK']), ((), []))
         self.assertEqual(parseConnections(['+CGCONTRDP: 1', 'OK']), ((), ['+CGCONTRDP: 1']))
 
-    def testReadingOfLastNightAndOfThisMorning(self):
+    def testReadingOfEveryContext(self):
         contexts = tuple(parseContexts(SIM7600_CGDCONT)[0])
-        morning = ApnReading(contexts, parseConnections(SIM7600_CGCONTRDP)[0])
-        self.assertEqual(morning.configured, PdpContext(1, 'IP', ''))
-        self.assertEqual(morning.connection(), Connection(1, 5, 'free', ('IPv4',)))
-        self.assertEqual(describeReading(morning), '1 IP "" -> free IPv4 #5 | 2 IPV4V6 "ims" -> ims IPv6 #6 | 3 IPV4V6 "" inactive')
-        # 2026-11-06 evening: only the connection of context 2 was in use (rebuilt from the summary of the log)
-        evening = ApnReading(contexts, parseConnections([SIM7600_CGCONTRDP[1], 'OK'])[0])
-        self.assertIsNone(evening.connection())
-        self.assertEqual(describeReading(evening), '1 IP "" inactive | 2 IPV4V6 "ims" -> ims IPv6 #6 | 3 IPV4V6 "" inactive')
+        bothActive = ApnReading(contexts, parseConnections(SIM7600_CGCONTRDP)[0])
+        self.assertEqual(bothActive.configured, PdpContext(1, 'IP', ''))
+        self.assertEqual(bothActive.connection(), Connection(1, 5, 'free', ('IPv4',)))
+        self.assertEqual(describeReading(bothActive), '1 IP "" -> free IPv4 #5 | 2 IPV4V6 "ims" -> ims IPv6 #6 | 3 IPV4V6 "" inactive')
+        # Context 1 inactive, only the connection of context 2 in use
+        onlyIms = ApnReading(contexts, parseConnections([SIM7600_CGCONTRDP[1], 'OK'])[0])
+        self.assertIsNone(onlyIms.connection())
+        self.assertEqual(describeReading(onlyIms), '1 IP "" inactive | 2 IPV4V6 "ims" -> ims IPv6 #6 | 3 IPV4V6 "" inactive')
 
     def testReadingWhenTheConnectionsWereNotRead(self):
         reading = ApnReading((PdpContext(1, 'IP', 'CMNET'),), (), connectionsRead=False)
@@ -114,7 +113,7 @@ class ParsingTest(unittest.TestCase):
         self.assertEqual(describeReading(refused), '1 IP "CMNET" | connections not read (AT+CGCONTRDP refused)')
 
     def testReadingWithoutAnyConnection(self):
-        # SIM7600G-H with its radio off: OK without any line to both forms (2026-11-07)
+        # A modem without any connection answers OK without any line
         reading = ApnReading(tuple(parseContexts(SIM7600_CGDCONT)[0]), parseConnections(['OK'])[0])
         self.assertEqual(describeReading(reading), '1 IP "" inactive | 2 IPV4V6 "ims" inactive | 3 IPV4V6 "" inactive')
 

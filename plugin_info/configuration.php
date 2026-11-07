@@ -199,14 +199,14 @@ if (!isConnect('admin')) {
             </div>
             <div class="form-group">
                 <label class="col-lg-3 control-label">{{Changer l'APN}}
-                    <sup><i class="fas fa-question-circle tooltips" title="{{Automatique : l'opérateur fournit son APN, ce qui convient dans la plupart des cas. Personnalisé, exemples : Free « free », Orange « orange », SFR « sl2sfr », Bouygues Telecom « mmsbouygtel.com ». Sauvegardez, puis cliquez sur « Appliquer » : l'APN est enregistré dans le modem, qui le conserve, et le réseau est coupé quelques secondes.}}"></i></sup>
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Automatique : l'opérateur fournit son APN, ce qui convient dans la plupart des cas. Personnalisé : saisissez celui de votre opérateur. Sauvegardez, puis cliquez sur « Appliquer » : l'APN est enregistré dans le modem, qui le conserve, et le réseau est coupé quelques secondes.}}"></i></sup>
                 </label>
                 <div class="col-lg-9" style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
                     <select class="configKey form-control" data-l1key="apnMode" style="width:auto;">
                         <option value="auto">{{Automatique (fourni par l'opérateur)}}</option>
                         <option value="custom">{{Personnalisé}}</option>
                     </select>
-                    <input class="configKey form-control" data-l1key="apnCustom" style="width:220px;" maxlength="100" placeholder="free" />
+                    <input class="configKey form-control" data-l1key="apnCustom" style="width:220px;" maxlength="100" placeholder="free" title="{{APN de votre opérateur, par exemple : Free « free », Orange « orange », SFR « sl2sfr », Bouygues Telecom « mmsbouygtel.com ». Lettres, chiffres, points et tirets uniquement, 100 caractères au plus.}}" />
                     <button type="button" id="btn_applyApn" class="btn btn-sm btn-warning">
                         <i class="fas fa-check"></i> {{Appliquer}}
                     </button>
@@ -632,16 +632,14 @@ if (!isConnect('admin')) {
         container.appendChild(grid)
     }
 
-    // Le champ personnalisé ne sert qu'en mode « Personnalisé » ; une saisie qui n'est pas un APN est signalée (sans rien bloquer :
-    // « Appliquer » la refusera)
+    // Le champ personnalisé ne sert qu'en mode « Personnalisé » ; une saisie qui n'est pas un APN est bordée de rouge (sans rien
+    // bloquer : « Appliquer » la refusera). Les règles sont dans l'info-bulle fixe du champ.
     const refreshApnCustom = () => {
         if (!apnModeSelect || !apnCustomInput) {
             return
         }
         apnCustomInput.style.display = (apnModeSelect.value === 'custom') ? '' : 'none'
-        const valid = APN_PATTERN.test(apnCustomInput.value.trim())
-        apnCustomInput.style.borderColor = valid ? '' : 'var(--al-danger-color,#e74c3c)'
-        apnCustomInput.title = valid ? '' : '{{Lettres, chiffres, points et tirets uniquement}}'
+        apnCustomInput.style.borderColor = APN_PATTERN.test(apnCustomInput.value.trim()) ? '' : 'var(--al-danger-color,#e74c3c)'
     }
     apnModeSelect?.addEventListener('change', refreshApnCustom)  // aussi déclenché par le Core au chargement des valeurs
     apnCustomInput?.addEventListener('input', refreshApnCustom)

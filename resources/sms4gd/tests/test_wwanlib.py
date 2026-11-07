@@ -1303,7 +1303,16 @@ class ModemTest(unittest.TestCase):
 
     def testNetworkApnIsAskedForContextOneWhenTheModemWantsIt(self):
         modem = self.apnModem(network='ERROR\r\n', **{'AT+CGCONTRDP=1': '+CGCONTRDP: 1,5,"free"\r\nOK\r\n'})
-        self.assertEqual(modem.readApn().result(3).connection(), Connection(1, 5, 'free', ()))
+        reading = modem.readApn().result(3)
+        self.assertEqual(reading.connection(), Connection(1, 5, 'free', ()))
+        # The answer only tells about context 1: the others are not read, not taken for inactive
+        self.assertEqual(reading.onlyContext, 1)
+        self.assertEqual((reading.connectionKnown(1), reading.connectionKnown(2)), (True, False))
+
+    def testEveryContextIsKnownWhenTheModemAnswersWithoutAParameter(self):
+        reading = self.apnModem(network='+CGCONTRDP: 1,5,free\r\nOK\r\n').readApn().result(3)
+        self.assertIsNone(reading.onlyContext)
+        self.assertTrue(reading.connectionKnown(2))
 
     def testTwoChangesAtOnceDoNotMix(self):
         modem = self.apnModem()

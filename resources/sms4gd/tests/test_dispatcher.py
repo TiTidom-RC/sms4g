@@ -421,6 +421,11 @@ class DispatcherTest(unittest.TestCase):
         self.assertEqual((event['contexts'], event['connectionsRead']),
                          ([{'cid': 1, 'pdpType': 'IP', 'apn': 'CMNET', 'active': None}], False))
 
+    def testConnectionsReadForContextOneOnly(self):
+        self.dispatch(cmd='readApn')
+        self.modem.future.set_result(ApnReading((PdpContext(1, 'IP', ''), PdpContext(2, 'IPV4V6', 'ims')), (), onlyContext=1))
+        self.assertEqual([(row['cid'], row['active']) for row in self.out.events[0]['contexts']], [(1, False), (2, None)])
+
     def testApnIsWritten(self):
         self.dispatch(cmd='setApn', apn='free')
         self.assertEqual(self.modem.calls, [('setApn', 'free')])

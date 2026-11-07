@@ -116,6 +116,16 @@ class ParsingTest(unittest.TestCase):
         self.assertEqual(describeReading(reading), '4 (not in the memory) -> internet IPv4 #7')
         self.assertEqual(describeReading(ApnReading((), ())), 'no context in the memory')
 
+    def testReadingOfContextOneOnly(self):
+        # The modem refused AT+CGCONTRDP without a parameter: AT+CGCONTRDP=1 tells nothing about the other contexts
+        contexts = tuple(parseContexts(SIM7600_CGDCONT)[0])
+        reading = ApnReading(contexts, (Connection(1, 5, 'free', ('IPv4',)),), onlyContext=1)
+        self.assertEqual(describeReading(reading), '1 IP "" -> free IPv4 #5 | 2 IPV4V6 "ims" not read | 3 IPV4V6 "" not read | '
+                                                   'connections read for context 1 only (AT+CGCONTRDP without a parameter refused)')
+        inactive = ApnReading(contexts, (), onlyContext=1)
+        self.assertTrue(describeReading(inactive).startswith('1 IP "" inactive | 2 IPV4V6 "ims" not read'))
+        self.assertEqual([inactive.connectionKnown(cid) for cid in (1, 2, 3)], [True, False, False])
+
     def testDescriptionNeverHoldsTheAddresses(self):
         self.assertEqual(describeContext(PdpContext(1, 'IP', 'CMNET')), 'context 1: IP, APN "CMNET"')
         self.assertEqual(describeContext(PdpContext(1, 'IPV4V6', '')), 'context 1: IPV4V6, APN "" (given by the operator)')

@@ -113,8 +113,8 @@ def apnMessage(action: str, result: ApnReading | ApnChange | None = None, reason
     says why). `configured`: context 1 in the memory of the modem (`cid`, `pdpType`, `apn`; empty APN = given by the
     operator), null when it is not defined.
     Read: `contexts`, one entry per context (memory and connections put together, by number): `cid`; `pdpType` and `apn`
-    of the memory (null when the context is not in the memory); `active` (true / false, null when the connections were not
-    read); for an active one, `networkApn`, `families` (`IPv4`, `IPv6` or `IPv4v6` obtained, empty when unknown) and
+    of the memory (null when the context is not in the memory); `active` (true / false, null when its connection was not
+    read: no answer from the modem, or the modem only answered for context 1); for an active one, `networkApn`, `families` (`IPv4`, `IPv6` or `IPv4v6` obtained, empty when unknown) and
     `bearer` (null when the modem does not say). `connectionsRead`: false when the modem did not answer for them.
     Apply: `previous` APN (null when context 1 was not defined) and `radio`, how the modem took it (`cfun`: radio off and
     on, `restart`, `failed`; null when unchanged). """
@@ -129,7 +129,7 @@ def apnMessage(action: str, result: ApnReading | ApnChange | None = None, reason
             stored = memory.get(cid)
             connection = reading.connection(cid)
             entry: dict[str, Any] = {'cid': cid, 'pdpType': stored.pdpType if stored else None, 'apn': stored.apn if stored else None,
-                                     'active': (connection is not None) if reading.connectionsRead else None}
+                                     'active': True if connection is not None else (False if reading.connectionKnown(cid) else None)}
             if connection is not None:
                 entry.update(networkApn=connection.apn, families=familiesLabel(connection.families), bearer=connection.bearer)
             entries.append(entry)

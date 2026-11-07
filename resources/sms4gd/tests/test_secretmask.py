@@ -161,6 +161,16 @@ class AddressTest(unittest.TestCase):
         self.assertEqual(masked('+CGCONTRDP: 1,5,"free.mnc015.mcc208.gprs","10.1.2.3" | +CGCONTRDP: 2,6,"ims","fd00:1::2" | OK'),
                          '+CGCONTRDP: 1,5,"free.mnc015.mcc208.gprs","10.x.x.x" | +CGCONTRDP: 2,6,"ims","fd00:x::x" | OK')
 
+    def testFieldsWithoutQuotes(self):
+        # Between quotes on the SIM7600, as 3GPP writes it, but not on every modem
+        self.assertEqual(masked('+CGDCONT: 1,IP,free,10.12.34.56,0,0'), '+CGDCONT: 1,IP,free,10.x.x.x,0,0')
+        self.assertEqual(masked('+CGDCONT: 1,"IP","free",10.12.34.56,0,0'), '+CGDCONT: 1,"IP","free",10.x.x.x,0,0')
+
+    def testLineThatCouldNotBeReadIsMaskedToo(self):
+        # Such a line goes to the debug log as it came ("answer format not recognized")
+        self.assertEqual(masked("AT+CGCONTRDP: ['+CGCONTRDP: x,5,free,10.12.34.56,10.12.34.1']"),
+                         "AT+CGCONTRDP: ['+CGCONTRDP: x,5,free,10.x.x.x,10.x.x.x']")
+
     def testWhatIsNotAnAnswerOfTheseCommandsIsLeftAlone(self):
         for line in ('Callback : http://127.0.0.1:80/plugins/sms4g/core/php/jeesms4g.php',
                      'PyEnvVersion :: 2.8.14-17-ge6669f0a', 'Diagnostic APN : 1 IP "" -> free IPv4 #5',

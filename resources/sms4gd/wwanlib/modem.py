@@ -622,7 +622,8 @@ class Modem:
                 log.info('%s: no answer, the connections in use are not read', command)
                 return ApnReading(contexts, (), connectionsRead=False)
             self._logUnreadable(command, unreadable)
-            return ApnReading(contexts, connections)
+            # The second form only tells about context 1: the other contexts are not read, not taken for inactive
+            return ApnReading(contexts, connections, onlyContext=None if command == 'AT+CGCONTRDP' else CONTEXT)
         return ApnReading(contexts, ())
 
     def _writeApnAlone(self, session: _Session, apn: str) -> ApnChange:

@@ -1685,11 +1685,14 @@ class sms4g extends eqLogic {
 				return self::maskModemAddress($_address[0]);
 			}, $_match[2]);
 		};
+		// Un champ entre guillemets doubles ou non, selon le modem ; une ligne s'arrête à un guillemet simple, un crochet ou un
+		// « | » (liste, ou lignes jointes)
+		$field = '(?:"[^"]*"|[^,\'"|\]\r\n]*)';
 		$rules = array(
 			// Adresses IP que le réseau attribue au modem (réponses AT+CGCONTRDP / AT+CGDCONT?) : forme et début conservés.
-			// Une ligne s'arrête à un guillemet simple, un crochet ou un « | » (liste, ou lignes jointes)
-			array('/(\+CGCONTRDP:\s*\d+,[^,\'|\]\r\n]*,[^,\'|\]\r\n]*)([^\'|\]\r\n]*)/', $maskAddresses),
-			array('/(\+CGDCONT:\s*\d+,"[^"]*","[^"]*",)("[^"]*")/', $maskAddresses),
+			// Une ligne mal formée est masquée aussi (le premier champ n'a pas besoin d'être un nombre)
+			array('/(\+CGCONTRDP:\s*' . $field . ',' . $field . ',' . $field . ')([^\'|\]\r\n]*)/', $maskAddresses),
+			array('/(\+CGDCONT:\s*' . $field . ',' . $field . ',' . $field . ',)(' . $field . ')/', $maskAddresses),
 			array('/(["\']?apikey["\']?\s*[:=]\s*["\']?)[^"\'&\s]+/i', '$1sEcReT'),
 			// Code PIN (et PUK) d'une commande AT+CPIN=, avec ou sans guillemets ni espaces ; jamais la lecture AT+CPIN? / AT+CPIN=?
 			array('/(AT\s*\+\s*CPIN\s*=)(?!\s*\?)[^\'|\]\r\n]+/i', '$1****'),

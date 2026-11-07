@@ -41,6 +41,9 @@ class ApnReading:
     contexts: tuple[PdpContext, ...]  # the contexts in the memory of the modem (AT+CGDCONT?)
     connections: tuple[Connection, ...]  # the connections in use (AT+CGCONTRDP): empty when there is none, or not read
     connectionsRead: bool = True  # False when the modem did not answer: nothing is known about the connections
+    # The connections were read for this context only (the modem refused AT+CGCONTRDP without a parameter): nothing is
+    # known about the others. None when every connection was read.
+    onlyContext: int | None = None
 
     @property
     def configured(self) -> PdpContext | None:
@@ -49,6 +52,10 @@ class ApnReading:
 
     def connection(self, cid: int = CONTEXT) -> Connection | None:
         return next((connection for connection in self.connections if connection.cid == cid), None)
+
+    def connectionKnown(self, cid: int) -> bool:
+        """ Whether the answer tells if this context has a connection in use (else it may, or may not) """
+        return self.connectionsRead and (self.onlyContext is None or self.onlyContext == cid)
 
 
 @dataclass(frozen=True)
@@ -152,9 +159,12 @@ def parseConnections(lines: list[str]) -> tuple[tuple[Connection, ...], list[str
 
 
 # Addresses in the answers, for the logs: the fields after <cid>,<bearer id>,<apn> of +CGCONTRDP (address and mask, gateway,
-# DNS...), and the address field of +CGDCONT. A line stops at a quote, a bracket or a "|" (a list or a join of lines).
-_CGCONTRDP_ADDRESSES = re.compile(r"(\+CGCONTRDP:\s*\d+,[^,'|\]\r\n]*,[^,'|\]\r\n]*)([^'|\]\r\n]*)")
-_CGDCONT_ADDRESS = re.compile(r'(\+CGDCONT:\s*\d+,"[^"]*","[^"]*",)("[^"]*")')
+# DNS...), and the address field of +CGDCONT. A field may be between double quotes or not, whatever the modem, and a line
+# that could not be read is masked too (it goes to the debug log as it came). A line stops at a single quote, a bracket or
+# a "|" (a list or a join of lines). Same rules in sms4g::maskSecrets (PHP).
+_FIELD = r'(?:"[^"]*"|[^,\'"|\]\r\n]*)'
+_CGCONTRDP_ADDRESSES = re.compile(rf"(\+CGCONTRDP:\s*{_FIELD},{_FIELD},{_FIELD})([^'|\]\r\n]*)")
+_CGDCONT_ADDRESS = re.compile(rf'(\+CGDCONT:\s*{_FIELD},{_FIELD},{_FIELD},)({_FIELD})')
 _ADDRESS = re.compile(r'(?<![0-9A-Za-z.:])[0-9A-Fa-f.:]*[.:][0-9A-Fa-f.:]*(?![0-9A-Za-z.:])')
 
 
@@ -207,11 +217,15 @@ def describeReading(reading: ApnReading) -> str:
             if connection.bearer is not None:
                 details.append(f'#{connection.bearer}')
             text += ' -> ' + ' '.join(detail for detail in details if detail)
-        elif reading.connectionsRead:
+        elif reading.connectionKnown(cid):
             text += ' inactive'
+        elif reading.connectionsRead:
+            text += ' not read'
         parts.append(text)
     if not parts:
         parts.append('no context in the memory')
     if not reading.connectionsRead:
         parts.append('connections not read (no answer from the modem)')
+    elif reading.onlyContext is not None:
+        parts.append(f'connections read for context {reading.onlyContext} only (AT+CGCONTRDP without a parameter refused)')
     return ' | '.join(parts)

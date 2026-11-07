@@ -681,35 +681,50 @@ if (!isConnect('admin')) {
         })
     })
 
+    // Jeedom fait les contrôles (modification non sauvegardée, démon, APN) : d'abord seuls, pour qu'un refus s'affiche avant
+    // la confirmation, puis de nouveau à l'envoi réel (la configuration a pu changer entre les deux)
+    const requestApply = (btn, check, onSuccess) => {
+        btn.disabled = true
+        domUtils.ajax({
+            type: 'POST',
+            url: AJAX_URL,
+            data: { action: 'applyApn', check: check ? 1 : 0, apnMode: apnModeSelect ? apnModeSelect.value : '', apnCustom: apnCustomInput ? apnCustomInput.value : '' },
+            dataType: 'json',
+            error: (request, status, error) => { handleAjaxError(request, status, error); btn.disabled = false },
+            success: (data) => {
+                btn.disabled = false
+                if (data.state !== 'ok') {
+                    jeedomUtils.showAlert({ message: data.result, level: 'danger' })
+                    return
+                }
+                if (data.result.message) {
+                    jeedomUtils.showAlert({ message: data.result.message, level: data.result.level })
+                }
+                onSuccess(data.result)
+            }
+        })
+    }
+
     applyApnButton?.addEventListener('click', (event) => {
         const btn = event.currentTarget
-        jeeDialog.confirm({
-            title: "{{Changer l'APN du modem}}",
-            message: '<div class="alert alert-warning"><i class="fas fa-exclamation-triangle"></i> ' +
-                "{{L'APN sauvegardé va être enregistré dans le modem, qui le conserve. Le réseau sera coupé quelques secondes (les SMS en attente partiront ensuite).}}" +
-                '</div>' + "{{Confirmer le changement ?}}"
-        }, (result) => {
-            if (!result) {
-                return
+        requestApply(btn, true, (check) => {
+            if (check.ready !== true) {
+                return  // refusé : le message est déjà affiché
             }
-            btn.disabled = true
-            domUtils.ajax({
-                type: 'POST',
-                url: AJAX_URL,
-                data: { action: 'applyApn', apnMode: apnModeSelect ? apnModeSelect.value : '', apnCustom: apnCustomInput ? apnCustomInput.value : '' },
-                dataType: 'json',
-                error: (request, status, error) => { handleAjaxError(request, status, error); btn.disabled = false },
-                success: (data) => {
-                    btn.disabled = false
-                    if (data.state !== 'ok') {
-                        jeedomUtils.showAlert({ message: data.result, level: 'danger' })
-                        return
-                    }
-                    jeedomUtils.showAlert({ message: data.result.message, level: data.result.level })
-                    if (data.result.sent) {
+            jeeDialog.confirm({
+                title: "{{Changer l'APN du modem}}",
+                message: '<div class="alert alert-warning"><i class="fas fa-exclamation-triangle"></i> ' +
+                    "{{L'APN sauvegardé va être enregistré dans le modem, qui le conserve. Le réseau sera coupé quelques secondes (les SMS en attente partiront ensuite).}}" +
+                    '</div>' + "{{APN à enregistrer}}" + ' : <b>' + check.apn + '</b><br>' + "{{Confirmer le changement ?}}"
+            }, (result) => {
+                if (!result) {
+                    return
+                }
+                requestApply(btn, false, (applied) => {
+                    if (applied.sent) {
                         showApn(null)  // ce qui était affiché ne vaut plus : « Vérifier » une fois le réseau revenu
                     }
-                }
+                })
             })
         })
     })

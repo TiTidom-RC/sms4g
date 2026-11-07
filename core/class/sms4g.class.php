@@ -1008,9 +1008,12 @@ class sms4g extends eqLogic {
 	 *
 	 * @param string $_mode choix affiché (auto / custom)
 	 * @param string $_custom APN personnalisé affiché
-	 * @return array{sent: bool, level: string, message: string} demande partie ou non, et le message à afficher
+	 * @param bool $_check contrôles seuls, rien n'est envoyé au modem : la page les fait avant de demander confirmation
+	 * @return array{sent: bool, level: string, message: string, ready?: bool, apn?: string} demande partie ou non, et le
+	 *         message à afficher (refus) ; en mode contrôle, ready (contrôles passés) et apn (l'APN qui sera écrit, protégé
+	 *         des balises HTML comme les messages)
 	 */
-	public static function applyApn($_mode, $_custom) {
+	public static function applyApn($_mode, $_custom, $_check = false) {
 		$savedMode = (string) config::byKey('apnMode', 'sms4g', 'auto');
 		$savedCustom = trim((string) config::byKey('apnCustom', 'sms4g', ''));
 		$mode = trim((string) $_mode);
@@ -1031,6 +1034,9 @@ class sms4g extends eqLogic {
 			return array('sent' => false, 'level' => 'danger', 'message' => __('APN invalide : lettres, chiffres, points et tirets uniquement (100 caractères au plus)', __FILE__));
 		}
 		$shown = ($apn === '') ? __('automatique', __FILE__) : $apn;
+		if ($_check) {
+			return array('sent' => false, 'ready' => true, 'apn' => htmlspecialchars($shown, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), 'level' => 'info', 'message' => '');
+		}
 		log::add('sms4g', 'info', '[APN] Changement demandé : ' . $shown);
 		if (!self::sendToDaemon(array('cmd' => 'setApn', 'apn' => $apn))) {
 			return array('sent' => false, 'level' => 'danger', 'message' => __('Le démon n\'est pas démarré', __FILE__));

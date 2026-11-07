@@ -52,7 +52,7 @@ try {
 
 	if (init('action') == 'applyApn') {
 		// Rien n'est sauvegardé ici : seul l'APN déjà sauvegardé part au modem (réponse plus tard par sms4g::apn)
-		ajax::success(sms4g::applyApn(init('apnMode'), init('apnCustom')));
+		ajax::success(sms4g::applyApn(init('apnMode'), init('apnCustom'), init('check') == 1));
 	}
 
 	if (init('action') == 'disableModemManager') {

@@ -67,7 +67,7 @@ _INFORMATIVE_PATTERN = re.compile(r'^ATI\d{0,2}$')
 # Reads that have the form of a write: Quectel AT+QCFG="item" (same for QENG, QURCCFG) with the item alone reads it, with a value it sets it.
 # Only these exact forms (any case, the item is a fixed name) are allowed, never AT+QCFG with a value.
 _ALLOWED_READS = (
-    re.compile(r'^AT\+QCFG="(NWSCANMODE|NWSCANSEQ|IOTOPMODE|BAND|SERVICEDOMAIN|ROAMSERVICE)"$', re.IGNORECASE),
+    re.compile(r'^AT\+QCFG="(NWSCANMODE|NWSCANSEQ|IOTOPMODE|BAND|SERVICEDOMAIN|ROAMSERVICE|USBCFG)"$', re.IGNORECASE),
     re.compile(r'^AT\+QENG="(SERVINGCELL|NEIGHBOURCELL)"$', re.IGNORECASE),
     re.compile(r'^AT\+QURCCFG="URCPORT"$', re.IGNORECASE),
     # 3GPP: the same for one context only

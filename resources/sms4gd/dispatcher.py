@@ -27,9 +27,9 @@ from concurrent.futures import Future
 from typing import Any, Protocol
 
 from atfilter import checkAtCommand
-from wwanlib import (ApnChange, ApnReading, NotConnectedError, PdpContext, RestartRefusedError, SelfTestResult, SmsDelivery,
-                     SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError, SmsReceived, SmsSent, TimeoutException,
-                     describeReading, familiesLabel, isValidApn, maskNumber)
+from wwanlib import (ApnChange, ApnReading, NotConnectedError, NotificationPortChecked, PdpContext, RestartRefusedError,
+                     SelfTestResult, SmsDelivery, SmsExpired, SmsFailed, SmsIncomplete, SmsQueued, SmsQueueFullError, SmsReceived,
+                     SmsSent, TimeoutException, describeReading, familiesLabel, isValidApn, maskNumber)
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +105,17 @@ def selfTestMessage(event: Any) -> dict[str, Any] | None:
         return None
     return {'type': 'selfTest', 'status': event.status, 'reason': event.reason, 'duration': event.duration,
             'restarted': event.restarted}
+
+
+def notificationPortMessage(event: Any) -> dict[str, Any] | None:
+    """ The `notificationPort` message, sent at each connection of a modem that sends its notifications (received SMS,
+    delivery reports) to one of its ports only (None for any other event): `matches` false when it is not the serial
+    port in use (the daemon receives none of them); `modemPort` as the modem calls it; `advisedInterface`: the USB
+    interface of the serial port to choose instead. """
+    if not isinstance(event, NotificationPortChecked):
+        return None
+    return {'type': 'notificationPort', 'matches': event.matches, 'modemPort': event.modemPort,
+            'advisedInterface': event.advisedInterface}
 
 
 def apnMessage(action: str, result: ApnReading | ApnChange | None = None, reason: str = '') -> dict[str, Any]:

@@ -11,8 +11,8 @@ from typing import Any
 
 from .apn import (CONTEXT, DEFAULT_PDP_TYPES, ApnChange, ApnReading, PdpContext, contextOf, describeContext, isValidApn,
                   parseConnections, parseContexts, sameApn)
-from .events import (ConnectionState, EventDispatcher, ModemIdentified, NetworkChanged, Registration, SignalChanged,
-                     SmsReceived, StateChanged, UnsolicitedNotification)
+from .events import (ConnectionState, EventDispatcher, ModemIdentified, NetworkChanged, NotificationPortChecked, Registration,
+                     SignalChanged, SmsReceived, StateChanged, UnsolicitedNotification)
 from .exceptions import (CommandError, IncorrectPinError, NotConnectedError, PduModeNotSupportedError, PinRequiredError,
                          PukRequiredError, RestartRefusedError, SimNotInsertedError, SmscNumberUnknownError,
                          TimeoutException, WwanException)
@@ -28,6 +28,9 @@ from .transport import Transport
 from .util import lineMatching, lineStartingWith
 
 log = logging.getLogger(__name__)
+
+# USB interface in the udev name of a serial port: /dev/serial/by-id/usb-<maker>_<model>_<serial>-if03-port0
+BY_ID_INTERFACE = re.compile(r'-if([0-9A-Fa-f]{2})-port\d+$')
 
 
 @dataclass
@@ -518,6 +521,7 @@ class Modem:
             seen = session.smsDone
         self._setupSms(session)
         self._setupNetworkMode(run, session.profile)
+        self._checkNotificationPort(run, session.profile)
         # An "SMS DONE" received while the sequence ran may have wiped the SMS settings: they are applied again
         for _ in range(3):
             with session.lock:
@@ -579,6 +583,33 @@ class Modem:
             log.warning('Connection lost while setting the network mode: %s', e)
         except WwanException as e:
             log.error('Failed to set the network mode: %s', e)
+
+    def _checkNotificationPort(self, run: Callable[..., list[str]], profile: Profile) -> None:
+        """ Compares the port where the modem sends its notifications with the serial port in use, known by the USB interface
+        in its udev name (``/dev/serial/by-id/...-if03-port0``), and tells it (``NotificationPortChecked``). Reads only: the
+        modem is never changed. Nothing is told for a port with another name, or when the answer is unknown. """
+        setting = profile.notificationPort
+        if setting is None:
+            return
+        try:
+            lines = run(setting.query)
+        except WwanException as e:
+            log.debug('Port of the notifications not read (%s): %s', setting.query, e)
+            return
+        modemPort = next((match.group(1).lower() for match in map(setting.answer.match, lines) if match), None)
+        names = dict(setting.byInterface)
+        match = BY_ID_INTERFACE.search(self.port)
+        devicePort = names.get(int(match.group(1), 16)) if match else None
+        log.info('Port of the notifications: %s, serial port in use: %s', modemPort, devicePort or 'unknown')
+        advisedInterface = next((interface for interface, name in setting.byInterface if name == modemPort), None)
+        if devicePort is None or advisedInterface is None:
+            return
+        if devicePort == modemPort:
+            self._dispatcher.post(NotificationPortChecked(True, modemPort))
+            return
+        log.warning('The modem sends its notifications (received SMS, delivery reports) to its port %s, not to the serial port '
+                    'in use (%s): use the serial port of USB interface %d instead', modemPort, devicePort, advisedInterface)
+        self._dispatcher.post(NotificationPortChecked(False, modemPort, advisedInterface))
 
     # ---- APN (readApn / setApn, in their own thread) -----------------------------------------------
 

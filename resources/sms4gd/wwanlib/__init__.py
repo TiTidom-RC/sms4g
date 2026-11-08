@@ -13,7 +13,7 @@ Public API (everything else is internal):
 * Received SMS (``inbox.py``): read as soon as the modem announces them, long ones reassembled; the result comes as
   an event, ``SmsReceived`` or ``SmsIncomplete``.
 * Events (``events.py``): ``StateChanged``, ``ModemIdentified``, ``SignalChanged``, ``NetworkChanged``,
-  ``UnsolicitedNotification``, ``SmsQueued``, ``SmsSent``, ``SmsFailed``, ``SmsExpired``, ``SmsReceived``, ``SmsIncomplete``, ``SmsDelivery``, ``SelfTestResult``; connection states in ``ConnectionState``, network registration in ``Registration``.
+  ``NotificationPortChecked``, ``UnsolicitedNotification``, ``SmsQueued``, ``SmsSent``, ``SmsFailed``, ``SmsExpired``, ``SmsReceived``, ``SmsIncomplete``, ``SmsDelivery``, ``SelfTestResult``; connection states in ``ConnectionState``, network registration in ``Registration``.
 * Exceptions (``exceptions.py``): ``WwanException`` is the base class.
 
 Architecture: one Reader thread (the only one that reads the port), one Executor thread (the only one that
@@ -26,8 +26,8 @@ never imports Jeedom and logs through ``logging.getLogger(__name__)``.
 
 from .apn import (ApnChange, ApnReading, Connection, PdpContext, describeContext, describeReading, familiesLabel, isValidApn,
                   maskAddresses)
-from .events import (ConnectionState, ModemIdentified, NetworkChanged, Registration, SelfTestResult, SignalChanged, SmsExpired,
-                     SmsDelivery, SmsFailed, SmsIncomplete, SmsQueued, SmsReceived, SmsSent, StateChanged,
+from .events import (ConnectionState, ModemIdentified, NetworkChanged, NotificationPortChecked, Registration, SelfTestResult,
+                     SignalChanged, SmsExpired, SmsDelivery, SmsFailed, SmsIncomplete, SmsQueued, SmsReceived, SmsSent, StateChanged,
                      UnsolicitedNotification)
 from .exceptions import (CmeError, CmsError, CommandError, EncodingError, IncorrectPinError, NotConnectedError,
                          PduModeNotSupportedError, PinRequiredError, PukRequiredError, RestartRefusedError,
@@ -38,7 +38,7 @@ from .sms import maskNumber, maskPduNumbers
 
 __all__ = [
     'Modem', 'ModemOptions', 'Profile', 'ConnectionState', 'Registration', 'StateChanged', 'ModemIdentified',
-    'SignalChanged', 'NetworkChanged', 'UnsolicitedNotification',
+    'SignalChanged', 'NetworkChanged', 'NotificationPortChecked', 'UnsolicitedNotification',
     'WwanException', 'CommandError', 'CmeError', 'CmsError', 'TimeoutException', 'NotConnectedError', 'RestartRefusedError',
     'PinRequiredError', 'IncorrectPinError', 'PukRequiredError', 'SimNotInsertedError', 'SmscNumberUnknownError', 'EncodingError',
     'ApnReading', 'ApnChange', 'Connection', 'PdpContext', 'describeContext', 'describeReading', 'familiesLabel', 'isValidApn',

@@ -20,6 +20,15 @@ class NetworkMode:
 
 
 @dataclass(frozen=True)
+class NotificationPort:
+    """ Where a modem sends its notifications (received SMS, delivery reports) when it has several serial ports: only one
+    of them gets them. The serial port in use is known by its USB interface. """
+    query: str  # command that reads the port of the notifications
+    answer: re.Pattern[str]  # its group 1 is the name of the port
+    byInterface: tuple[tuple[int, str], ...]  # (USB interface, name of the port as the modem calls it): a profile stays hashable
+
+
+@dataclass(frozen=True)
 class Profile:
     name: str
     # AT+CNMI parameter sets tried in order until the modem accepts one. <mt> is always 1
@@ -37,6 +46,8 @@ class Profile:
     diagnosticCommands: tuple[str, ...] = ()
     # Command sent after each +CDS, None when the modem does not need one
     reportAckCommand: str | None = None
+    # Port of the notifications compared with the serial port in use, None when the modem sends them on every port
+    notificationPort: NotificationPort | None = None
 
 
 # Mode 2 (notifications kept while the port is busy), then mode 1 (dropped meanwhile) for a firmware that refuses mode 2.
@@ -74,6 +85,8 @@ HUAWEI = Profile(
 
 # AT+QCFG="nwscanmode",<mode>,<effect>: mode 3 = LTE only, 0 = automatic; effect 1 = without restarting the modem.
 # <ds>=1 first: the BG96 (SR memory 0/0) keeps the <ds>=2 delivery reports back, and the SR memory depends on the SIM.
+# The notifications go to one port only, set by AT+QURCCFG="urcport" and kept by the modem ("usbat" by default). USB interfaces
+# of the EC2x, EG2x, BG9x and RM5xx (Quectel USB driver guides): 0 diagnostic, 1 GPS (NMEA), 2 AT ("usbat"), 3 modem ("usbmodem").
 QUECTEL = Profile(
     name='quectel',
     cnmiCandidates=('2,1,0,1', '2,1,0,2'),
@@ -82,8 +95,10 @@ QUECTEL = Profile(
         'AT+QCFG="nwscanmode"', re.compile(r'^\+QCFG: "nwscanmode",3\b'),
         ('AT+QCFG="nwscanmode",3,1',), ('AT+QCFG="nwscanmode",0,1',)),
     restartCommands=('AT+CFUN=1,1',),
-    diagnosticCommands=('AT+QNWINFO', 'AT+QCSQ', 'AT+QCFG="nwscanmode"', 'AT+QINISTAT', 'AT+QURCCFG="urcport"',
-                        'AT+QCFG="servicedomain"'),
+    diagnosticCommands=('AT+QNWINFO', 'AT+QCSQ', 'AT+QCFG="nwscanmode"', 'AT+QINISTAT', 'AT+QCFG="servicedomain"'),
+    notificationPort=NotificationPort(
+        'AT+QURCCFG="urcport"', re.compile(r'^\+QURCCFG:\s*"urcport"\s*,\s*"([^"]+)"', re.IGNORECASE),
+        ((2, 'usbat'), (3, 'usbmodem'))),
 )
 
 

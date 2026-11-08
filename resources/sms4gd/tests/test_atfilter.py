@@ -42,6 +42,7 @@ ALLOWED = [
     ('AT+QENG="neighbourcell"', 'AT+QENG="neighbourcell"'),
     ('AT+QCFG="servicedomain"', 'AT+QCFG="servicedomain"'),
     ('AT+QCFG = "roamservice"', 'AT+QCFG="roamservice"'),
+    ('at+qcfg="usbcfg"', 'AT+QCFG="usbcfg"'),
     ('at+qurccfg="urcport"', 'AT+QURCCFG="urcport"'),
     ('AT+QINISTAT', 'AT+QINISTAT'),
     ('AT^CARDMODE', 'AT^CARDMODE'),
@@ -142,6 +143,7 @@ REFUSED = [
     ('AT+QURCCFG="usbat"', 'not allowed'),
     ('AT+QCFG="servicedomain",1,1', 'not allowed'),
     ('AT+QCFG="roamservice",2,1', 'not allowed'),
+    ('AT+QCFG="usbcfg",0x2C7C,0x0125,1,1,1,1,1,0,0', 'not allowed'),
     ('AT^SETPORT="FF;10,12"', 'not allowed'),  # changes the USB mode of the modem
     ('AT+CGDCONT=1,"IPV4V6","free"', 'APN'),  # the APN is written from the configuration page of the plugin
     ('AT+CGDCONT=1', 'APN'),

@@ -32,7 +32,7 @@ import threading
 import traceback
 from typing import Optional
 
-from dispatcher import Dispatcher, selfTestMessage, smsInboxMessage, smsStatusMessage
+from dispatcher import Dispatcher, notificationPortMessage, selfTestMessage, smsInboxMessage, smsStatusMessage
 from utils import Config
 from wwanlib import (ConnectionState, Modem, ModemIdentified, ModemOptions, NetworkChanged, Registration, SignalChanged,
                      StateChanged, WwanException, describeReading, maskAddresses, maskNumber, maskPduNumbers)
@@ -174,7 +174,7 @@ def onModemEvent(event):
         if publisher:
             publisher.state('network', {'type': 'network', 'registration': event.registration, 'operator': event.operator})
     else:
-        smsMessage = smsStatusMessage(event) or smsInboxMessage(event) or selfTestMessage(event)
+        smsMessage = smsStatusMessage(event) or smsInboxMessage(event) or selfTestMessage(event) or notificationPortMessage(event)
         if smsMessage is not None and publisher:
             publisher.event(smsMessage)
 

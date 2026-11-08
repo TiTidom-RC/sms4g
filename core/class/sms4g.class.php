@@ -320,7 +320,7 @@ class sms4g extends eqLogic {
 			log::add('sms4g', 'error', 'Impossible de lancer le démon sms4g, vérifiez le port', 'unableStartDeamon');
 			return false;
 		}
-		message::removeAll('sms4g', 'unableStartDeamon');
+		message::removeByPluginLogicalId('sms4g', 'unableStartDeamon');
 		return true;
 	}
 
@@ -1136,8 +1136,31 @@ class sms4g extends eqLogic {
 			log::add('sms4g', 'warning', '[AUTOTEST] ' . $text);
 		} else {
 			log::add('sms4g', 'info', '[AUTOTEST] ' . $text);
-			message::removeAll('sms4g', 'sms4gSelfTest');
+			message::removeByPluginLogicalId('sms4g', 'sms4gSelfTest');
 		}
+	}
+
+	/**
+	 * Port des notifications d'un modem qui ne les envoie que sur un de ses ports (Quectel), comparé au port du plugin, à
+	 * chaque connexion. Un écart est signalé dans le centre de messages, avec la fin du nom du port à choisir ; le
+	 * message disparaît dès que le port est le bon.
+	 */
+	public static function onNotificationPort($_message) {
+		if (!empty($_message['matches'])) {
+			if (count(message::byPluginLogicalId('sms4g', 'sms4gNotificationPort')) > 0) {
+				log::add('sms4g', 'info', '[MODEM] Port des notifications du modem : correct');
+				message::removeByPluginLogicalId('sms4g', 'sms4gNotificationPort');
+			}
+			return;
+		}
+		$advisedInterface = (isset($_message['advisedInterface']) && is_numeric($_message['advisedInterface'])) ? (int) $_message['advisedInterface'] : 2;
+		$suffix = sprintf('-if%02x-port0', $advisedInterface);
+		$modemPort = secureXSS(isset($_message['modemPort']) ? (string) $_message['modemPort'] : '');
+		log::add('sms4g', 'warning', '[MODEM] Le modem envoie ses notifications sur son port ' . $modemPort . ' et non sur celui du plugin : choisir le port qui se termine par ' . $suffix);
+		// Un seul message par logicalId : le Core met à jour la date et le nombre d'occurrences d'un message déjà présent
+		$text = __('Réception des SMS : le modem envoie ses notifications (SMS reçus, accusés de réception) sur un autre de ses ports que celui choisi dans la configuration du plugin : les SMS reçus et les accusés de réception risquent de ne pas arriver.', __FILE__)
+			. ' ' . sprintf(__('Dans « Port SMS », choisissez le port dont le nom se termine par %s, sauvegardez puis redémarrez le démon.', __FILE__), $suffix);
+		message::add('sms4g', $text, '', 'sms4gNotificationPort');
 	}
 
 	/**
@@ -1378,11 +1401,12 @@ class sms4g extends eqLogic {
 		$_modem->checkAndUpdateCmd('connection_state', $code, $_time);
 		$_modem->checkAndUpdateCmd('online', $online, $_time);
 
+		// Passage à « carte absente » : log d'erreur et message une seule fois par absence (le démon réessaie à chaque changement d'état)
 		if ($simMissing && count(message::byPluginLogicalId('sms4g', 'sms4gSimMissing')) == 0) {
 			log::add('sms4g', 'error', '[MODEM] Carte SIM absente ou mal insérée');
 			message::add('sms4g', __('Carte SIM absente ou mal insérée : insérez-la (modem débranché), puis rebranchez le modem. Le plugin réessaie de s\'y connecter tant que la carte est absente (si la gestion automatique du démon est désactivée, redémarrez le démon).', __FILE__), '', 'sms4gSimMissing');
 		} elseif ($state == 'connected' && count(message::byPluginLogicalId('sms4g', 'sms4gSimMissing')) > 0) {
-			message::removeAll('sms4g', 'sms4gSimMissing');
+			message::removeByPluginLogicalId('sms4g', 'sms4gSimMissing');
 		}
 
 		if ($state == 'disconnected' && !empty($_message['fatal'])) {

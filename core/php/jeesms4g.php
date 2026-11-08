@@ -81,6 +81,9 @@ if (isset($result['messages']) && is_array($result['messages'])) {
 				case 'ownNumber':
 					sms4g::onOwnNumber($message);
 					break;
+				case 'notificationPort':
+					sms4g::onNotificationPort($message);
+					break;
 				case 'apn':
 					sms4g::onApn($message);
 					break;

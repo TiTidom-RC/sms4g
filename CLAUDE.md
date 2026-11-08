@@ -7,6 +7,18 @@
 - Déroulé attendu : exploration/lecture du code → plan détaillé (fichiers touchés, approche, points ouverts) → **attente de la confirmation** → implémentation.
 - Une validation porte sur le plan présenté uniquement : tout changement de périmètre en cours de route (fichier supplémentaire, approche différente, refactoring annexe) doit être de nouveau soumis avant d'être codé.
 
+## Revue des modifications de code (sur demande explicite)
+
+- **Déclencheur** : uniquement quand l'utilisateur demande explicitement une revue des modifications de code (par exemple « fais la revue des modifications de code »). Jamais de sa propre initiative.
+- **Périmètre** : les modifications non commitées de `sms4g` (`git diff` et fichiers non suivis), sauf si l'utilisateur précise un autre périmètre (un commit, une branche, un fichier).
+- **Passes** : relire l'ensemble des modifications en passes successives, **15 au maximum**. S'arrêter plus tôt dès qu'une passe complète ne trouve plus rien de nouveau. Chaque passe vérifie :
+  - la **cohérence** : avec le reste du code, les conventions de ce fichier, les helpers du Core, la documentation et les tests ;
+  - la **robustesse** : entrées invalides ou absentes, erreurs et exceptions, modem déconnecté ou muet, cas limites ;
+  - les **bugs** : logique, types, ordre des opérations, concurrence entre threads, chaînes de traduction, masquage des secrets ;
+  - la **couverture de tous les cas** : chaque branche du code a un comportement voulu et, quand c'est possible, un test.
+- **Vérifier avant d'affirmer** : lire le code concerné (et le Core au besoin) pour confirmer chaque constat ; distinguer un constat vérifié d'une hypothèse.
+- **Restitution** : le nombre de passes effectuées, puis les constats classés du plus grave au moins grave, chacun avec `fichier:ligne`, le problème et la correction proposée. Aucune correction n'est appliquée sans validation (règle bloquante ci-dessus).
+
 ## Contexte du projet
 
 `sms4g` est un plugin **Jeedom** pour l'envoi/réception de SMS via un modem GSM/4G (clé USB Huawei, modem SimCom type SIM7600G-H ou modem Quectel type BG96). Fork indépendant (non lié au dépôt communautaire officiel Jeedom), issu d'une réécriture du plugin SMS officiel, intégrant : conversion robuste des numéros, gestion des SMS rapprochés, réassemblage des SMS concaténés (y compris via les notifications temps réel `+CMTI` des modems SimCom/LTE), harmonisation des logs.

@@ -343,6 +343,7 @@ def simcomTable(**overrides) -> dict:
         'AT+CNMI=1,1,0,1': 'ERROR\r\n', 'AT+CNMI=0,1,0,1': 'OK\r\n', 'AT+CNMP?': '+CNMP: 2\r\nOK\r\n', 'AT+CNMP=38': 'OK\r\n', 'AT+CNMP=2': 'OK\r\n',
         'AT+CSQ': '+CSQ: 20,99\r\nOK\r\n',
         'AT+CREG?': '+CREG: 0,1\r\nOK\r\n', 'AT+CEREG?': '+CEREG: 0,1\r\nOK\r\n', 'AT+COPS?': '+COPS: 0,0,"Free Free",7\r\nOK\r\n',
+        'AT+QURCCFG="urcport"': '+QURCCFG: "urcport","usbat"\r\nOK\r\n',  # only the Quectel profile sends it
     }
     table.update(overrides)
     return table

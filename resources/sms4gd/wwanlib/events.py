@@ -67,6 +67,18 @@ class ModemIdentified:
 
 
 @dataclass(frozen=True)
+class NotificationPortChecked:
+    """ Where the modem sends its notifications (received SMS, delivery reports), compared with the serial port in use, at
+    each connection of a modem that sends them on one port only. ``matches`` False: they go to another port, the library
+    receives none of them. ``modemPort``: the port of the notifications, as the modem calls it. ``advisedInterface``: the
+    USB interface of the serial port to use instead. """
+
+    matches: bool
+    modemPort: str
+    advisedInterface: int | None = None
+
+
+@dataclass(frozen=True)
 class UnsolicitedNotification:
     """ Raw lines of a notification sent spontaneously by the modem (+CMTI, +CDS, RING, RDY...) """
 

@@ -23,7 +23,7 @@
 
 - Code (variables, clés JSON/config, logicalId) : anglais + camelCase, sauf conventions héritées du Core Jeedom (snake_case toléré, ex. `deamon_start`).
 - Textes documentaires, logs, labels UI : français accepté.
-- PHP **8.2 minimum, sans repli 7.4** (Debian 12 est la cible minimum supportée — premier plugin de cet auteur à abandonner la compatibilité PHP 7.4/Debian 11). Les syntaxes 8.0+ (`match`, `str_contains`/`str_starts_with`, named arguments, `enum`, `readonly`, union types) sont donc utilisables librement, sans commentaire `// TODO: PHP X.Y`.
+- PHP **8.2 minimum, sans repli 7.4** (Debian 12 est la cible minimum supportée — premier plugin de cet auteur à abandonner la compatibilité PHP 7.4/Debian 11) ; le code doit aussi fonctionner en PHP 8.4 (Debian 13). Le poste de dev tourne en PHP 8.4, la version la plus haute, pour faire apparaître les régressions et les `Deprecated` (installation : `../Documentation/_docs/php-windows-dev.md`). Les syntaxes 8.0+ (`match`, `str_contains`/`str_starts_with`, named arguments, `enum`, `readonly`, union types) sont donc utilisables librement, sans commentaire `// TODO: PHP X.Y`.
 - Python : Ruff uniquement pour le lint (`ruff.toml`), pas de flake8.
 
 ## Patterns Jeedom à respecter

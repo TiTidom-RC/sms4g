@@ -80,7 +80,7 @@ Le workspace contient, à côté de ce dépôt, des dépôts voisins directement
 - Textes documentaires, logs, labels UI, commentaires : français accepté (c'est l'usage dans le code existant).
 - Chaînes UI traduisibles : `__('...', __FILE__)` en PHP, `{{...}}` dans les templates `desktop/php`. Rédiger en français, les autres langues sont générées.
 - Indentation : tabulations en PHP (style Core Jeedom), 4 espaces en Python.
-- PHP **8.2 minimum, sans repli 7.4** (Debian 12 est la cible minimum supportée). Les syntaxes 8.0+ (`match`, `str_contains`/`str_starts_with`, named arguments, `enum`, `readonly`, union types) sont utilisables librement, sans commentaire `// TODO: PHP X.Y`. Ne pas utiliser de syntaxe > 8.2 (la CI teste 8.2).
+- PHP **8.2 minimum, sans repli 7.4** (Debian 12 est la cible minimum supportée) ; le code doit aussi fonctionner en PHP 8.4 (Debian 13). Le poste de dev tourne en PHP 8.4, la version la plus haute, pour faire apparaître les régressions et les `Deprecated` (installation : `../Documentation/_docs/php-windows-dev.md`). Les syntaxes 8.0+ (`match`, `str_contains`/`str_starts_with`, named arguments, `enum`, `readonly`, union types) sont utilisables librement, sans commentaire `// TODO: PHP X.Y`. Ne pas utiliser de syntaxe > 8.2 (la CI teste 8.2).
 - Python : **3.12**, Ruff uniquement pour le lint, pas de flake8/black. Ne pas reformater massivement les fichiers existants.
 - Tests du démon et de `wwanlib` (faux port série) : `python -m unittest discover -s tests -t .` depuis `resources/sms4gd`.
 - Nouveaux termes techniques (commandes AT, noms d'options) : les ajouter à `cSpell.words` dans [.vscode/settings.json](.vscode/settings.json) si besoin.

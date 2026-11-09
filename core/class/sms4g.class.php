@@ -1158,8 +1158,8 @@ class sms4g extends eqLogic {
 		$modemPort = secureXSS(isset($_message['modemPort']) ? (string) $_message['modemPort'] : '');
 		log::add('sms4g', 'warning', '[MODEM] Le modem envoie ses notifications sur son port ' . $modemPort . ' et non sur celui du plugin : choisir le port qui se termine par ' . $suffix);
 		// Un seul message par logicalId : le Core met à jour la date et le nombre d'occurrences d'un message déjà présent
-		$text = __('Réception des SMS : le modem envoie ses notifications (SMS reçus, accusés de réception) sur un autre de ses ports que celui choisi dans la configuration du plugin : les SMS reçus et les accusés de réception risquent de ne pas arriver.', __FILE__)
-			. ' ' . sprintf(__('Dans « Port SMS », choisissez le port dont le nom se termine par %s, sauvegardez puis redémarrez le démon.', __FILE__), $suffix);
+		$text = __('Le modem signale les SMS reçus et les accusés de réception sur un autre port que celui du plugin : les SMS reçus risquent d\'arriver en retard et les accusés de réception d\'être perdus.', __FILE__)
+			. ' ' . sprintf(__('Dans « Port SMS », choisissez le port finissant par %s, sauvegardez puis redémarrez le démon.', __FILE__), $suffix);
 		message::add('sms4g', $text, '', 'sms4gNotificationPort');
 	}
 

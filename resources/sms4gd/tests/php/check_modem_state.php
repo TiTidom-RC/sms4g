@@ -31,6 +31,22 @@ class config {
     public static function save($_key, $_value, $_plugin = 'core') {
         self::$saved[$_key] = $_value;
     }
+    public static function byKey($_key, $_plugin = 'core', $_default = '') {
+        return array_key_exists($_key, self::$saved) ? self::$saved[$_key] : $_default;
+    }
+    public static function remove($_key, $_plugin = 'core') {
+        unset(self::$saved[$_key]);
+    }
+}
+
+class jeedom {
+    public static function getTmpFolder($_plugin) {
+        return __DIR__ . '/absent';
+    }
+    // Un port déjà résolu par le Core (tableau) : deamon_info ne teste pas le fichier et ne lance pas chmod
+    public static function getUsbMapping($_port) {
+        return ['resolved' => $_port];
+    }
 }
 
 function __($_text, $_file = '') {
@@ -108,15 +124,53 @@ check($lines === [
 check($values['connection'] === 'Déconnecté : carte SIM absente', 'carte SIM absente : commande', $values);
 check(array_column($added, 1) === ['sms4gSimMissing'], 'carte SIM absente : message', $added);
 
-// Erreur définitive : la ligne Déconnecté reste en info, l'erreur a sa propre ligne et coupe la gestion automatique
-[$lines, $values, $added, $saved] = receive(['state' => 'disconnected', 'reason' => 'Incorrect PIN', 'fatal' => true, 'errorType' => 'IncorrectPinError']);
-check($lines === [
-    ['info', '[MODEM] Déconnecté (Incorrect PIN)'],
-    ['error', '[MODEM] Erreur définitive (code PIN, mode PDU) : redémarrage automatique du démon désactivé'],
-], 'erreur définitive', $lines);
-check($values === $disconnected, 'erreur définitive : commandes', $values);
-check($added === [['Erreur du modem : Incorrect PIN', 'sms4gcmderror']], 'erreur définitive : message', $added);
-check($saved === ['deamonAutoMode' => 0], 'erreur définitive : gestion automatique désactivée', $saved);
+// Erreurs définitives : la ligne Déconnecté reste en info, l'erreur a sa propre ligne, la cause est enregistrée pour
+// bloquer la relance, et la gestion automatique du démon n'est jamais touchée
+$fatalErrors = [
+    'IncorrectPinError' => 'Code PIN refusé par la carte SIM : corrigez-le dans la configuration, puis enregistrez',
+    'PinRequiredError' => 'La carte SIM demande un code PIN : renseignez-le dans la configuration, puis enregistrez',
+    'PukRequiredError' => 'Carte SIM bloquée (code PUK requis) : débloquez-la dans un téléphone, puis enregistrez la configuration',
+    'PduModeNotSupportedError' => 'Modem incompatible (mode PDU non pris en charge) : changez de modem, puis enregistrez la configuration',
+];
+foreach ($fatalErrors as $errorType => $text) {
+    [$lines, $values, $added, $saved] = receive(['state' => 'disconnected', 'reason' => 'modem error', 'fatal' => true, 'errorType' => $errorType]);
+    check($lines === [
+        ['info', '[MODEM] Déconnecté (modem error)'],
+        ['error', '[MODEM] ' . $text . ' (relance du démon bloquée)'],
+    ], "erreur définitive $errorType", $lines);
+    check($values === $disconnected, "erreur définitive $errorType : commandes", $values);
+    check($added === [[$text, 'sms4gcmderror']], "erreur définitive $errorType : message", $added);
+    check($saved === ['fatalModemError' => $errorType], "erreur définitive $errorType : cause enregistrée, gestion automatique intacte", $saved);
+}
+
+// Erreur définitive inconnue : signalée, mais la relance n'est pas bloquée
+[$lines, , $added, $saved] = receive(['state' => 'disconnected', 'reason' => 'Other', 'fatal' => true, 'errorType' => 'OtherError']);
+check($lines === [['info', '[MODEM] Déconnecté (Other)']], 'erreur définitive inconnue', $lines);
+check($added === [['Erreur du modem : Other', 'sms4gcmderror']], 'erreur définitive inconnue : message', $added);
+check($saved === [], 'erreur définitive inconnue : rien de bloqué', $saved);
+
+// deamon_info : lançable sans cause enregistrée, bloqué avec le texte de la cause, le port non configuré passe avant
+config::$saved = ['port' => '/dev/ttyUSB2'];
+$info = sms4g::deamon_info();
+check($info['launchable'] === 'ok' && !isset($info['launchable_message']), 'deamon_info sans cause', $info);
+foreach ($fatalErrors as $errorType => $text) {
+    config::$saved = ['port' => '/dev/ttyUSB2', 'fatalModemError' => $errorType];
+    $info = sms4g::deamon_info();
+    check([$info['launchable'], $info['launchable_message']] === ['nok', $text], "deamon_info bloqué par $errorType", $info);
+}
+config::$saved = ['port' => 'none', 'fatalModemError' => 'IncorrectPinError'];
+$info = sms4g::deamon_info();
+check([$info['launchable'], $info['launchable_message']] === ['nok', "Le port n'est pas configuré"], 'deamon_info : port avant la cause', $info);
+config::$saved = ['port' => '/dev/ttyUSB2', 'fatalModemError' => 'OtherError'];
+check(sms4g::deamon_info()['launchable'] === 'ok', 'deamon_info : cause inconnue ignorée');
+
+// Enregistrement de la configuration : la cause et son message sont effacés, le démon est de nouveau lançable
+config::$saved = ['port' => '/dev/ttyUSB2', 'fatalModemError' => 'IncorrectPinError'];
+message::$added = [[$fatalErrors['IncorrectPinError'], 'sms4gcmderror'], ['autre', 'sms4gSimMissing']];
+sms4g::postConfig_pin('1234');
+check(config::$saved === ['port' => '/dev/ttyUSB2'], 'postConfig_pin : cause effacée', config::$saved);
+check(message::$added === [['autre', 'sms4gSimMissing']], 'postConfig_pin : message effacé, les autres gardés', message::$added);
+check(sms4g::deamon_info()['launchable'] === 'ok', 'postConfig_pin : démon lançable');
 
 // Les autres états ne changent pas
 [$lines, $values] = receive(['state' => 'connected']);

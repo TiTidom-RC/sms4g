@@ -258,7 +258,42 @@ class sms4g extends eqLogic {
 				exec(system::getCmdSudo() . 'chmod 777 ' . $port . ' > /dev/null 2>&1');
 			}
 		}
+		// Erreur définitive du modem (PIN, PUK, mode PDU) : pas de relance tant que la configuration n'est pas enregistrée
+		// (postConfig_pin). La gestion automatique du démon n'est jamais désactivée
+		if ($return['launchable'] == 'ok') {
+			$fatalError = self::fatalModemErrorText(config::byKey('fatalModemError', 'sms4g', ''));
+			if ($fatalError !== null) {
+				$return['launchable'] = 'nok';
+				$return['launchable_message'] = $fatalError;
+			}
+		}
 		return $return;
+	}
+
+	/**
+	 * Erreur définitive du modem (aucune nouvelle tentative ne la corrige, un PIN refusé répété bloque même la SIM) :
+	 * la cause et ce qu'il faut faire, ou null pour toute autre erreur.
+	 *
+	 * @param mixed $_errorType nom de l'exception du démon (errorType)
+	 * @return string|null
+	 */
+	private static function fatalModemErrorText($_errorType) {
+		return match ($_errorType) {
+			'IncorrectPinError' => __('Code PIN refusé par la carte SIM : corrigez-le dans la configuration, puis enregistrez', __FILE__),
+			'PinRequiredError' => __('La carte SIM demande un code PIN : renseignez-le dans la configuration, puis enregistrez', __FILE__),
+			'PukRequiredError' => __('Carte SIM bloquée (code PUK requis) : débloquez-la dans un téléphone, puis enregistrez la configuration', __FILE__),
+			'PduModeNotSupportedError' => __('Modem incompatible (mode PDU non pris en charge) : changez de modem, puis enregistrez la configuration', __FILE__),
+			default => null,
+		};
+	}
+
+	/**
+	 * Enregistrement de la configuration (appelé par le Core à chaque enregistrement, même sans changement du PIN) :
+	 * lève le blocage d'une erreur définitive du modem, le démon peut de nouveau être lancé.
+	 */
+	public static function postConfig_pin($_value) {
+		config::remove('fatalModemError', 'sms4g');
+		message::removeByPluginLogicalId('sms4g', 'sms4gcmderror');
 	}
 
 	public static function deamon_start() {
@@ -1428,12 +1463,16 @@ class sms4g extends eqLogic {
 		}
 
 		if ($state == 'disconnected' && !empty($_message['fatal'])) {
-			$reason = isset($_message['reason']) ? secureXSS($_message['reason']) : '';
-			message::add('sms4g', __('Erreur du modem', __FILE__) . ' : ' . $reason, '', 'sms4gcmderror');
-			// Un nouveau démarrage ne corrigerait pas ces erreurs (un PIN incorrect répété bloque même la SIM)
-			if (isset($_message['errorType']) && in_array($_message['errorType'], array('PinRequiredError', 'IncorrectPinError', 'PukRequiredError', 'PduModeNotSupportedError'))) {
-				log::add('sms4g', 'error', '[MODEM] Erreur définitive (code PIN, mode PDU) : redémarrage automatique du démon désactivé');
-				config::save('deamonAutoMode', 0, 'sms4g');
+			$errorType = isset($_message['errorType']) ? $_message['errorType'] : '';
+			$fatalError = self::fatalModemErrorText($errorType);
+			if ($fatalError !== null) {
+				// Le démon n'est plus relancé (deamon_info) jusqu'au prochain enregistrement de la configuration
+				config::save('fatalModemError', $errorType, 'sms4g');
+				log::add('sms4g', 'error', '[MODEM] ' . $fatalError . ' (relance du démon bloquée)');
+				message::add('sms4g', $fatalError, '', 'sms4gcmderror');
+			} else {
+				$reason = isset($_message['reason']) ? secureXSS($_message['reason']) : '';
+				message::add('sms4g', __('Erreur du modem', __FILE__) . ' : ' . $reason, '', 'sms4gcmderror');
 			}
 		}
 	}

@@ -8,14 +8,25 @@ class cmd {}
 
 class log {
     public static $lines = [];
+    public static $addMessageForErrorLog = false;
+    // Comme le Core : avec l'option « ajouter un message à chaque erreur », une ligne error crée aussi un message
     public static function add($_log, $_level, $_message, $_logicalId = '') {
         self::$lines[] = [$_level, $_message];
+        if (self::$addMessageForErrorLog && $_level == 'error') {
+            message::add($_log, $_message, '', $_logicalId);
+        }
     }
 }
 
 class message {
     public static $added = [];
+    // Comme le Core : un message de même identifiant (ou, sans identifiant, de même texte) n'est pas recréé
     public static function add($_plugin, $_message, $_action = '', $_logicalId = '') {
+        foreach (self::$added as $added) {
+            if (($_logicalId != '') ? $added[1] == $_logicalId : $added[0] == $_message) {
+                return;
+            }
+        }
         self::$added[] = [$_message, $_logicalId];
     }
     public static function byPluginLogicalId($_plugin, $_logicalId) {
@@ -158,15 +169,26 @@ foreach ($fatalErrors as $errorType => $text) {
         ['error', '[MODEM] ' . $text . ' (relance du démon bloquée)'],
     ], "erreur définitive $errorType", $lines);
     check($values === $disconnected, "erreur définitive $errorType : commandes", $values);
-    check($added === [[$text, 'sms4gcmderror']], "erreur définitive $errorType : message", $added);
+    check($added === [[$text, 'sms4gFatalModemError']], "erreur définitive $errorType : message", $added);
     check($saved === ['fatalModemError' => $errorType], "erreur définitive $errorType : cause enregistrée, gestion automatique intacte", $saved);
 }
 
 // Erreur définitive inconnue : signalée, mais la relance n'est pas bloquée
 [$lines, , $added, $saved] = receive(['state' => 'disconnected', 'reason' => 'Other', 'fatal' => true, 'errorType' => 'OtherError']);
 check($lines === [['info', '[MODEM] Déconnecté (Other)']], 'erreur définitive inconnue', $lines);
-check($added === [['Erreur du modem : Other', 'sms4gcmderror']], 'erreur définitive inconnue : message', $added);
+check($added === [['Erreur du modem : Other', 'sms4gFatalModemError']], 'erreur définitive inconnue : message', $added);
 check($saved === [], 'erreur définitive inconnue : rien de bloqué', $saved);
+
+// Option du Core « ajouter un message à chaque erreur » : la ligne error rejoint le message du plugin (même identifiant),
+// qui garde son texte, au lieu d'en créer un second
+log::$addMessageForErrorLog = true;
+[, , $added] = receive(['state' => 'disconnected', 'reason' => 'Incorrect PIN', 'fatal' => true, 'errorType' => 'IncorrectPinError']);
+check($added === [[$fatalErrors['IncorrectPinError'], 'sms4gFatalModemError']], 'option messages d\'erreur : erreur définitive, un seul message', $added);
+[$lines, , $added] = receive(['state' => 'reconnecting', 'attempt' => 1, 'maxAttempts' => 10, 'errorType' => 'SimNotInsertedError']);
+check(in_array(['error', '[MODEM] Carte SIM absente ou mal insérée'], $lines, true), 'option messages d\'erreur : carte SIM absente, ligne error', $lines);
+check(count($added) === 1 && $added[0][1] === 'sms4gSimMissing' && strpos($added[0][0], 'Carte SIM absente ou mal insérée : insérez-la') === 0,
+    'option messages d\'erreur : carte SIM absente, un seul message avec le texte du plugin', $added);
+log::$addMessageForErrorLog = false;
 
 // Faux ports : un accessible, un en lecture seule (Jeedom sans accès), un absent
 $port = tempnam(sys_get_temp_dir(), 'sms4g');
@@ -211,7 +233,7 @@ check(sms4g::deamon_info()['launchable'] === 'ok', 'deamon_info : cause inconnue
 
 // Enregistrement de la configuration : la cause et son message sont effacés, le démon est de nouveau lançable
 config::$saved = ['port' => $port, 'fatalModemError' => 'IncorrectPinError'];
-message::$added = [[$fatalErrors['IncorrectPinError'], 'sms4gcmderror'], ['autre', 'sms4gSimMissing']];
+message::$added = [[$fatalErrors['IncorrectPinError'], 'sms4gFatalModemError'], ['autre', 'sms4gSimMissing']];
 sms4g::postConfig_pin('1234');
 check(config::$saved === ['port' => $port], 'postConfig_pin : cause effacée', config::$saved);
 check(message::$added === [['autre', 'sms4gSimMissing']], 'postConfig_pin : message effacé, les autres gardés', message::$added);

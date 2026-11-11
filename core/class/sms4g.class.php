@@ -303,7 +303,7 @@ class sms4g extends eqLogic {
 	 */
 	public static function postConfig_pin($_value) {
 		config::remove('fatalModemError', 'sms4g');
-		message::removeByPluginLogicalId('sms4g', 'sms4gcmderror');
+		message::removeByPluginLogicalId('sms4g', 'sms4gFatalModemError');
 	}
 
 	public static function deamon_start() {
@@ -1465,9 +1465,11 @@ class sms4g extends eqLogic {
 		$_modem->checkAndUpdateCmd('online', $online, $_time);
 
 		// Passage à « carte absente » : log d'erreur et message une seule fois par absence (le démon réessaie à chaque changement d'état)
+		// Le message d'abord, puis la ligne d'erreur avec le même identifiant : si le Core crée un message pour chaque erreur
+		// (option de Jeedom), il compte une occurrence de plus au lieu d'un second message, et le texte du plugin reste affiché
 		if ($simMissing && count(message::byPluginLogicalId('sms4g', 'sms4gSimMissing')) == 0) {
-			log::add('sms4g', 'error', '[MODEM] Carte SIM absente ou mal insérée');
 			message::add('sms4g', __('Carte SIM absente ou mal insérée : insérez-la (modem débranché), puis rebranchez le modem. Le plugin réessaie de s\'y connecter tant que la carte est absente (si la gestion automatique du démon est désactivée, redémarrez le démon).', __FILE__), '', 'sms4gSimMissing');
+			log::add('sms4g', 'error', '[MODEM] Carte SIM absente ou mal insérée', 'sms4gSimMissing');
 		} elseif ($state == 'connected' && count(message::byPluginLogicalId('sms4g', 'sms4gSimMissing')) > 0) {
 			message::removeByPluginLogicalId('sms4g', 'sms4gSimMissing');
 		}
@@ -1478,11 +1480,12 @@ class sms4g extends eqLogic {
 			if ($fatalError !== null) {
 				// Le démon n'est plus relancé (deamon_info) jusqu'au prochain enregistrement de la configuration
 				config::save('fatalModemError', $errorType, 'sms4g');
-				log::add('sms4g', 'error', '[MODEM] ' . $fatalError . ' (relance du démon bloquée)');
-				message::add('sms4g', $fatalError, '', 'sms4gcmderror');
+				// Même ordre et même identifiant que pour la carte SIM absente (voir plus haut)
+				message::add('sms4g', $fatalError, '', 'sms4gFatalModemError');
+				log::add('sms4g', 'error', '[MODEM] ' . $fatalError . ' (relance du démon bloquée)', 'sms4gFatalModemError');
 			} else {
 				$reason = isset($_message['reason']) ? secureXSS($_message['reason']) : '';
-				message::add('sms4g', __('Erreur du modem', __FILE__) . ' : ' . $reason, '', 'sms4gcmderror');
+				message::add('sms4g', __('Erreur du modem', __FILE__) . ' : ' . $reason, '', 'sms4gFatalModemError');
 			}
 		}
 	}

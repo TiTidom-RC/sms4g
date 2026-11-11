@@ -17,6 +17,7 @@
 */
 
 /* * ***************************Includes********************************* */
+require_once __DIR__  . '/../../../../core/php/core.inc.php';
 
 class sms4g extends eqLogic {
 	/*     * ***********************Méthode static*************************** */
@@ -1396,7 +1397,24 @@ class sms4g extends eqLogic {
 		if ($simMissing) {
 			$text .= ' : ' . __('carte SIM absente', __FILE__);
 		}
-		log::add('sms4g', 'info', '[MODEM] ' . $text);
+		// Déconnexion : la cause va dans le log, pas dans la commande. Seul l'abandon de la reconnexion est une erreur :
+		// l'erreur définitive (PIN...) a sa propre ligne plus bas
+		$level = 'info';
+		$logText = $text;
+		if ($state == 'disconnected') {
+			$reason = (isset($_message['reason']) && is_scalar($_message['reason'])) ? (string) $_message['reason'] : '';
+			if ($reason == 'daemon stopped') {
+				$logText .= ' (arrêt du démon)';
+			} else {
+				if ($reason != '') {
+					$logText .= ' (' . self::maskSecrets($reason) . ')';
+				}
+				if (empty($_message['fatal'])) {
+					$level = 'error';
+				}
+			}
+		}
+		log::add('sms4g', $level, '[MODEM] ' . $logText);
 		$_modem->checkAndUpdateCmd('connection', $text, $_time);
 		$_modem->checkAndUpdateCmd('connection_state', $code, $_time);
 		$_modem->checkAndUpdateCmd('online', $online, $_time);

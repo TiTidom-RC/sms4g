@@ -17,6 +17,7 @@
 */
 
 /* * ***************************Includes********************************* */
+require_once __DIR__  . '/../../../../core/php/core.inc.php';
 
 class sms4g extends eqLogic {
 	/*     * ***********************Méthode static*************************** */
@@ -248,16 +249,61 @@ class sms4g extends eqLogic {
 			$return['launchable'] = 'nok';
 			$return['launchable_message'] = __("Le port n'est pas configuré", __FILE__);
 		} else {
+			// Chemin réel du port choisi, vide s'il est introuvable (modem débranché, port renommé)
 			$port = jeedom::getUsbMapping($port);
-			if (is_string($port)) {
-				if (@!file_exists($port)) {
-					$return['launchable'] = 'nok';
-					$return['launchable_message'] = __("Le port n'est pas configuré", __FILE__);
+			if (!file_exists($port)) {
+				$return['launchable'] = 'nok';
+				$return['launchable_message'] = __('Port du modem introuvable : vérifiez que le modem est branché', __FILE__);
+			} elseif (!is_readable($port) || !is_writable($port)) {
+				// Compte de Jeedom hors du groupe dialout (installation non standard) : il devient propriétaire du port, et lui
+				// seul obtient l'accès (moindre droit). Rien n'est lancé quand l'accès existe déjà
+				$account = posix_getpwuid(posix_geteuid());
+				if (is_array($account)) {
+					exec(system::getCmdSudo() . 'chown ' . escapeshellarg($account['name']) . ' ' . escapeshellarg($port) . ' > /dev/null 2>&1');
+					clearstatcache(true, $port);
 				}
-				exec(system::getCmdSudo() . 'chmod 777 ' . $port . ' > /dev/null 2>&1');
+				if (!is_readable($port) || !is_writable($port)) {
+					$return['launchable'] = 'nok';
+					$return['launchable_message'] = __("Jeedom n'a pas accès au port du modem", __FILE__);
+				}
+			}
+		}
+		// Erreur définitive du modem (PIN, PUK, mode PDU) : pas de relance tant que la configuration n'est pas enregistrée
+		// (postConfig_pin). La gestion automatique du démon n'est jamais désactivée
+		if ($return['launchable'] == 'ok') {
+			$fatalError = self::fatalModemErrorText(config::byKey('fatalModemError', 'sms4g', ''));
+			if ($fatalError !== null) {
+				$return['launchable'] = 'nok';
+				$return['launchable_message'] = $fatalError;
 			}
 		}
 		return $return;
+	}
+
+	/**
+	 * Erreur définitive du modem (aucune nouvelle tentative ne la corrige, un PIN refusé répété bloque même la SIM) :
+	 * la cause et ce qu'il faut faire, ou null pour toute autre erreur.
+	 *
+	 * @param mixed $_errorType nom de l'exception du démon (errorType)
+	 * @return string|null
+	 */
+	private static function fatalModemErrorText($_errorType) {
+		return match ($_errorType) {
+			'IncorrectPinError' => __('Code PIN refusé par la carte SIM : corrigez-le dans la configuration, puis enregistrez', __FILE__),
+			'PinRequiredError' => __('La carte SIM demande un code PIN : renseignez-le dans la configuration, puis enregistrez', __FILE__),
+			'PukRequiredError' => __('Carte SIM bloquée (code PUK requis) : débloquez-la dans un téléphone, puis enregistrez la configuration', __FILE__),
+			'PduModeNotSupportedError' => __('Modem incompatible (mode PDU non pris en charge) : changez de modem, puis enregistrez la configuration', __FILE__),
+			default => null,
+		};
+	}
+
+	/**
+	 * Enregistrement de la configuration (appelé par le Core à chaque enregistrement, même sans changement du PIN) :
+	 * lève le blocage d'une erreur définitive du modem, le démon peut de nouveau être lancé.
+	 */
+	public static function postConfig_pin($_value) {
+		config::remove('fatalModemError', 'sms4g');
+		message::removeByPluginLogicalId('sms4g', 'sms4gFatalModemError');
 	}
 
 	public static function deamon_start() {
@@ -1396,26 +1442,50 @@ class sms4g extends eqLogic {
 		if ($simMissing) {
 			$text .= ' : ' . __('carte SIM absente', __FILE__);
 		}
-		log::add('sms4g', 'info', '[MODEM] ' . $text);
+		// Déconnexion : la cause va dans le log, pas dans la commande. Seul l'abandon de la reconnexion est une erreur :
+		// l'erreur définitive (PIN...) a sa propre ligne plus bas
+		$level = 'info';
+		$logText = $text;
+		if ($state == 'disconnected') {
+			$reason = (isset($_message['reason']) && is_scalar($_message['reason'])) ? (string) $_message['reason'] : '';
+			if ($reason == 'daemon stopped') {
+				$logText .= ' (arrêt du démon)';
+			} else {
+				if ($reason != '') {
+					$logText .= ' (' . self::maskSecrets($reason) . ')';
+				}
+				if (empty($_message['fatal'])) {
+					$level = 'error';
+				}
+			}
+		}
+		log::add('sms4g', $level, '[MODEM] ' . $logText);
 		$_modem->checkAndUpdateCmd('connection', $text, $_time);
 		$_modem->checkAndUpdateCmd('connection_state', $code, $_time);
 		$_modem->checkAndUpdateCmd('online', $online, $_time);
 
 		// Passage à « carte absente » : log d'erreur et message une seule fois par absence (le démon réessaie à chaque changement d'état)
+		// Le message d'abord, puis la ligne d'erreur avec le même identifiant : si le Core crée un message pour chaque erreur
+		// (option de Jeedom), il compte une occurrence de plus au lieu d'un second message, et le texte du plugin reste affiché
 		if ($simMissing && count(message::byPluginLogicalId('sms4g', 'sms4gSimMissing')) == 0) {
-			log::add('sms4g', 'error', '[MODEM] Carte SIM absente ou mal insérée');
 			message::add('sms4g', __('Carte SIM absente ou mal insérée : insérez-la (modem débranché), puis rebranchez le modem. Le plugin réessaie de s\'y connecter tant que la carte est absente (si la gestion automatique du démon est désactivée, redémarrez le démon).', __FILE__), '', 'sms4gSimMissing');
+			log::add('sms4g', 'error', '[MODEM] Carte SIM absente ou mal insérée', 'sms4gSimMissing');
 		} elseif ($state == 'connected' && count(message::byPluginLogicalId('sms4g', 'sms4gSimMissing')) > 0) {
 			message::removeByPluginLogicalId('sms4g', 'sms4gSimMissing');
 		}
 
 		if ($state == 'disconnected' && !empty($_message['fatal'])) {
-			$reason = isset($_message['reason']) ? secureXSS($_message['reason']) : '';
-			message::add('sms4g', __('Erreur du modem', __FILE__) . ' : ' . $reason, '', 'sms4gcmderror');
-			// Un nouveau démarrage ne corrigerait pas ces erreurs (un PIN incorrect répété bloque même la SIM)
-			if (isset($_message['errorType']) && in_array($_message['errorType'], array('PinRequiredError', 'IncorrectPinError', 'PukRequiredError', 'PduModeNotSupportedError'))) {
-				log::add('sms4g', 'error', '[MODEM] Erreur définitive (code PIN, mode PDU) : redémarrage automatique du démon désactivé');
-				config::save('deamonAutoMode', 0, 'sms4g');
+			$errorType = isset($_message['errorType']) ? $_message['errorType'] : '';
+			$fatalError = self::fatalModemErrorText($errorType);
+			if ($fatalError !== null) {
+				// Le démon n'est plus relancé (deamon_info) jusqu'au prochain enregistrement de la configuration
+				config::save('fatalModemError', $errorType, 'sms4g');
+				// Même ordre et même identifiant que pour la carte SIM absente (voir plus haut)
+				message::add('sms4g', $fatalError, '', 'sms4gFatalModemError');
+				log::add('sms4g', 'error', '[MODEM] ' . $fatalError . ' (relance du démon bloquée)', 'sms4gFatalModemError');
+			} else {
+				$reason = isset($_message['reason']) ? secureXSS($_message['reason']) : '';
+				message::add('sms4g', __('Erreur du modem', __FILE__) . ' : ' . $reason, '', 'sms4gFatalModemError');
 			}
 		}
 	}

@@ -43,9 +43,28 @@ class jeedom {
     public static function getTmpFolder($_plugin) {
         return __DIR__ . '/absent';
     }
-    // Un port déjà résolu par le Core (tableau) : deamon_info ne teste pas le fichier et ne lance pas chmod
+    // Le port configuré est déjà le chemin réel ; vide s'il n'existe pas, comme le Core
     public static function getUsbMapping($_port) {
-        return ['resolved' => $_port];
+        return file_exists($_port) ? $_port : '';
+    }
+}
+
+class system {
+    public static $sudoCalls = 0;
+    // Compte les commandes lancées en sudo ; « rem » les rend sans effet (Windows comme Linux)
+    public static function getCmdSudo() {
+        self::$sudoCalls++;
+        return 'rem ';
+    }
+}
+
+// PHP sous Windows n'a pas l'extension posix
+if (!function_exists('posix_geteuid')) {
+    function posix_geteuid() {
+        return 33;
+    }
+    function posix_getpwuid($_uid) {
+        return ['name' => 'www-data'];
     }
 }
 
@@ -149,26 +168,52 @@ check($lines === [['info', '[MODEM] Déconnecté (Other)']], 'erreur définitive
 check($added === [['Erreur du modem : Other', 'sms4gcmderror']], 'erreur définitive inconnue : message', $added);
 check($saved === [], 'erreur définitive inconnue : rien de bloqué', $saved);
 
-// deamon_info : lançable sans cause enregistrée, bloqué avec le texte de la cause, le port non configuré passe avant
-config::$saved = ['port' => '/dev/ttyUSB2'];
-$info = sms4g::deamon_info();
-check($info['launchable'] === 'ok' && !isset($info['launchable_message']), 'deamon_info sans cause', $info);
+// Faux ports : un accessible, un en lecture seule (Jeedom sans accès), un absent
+$port = tempnam(sys_get_temp_dir(), 'sms4g');
+$readOnlyPort = tempnam(sys_get_temp_dir(), 'sms4g');
+chmod($readOnlyPort, 0444);
+$missingPort = $port . '-absent';
+register_shutdown_function(function () use ($port, $readOnlyPort) {
+    chmod($readOnlyPort, 0666);
+    @unlink($port);
+    @unlink($readOnlyPort);
+});
+
+// deamon_info, port : aucun sudo quand l'accès existe, port introuvable ou inaccessible signalé
+$portCases = [
+    'aucun port choisi' => ['none', 0, ['nok', "Le port n'est pas configuré"]],
+    'port accessible' => [$port, 0, ['ok', null]],
+    'port introuvable' => [$missingPort, 0, ['nok', 'Port du modem introuvable : vérifiez que le modem est branché']],
+];
+// root passe outre la lecture seule : ce cas n'est vérifiable que si le système refuse vraiment l'écriture
+if (!is_writable($readOnlyPort)) {
+    $portCases['port inaccessible'] = [$readOnlyPort, 1, ['nok', "Jeedom n'a pas accès au port du modem"]];
+}
+foreach ($portCases as $label => [$configured, $sudoCalls, $expected]) {
+    config::$saved = ['port' => $configured];
+    system::$sudoCalls = 0;
+    $info = sms4g::deamon_info();
+    check([$info['launchable'], $info['launchable_message'] ?? null] === $expected, "deamon_info : $label", $info);
+    check(system::$sudoCalls === $sudoCalls, "deamon_info : $label, commandes sudo", system::$sudoCalls);
+}
+
+// deamon_info, erreur définitive : bloqué avec le texte de la cause, un problème de port passe avant
 foreach ($fatalErrors as $errorType => $text) {
-    config::$saved = ['port' => '/dev/ttyUSB2', 'fatalModemError' => $errorType];
+    config::$saved = ['port' => $port, 'fatalModemError' => $errorType];
     $info = sms4g::deamon_info();
     check([$info['launchable'], $info['launchable_message']] === ['nok', $text], "deamon_info bloqué par $errorType", $info);
 }
-config::$saved = ['port' => 'none', 'fatalModemError' => 'IncorrectPinError'];
+config::$saved = ['port' => $missingPort, 'fatalModemError' => 'IncorrectPinError'];
 $info = sms4g::deamon_info();
-check([$info['launchable'], $info['launchable_message']] === ['nok', "Le port n'est pas configuré"], 'deamon_info : port avant la cause', $info);
-config::$saved = ['port' => '/dev/ttyUSB2', 'fatalModemError' => 'OtherError'];
+check($info['launchable_message'] === 'Port du modem introuvable : vérifiez que le modem est branché', 'deamon_info : port avant la cause', $info);
+config::$saved = ['port' => $port, 'fatalModemError' => 'OtherError'];
 check(sms4g::deamon_info()['launchable'] === 'ok', 'deamon_info : cause inconnue ignorée');
 
 // Enregistrement de la configuration : la cause et son message sont effacés, le démon est de nouveau lançable
-config::$saved = ['port' => '/dev/ttyUSB2', 'fatalModemError' => 'IncorrectPinError'];
+config::$saved = ['port' => $port, 'fatalModemError' => 'IncorrectPinError'];
 message::$added = [[$fatalErrors['IncorrectPinError'], 'sms4gcmderror'], ['autre', 'sms4gSimMissing']];
 sms4g::postConfig_pin('1234');
-check(config::$saved === ['port' => '/dev/ttyUSB2'], 'postConfig_pin : cause effacée', config::$saved);
+check(config::$saved === ['port' => $port], 'postConfig_pin : cause effacée', config::$saved);
 check(message::$added === [['autre', 'sms4gSimMissing']], 'postConfig_pin : message effacé, les autres gardés', message::$added);
 check(sms4g::deamon_info()['launchable'] === 'ok', 'postConfig_pin : démon lançable');
 

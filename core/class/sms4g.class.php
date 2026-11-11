@@ -249,13 +249,23 @@ class sms4g extends eqLogic {
 			$return['launchable'] = 'nok';
 			$return['launchable_message'] = __("Le port n'est pas configuré", __FILE__);
 		} else {
+			// Chemin réel du port choisi, vide s'il est introuvable (modem débranché, port renommé)
 			$port = jeedom::getUsbMapping($port);
-			if (is_string($port)) {
-				if (@!file_exists($port)) {
-					$return['launchable'] = 'nok';
-					$return['launchable_message'] = __("Le port n'est pas configuré", __FILE__);
+			if (!file_exists($port)) {
+				$return['launchable'] = 'nok';
+				$return['launchable_message'] = __('Port du modem introuvable : vérifiez que le modem est branché', __FILE__);
+			} elseif (!is_readable($port) || !is_writable($port)) {
+				// Compte de Jeedom hors du groupe dialout (installation non standard) : il devient propriétaire du port, et lui
+				// seul obtient l'accès (moindre droit). Rien n'est lancé quand l'accès existe déjà
+				$account = posix_getpwuid(posix_geteuid());
+				if (is_array($account)) {
+					exec(system::getCmdSudo() . 'chown ' . escapeshellarg($account['name']) . ' ' . escapeshellarg($port) . ' > /dev/null 2>&1');
+					clearstatcache(true, $port);
 				}
-				exec(system::getCmdSudo() . 'chmod 777 ' . $port . ' > /dev/null 2>&1');
+				if (!is_readable($port) || !is_writable($port)) {
+					$return['launchable'] = 'nok';
+					$return['launchable_message'] = __("Jeedom n'a pas accès au port du modem", __FILE__);
+				}
 			}
 		}
 		// Erreur définitive du modem (PIN, PUK, mode PDU) : pas de relance tant que la configuration n'est pas enregistrée
